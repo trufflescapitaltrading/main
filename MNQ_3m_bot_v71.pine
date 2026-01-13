@@ -1,0 +1,783 @@
+//@version=5
+// MNQ 3m Bot - V71 (Jan 13 2026)
+// Focus: trending/continuation/momentum w/ MTF confirmation; avoid chop except impulse/breakout.
+// Key fixes vs provided V70:
+// - Adds Continuation/Breakout entry bypass to avoid missing multi-candle momentum runs
+// - Tightens sideways gating: range/chop allowed ONLY for breakout/impulse
+// - Backup/Nuclear stops use intrabar high/low checks + adds nuclear-distance stop
+// - TradersPost payload: uses numeric `price` fields + includes `price` for market orders; defaults to auto symbol
+
+strategy("MNQ 3m-1.13.2026 V71 Live-Ready (Continuation + Stops + TradersPost Fix)",
+     overlay=true,
+     initial_capital=25000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1,
+     pyramiding=1,
+     calc_on_order_fills=false,
+     calc_on_every_tick=true,
+     process_orders_on_close=false,
+     backtest_fill_limits_assumption=0,
+     dynamic_requests=true)
+
+// ==================== 💰 DAILY PROFIT TARGET ====================
+profitTargetGroup = "💰 Daily Profit Target"
+enableDailyProfitTarget = input.bool(true, "Enable Daily Profit Target", group=profitTargetGroup)
+dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", minval=500, maxval=5000, group=profitTargetGroup)
+
+// ==================== 🎯 PRICE MOMENTUM OVERRIDE ====================
+momentumOverrideGroup = "🎯 PRICE MOMENTUM OVERRIDE"
+enableMomentumOverride = input.bool(true, "✅ Enable Price Momentum Override", group=momentumOverrideGroup)
+momentumLookback = input.int(5, "Momentum Lookback Bars", minval=3, maxval=10, group=momentumOverrideGroup)
+momentumThresholdPct = input.float(0.5, "Min Price Move (%)", minval=0.3, maxval=2.0, group=momentumOverrideGroup)
+momentumThresholdPoints = input.float(100.0, "Min Price Move (MNQ points)", minval=50, maxval=300, group=momentumOverrideGroup)
+
+// ==================== 🚀 CONTINUATION / BREAKOUT CAPTURE (NEW) ====================
+contGroup = "🚀 Continuation/Breakout Capture (NEW)"
+enableContinuation = input.bool(true, "✅ Enable Continuation Capture", group=contGroup)
+contMinRunBars = input.int(2, "Min consecutive candles in direction", minval=2, maxval=6, group=contGroup)
+contBreakoutLookback = input.int(12, "Breakout lookback bars", minval=5, maxval=30, group=contGroup)
+contMinBodyATR = input.float(0.20, "Min body × ATR (run bars)", minval=0.0, maxval=1.0, step=0.05, group=contGroup)
+contVolMult = input.float(0.85, "Min volume × volSMA20 (run bars)", minval=0.5, maxval=2.0, step=0.05, group=contGroup)
+allowContinuationBypassRanging = input.bool(true, "Allow continuation/breakout even if ranging", group=contGroup)
+allowContinuationBypassChop = input.bool(true, "Allow continuation/breakout even if choppy", group=contGroup)
+
+breakoutGroup = "💥 Breakout Trades (Allowed in Range)"
+enableBreakoutTrades = input.bool(true, "✅ Enable Breakout Trades", group=breakoutGroup)
+breakoutVolMult = input.float(1.10, "Breakout volume × volSMA20", minval=0.8, maxval=3.0, step=0.05, group=breakoutGroup)
+breakoutMinBBWidth = input.float(0.012, "Min BB Width (avoid dead tape)", minval=0.004, maxval=0.040, step=0.001, group=breakoutGroup)
+
+// ==================== 🎯 FIXED SIGNAL LINE SYSTEM ====================
+signalGroup = "🎯 Fixed Signal Line System"
+enableSignalLine = input.bool(true, "✅ Enable Signal Line System", group=signalGroup)
+useSignalLineStrict = input.bool(false, "⚠️ STRICT: Only trade with signal line", group=signalGroup)
+swingPeriod = input.int(3, "BUY/SELL Swing Period", minval=1, maxval=10, group=signalGroup)
+enableSwingSignals = input.bool(true, "Enable BUY/SELL Swing Signals", group=signalGroup)
+swingSignalPriority = input.bool(true, "Add Swing to Priority System", group=signalGroup)
+swingInjectToBase = input.bool(false, "Allow Swing to feed base signals", group=signalGroup)
+
+grayZoneEnabled = input.bool(true, "Enable Gray Zone", group=signalGroup)
+grayADXThreshold = input.float(20.0, "Gray Zone: ADX Below", minval=10.0, maxval=30.0, group=signalGroup)
+grayATRMultiplier = input.float(0.75, "Gray Zone: ATR Compression", minval=0.4, maxval=1.2, group=signalGroup)
+grayBBWidthThreshold = input.float(0.015, "Gray Zone: BB Width Below", minval=0.005, maxval=0.030, group=signalGroup)
+grayMinFactors = input.int(2, "Gray Zone: Min Factors", minval=2, maxval=6, group=signalGroup)
+
+// ==================== 🕯️ CANDLESTICK PATTERNS (ALL 18) ====================
+candleGroup = "🕯️ Candlestick Pattern System"
+enableCandlePatterns = input.bool(true, "✅ MASTER: Enable Candlestick Patterns", group=candleGroup)
+requireVolumeConfirmation = input.bool(true, "Require Volume Confirmation", group=candleGroup)
+minPatternSize = input.float(0.5, "Min Pattern Size (×ATR)", minval=0.3, maxval=2.0, group=candleGroup)
+
+bullishPatternsGroup = "🟢 Bullish Patterns"
+enableBullishEngulfing = input.bool(true, "Bullish Engulfing", group=bullishPatternsGroup)
+enableHammer = input.bool(true, "Hammer", group=bullishPatternsGroup)
+enableInvertedHammer = input.bool(true, "Inverted Hammer", group=bullishPatternsGroup)
+enableMorningStar = input.bool(true, "Morning Star", group=bullishPatternsGroup)
+enableBullishHarami = input.bool(true, "Bullish Harami", group=bullishPatternsGroup)
+enablePiercingLine = input.bool(true, "Piercing Line", group=bullishPatternsGroup)
+enableThreeWhiteSoldiers = input.bool(true, "Three White Soldiers", group=bullishPatternsGroup)
+enableBullishMarubozu = input.bool(true, "Bullish Marubozu", group=bullishPatternsGroup)
+
+bearishPatternsGroup = "🔴 Bearish Patterns"
+enableBearishEngulfing = input.bool(true, "Bearish Engulfing", group=bearishPatternsGroup)
+enableShootingStar = input.bool(true, "Shooting Star", group=bearishPatternsGroup)
+enableHangingMan = input.bool(true, "Hanging Man", group=bearishPatternsGroup)
+enableEveningStar = input.bool(true, "Evening Star", group=bearishPatternsGroup)
+enableBearishHarami = input.bool(true, "Bearish Harami", group=bearishPatternsGroup)
+enableDarkCloudCover = input.bool(true, "Dark Cloud Cover", group=bearishPatternsGroup)
+enableThreeBlackCrows = input.bool(true, "Three Black Crows", group=bearishPatternsGroup)
+enableBearishMarubozu = input.bool(true, "Bearish Marubozu", group=bearishPatternsGroup)
+
+neutralPatternsGroup = "⚪ Neutral/Indecision Patterns"
+enableDoji = input.bool(true, "Doji", group=neutralPatternsGroup)
+enableSpinningTop = input.bool(true, "Spinning Top", group=neutralPatternsGroup)
+
+patternTierGroup = "🕯️ Ranked Pattern Tiers"
+enableTier1 = input.bool(true, "🥇 Tier 1 (75%+)", group=patternTierGroup)
+enableTier2 = input.bool(true, "🥈 Tier 2 (65-74%)", group=patternTierGroup)
+enableTier3 = input.bool(true, "🥉 Tier 3 (55-64%)", group=patternTierGroup)
+enableTier4 = input.bool(true, "⚪ Tier 4 (Power/Neutral)", group=patternTierGroup)
+
+highWinRateMode = input.bool(true, "🎯 High Win Rate Mode (70%+)")
+quickTPMultiplier = input.float(0.6, "Quick TP Multiplier", minval=0.3, maxval=1.0)
+widerSLMultiplier = input.float(1.5, "Wider SL Multiplier", minval=1.0, maxval=2.5)
+
+// ==================== ⭐ PRIORITY HIERARCHY SYSTEM ====================
+priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
+enablePrioritySystem = input.bool(true, "✅ Enable Priority Hierarchy", group=priorityGroup)
+allowPriority0 = input.bool(true, "P0: Momentum Override 🎯", group=priorityGroup)
+allowPriority1 = input.bool(true, "P1: Impulse Override 🚀", group=priorityGroup)
+allowPriority2 = input.bool(true, "P2: Strong Trend Override 📈", group=priorityGroup)
+allowPriority3 = input.bool(true, "P3: 5-Star Entry", group=priorityGroup)
+allowPriority4 = input.bool(true, "P4: 4-Star Entry", group=priorityGroup)
+allowPriority5 = input.bool(true, "P5: 3-Star Entry", group=priorityGroup)
+allowPriority6 = input.bool(true, "P6: 2-Star Entry", group=priorityGroup)
+allowPriority7 = input.bool(true, "P7: Swing Signal", group=priorityGroup)
+allowPriority8 = input.bool(true, "P8: Continuation/Breakout (NEW)", group=priorityGroup)
+
+group_entryConfirm = "✅ Entry Confirmation"
+requireCandleDirection = input.bool(true, "⚠️ STRICT: Long=Green, Short=Red", group=group_entryConfirm)
+requireBodyStrength = input.bool(false, "Require Body Strength", group=group_entryConfirm)
+minBodyPctOfATR = input.float(0.10, "Min Body % of ATR", minval=0.0, maxval=1.0, step=0.01, group=group_entryConfirm)
+
+enableImpulseOverride = input.bool(true, "Enable Impulse Override", group=group_entryConfirm)
+impulseATRMult = input.float(1.3, "Impulse Move ATR Multiple", minval=0.3, maxval=5.0, step=0.05, group=group_entryConfirm)
+impulseVolMult = input.float(1.7, "Impulse Volume Multiple", minval=1.0, maxval=10.0, step=0.05, group=group_entryConfirm)
+impulseBodyMin = input.float(0.6, "Impulse: Min body ratio", minval=0.10, maxval=0.95, step=0.05, group=group_entryConfirm)
+impulseRangeMinATR = input.float(0.90, "Impulse: Min full range × ATR", minval=0.30, maxval=3.0, step=0.05, group=group_entryConfirm)
+
+confluenceLevel = input.int(6, "🎯 Confluence Level (1=Loose, 15=Strict)", minval=1, maxval=15)
+
+enableTrendOverride = input.bool(true, "🚀 Enable Strong Trend Override", group="Trend Override")
+consecutiveCandlesRequired = input.int(3, "Consecutive Candles for Override", minval=2, maxval=5, group="Trend Override")
+trendOverrideVolMultiplier = input.float(0.6, "Volume Multiplier for Override", minval=0.5, maxval=1.5, group="Trend Override")
+trendOverrideRangeMultiplier = input.float(0.9, "Range Multiplier for Override", minval=0.5, maxval=3.0, group="Trend Override")
+
+choppyFilterGroup = "Choppy Market Filter"
+enableChoppyFilter = input.bool(true, "Enable Choppy/Sideways Market Filter", group=choppyFilterGroup)
+choppyADXThreshold = input.float(25.0, "ADX Threshold (below = choppy)", minval=10.0, maxval=35.0, group=choppyFilterGroup)
+choppyATRMultiplier = input.float(0.85, "ATR Multiplier (below avg = choppy)", minval=0.5, maxval=1.2, group=choppyFilterGroup)
+choppyBBWidthThreshold = input.float(0.020, "BB Width Threshold", minval=0.005, maxval=0.050, group=choppyFilterGroup)
+disableChoppyInTrend = input.bool(true, "Disable Choppy Filter During Trends", group=choppyFilterGroup)
+disableChoppyInPosition = input.bool(false, "Disable Choppy When In Position", group=choppyFilterGroup)
+
+emergencyGroup = "V8 Emergency Safety System"
+enableBackupSL = input.bool(true, "Enable Backup Stop Loss", group=emergencyGroup)
+backupSL_MES = input.float(18.0, "MES Backup SL (points)", group=emergencyGroup)
+backupSL_MNQ = input.float(80.0, "MNQ Backup SL (points)", group=emergencyGroup)
+backupSL_Default = input.float(30.0, "Default Backup SL (points)", group=emergencyGroup)
+enableNuclearExit = input.bool(true, "Enable Nuclear Emergency Exit", group=emergencyGroup)
+nuclearExtraFactor = input.float(2.5, "Nuclear Distance Factor", minval=1.5, maxval=5.0, group=emergencyGroup)
+nuclearMaxBars = input.int(150, "Nuclear Max Bars", minval=10, maxval=500, group=emergencyGroup)
+
+// ==================== 🕐 SESSION FILTERS (FIXED) ====================
+sessionGroup = "🌍 Trading Sessions & Times"
+enable24_7Trading = input.bool(true, "✅ Enable 24/7 Trading", group=sessionGroup)
+enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
+tradingHoursStart = input.int(400, "Start (4:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(2000, "End (8:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
+
+enableNoTradeZone = input.bool(false, "🚫 No Trade Zone (BLOCKS trades)", group=sessionGroup)
+noTradeStart = input.int(0, "No Trade Start (12:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+noTradeEnd = input.int(600, "No Trade End (6:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+
+enableAsianSession = input.bool(true, "🇯🇵 Asian Session", group=sessionGroup)
+asianStart = input.int(1900, "Asian Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+asianEnd = input.int(300, "Asian End (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+enableLondonSession = input.bool(true, "🇬🇧 London Session", group=sessionGroup)
+londonStart = input.int(300, "London Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+londonEnd = input.int(1200, "London End (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+enableNYSession = input.bool(true, "🇺🇸 NY Session", group=sessionGroup)
+nyStart = input.int(400, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyEnd = input.int(2000, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+enableUAESession = input.bool(true, "🇦🇪 UAE Session", group=sessionGroup)
+uaeStart = input.int(0, "UAE Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+uaeEnd = input.int(800, "UAE End (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+asianBestInstruments = input.string("MNQ,MES,MGC", "Asian Best Instruments", group=sessionGroup)
+londonBestInstruments = input.string("MGC,MCL,MES", "London Best Instruments", group=sessionGroup)
+nyBestInstruments = input.string("MES,MNQ,MYM", "NY Best Instruments", group=sessionGroup)
+uaeBestInstruments = input.string("MCL,MGC", "UAE Best Instruments", group=sessionGroup)
+
+asianMultiplier = input.float(1.2, "Asian Session Multiplier", minval=0.5, maxval=2.0, group=sessionGroup)
+londonMultiplier = input.float(1.3, "London Session Multiplier", minval=0.5, maxval=2.0, group=sessionGroup)
+nyMultiplier = input.float(1.5, "NY Session Multiplier", minval=0.5, maxval=2.0, group=sessionGroup)
+uaeMultiplier = input.float(0.9, "UAE Session Multiplier", minval=0.5, maxval=2.0, group=sessionGroup)
+
+enableStrongSignals = input.bool(true, "Enable STRONG Signals")
+enableScalpSignals = input.bool(true, "Enable SCALP Signals")
+enableInstantSignals = input.bool(true, "Enable INSTANT Signals")
+enableMicroSignals = input.bool(true, "Enable MICRO Signals")
+
+enableDailyTradeLimit = input.bool(true, "Enable Daily Trade Limit")
+maxDailyTrades = input.int(20, "Max Daily Trades", minval=5, maxval=100)
+
+var float peakProfit = 0.0
+var int positionBars = 0
+
+// ==================== 🎯 INSTRUMENT DETECTION ====================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroFutures = isMYM or isMNQ or isMCL or isMGC or isMES or isM2K
+
+// ==================== 📊 PER-INSTRUMENT SETTINGS ====================
+perInstGroup = "Per-Instrument Trade Settings"
+
+mes_useCustom = input.bool(false, "MES: Use Custom SL/TP/Size", group=perInstGroup)
+mes_customSL = input.float(7.0, "MES: Stop Loss (points)", group=perInstGroup)
+mes_customTP = input.float(10.0, "MES: Take Profit (points)", group=perInstGroup)
+mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+// For MNQ (3m focus)
+mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
+mnq_customSL = input.float(25.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1 = input.float(35.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
+mnq_customTP2 = input.float(60.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
+mnq_customTP3 = input.float(90.0, "MNQ: TP3 (points) - 10%", group=perInstGroup)
+mnq_customTP4 = input.float(120.0, "MNQ: TP4 (points) - 5%", group=perInstGroup)
+mnq_customQty = input.int(1, "MNQ: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+mym_useCustom = input.bool(false, "MYM: Use Custom SL/TP/Size", group=perInstGroup)
+mym_customSL = input.float(60.0, "MYM: Stop Loss (points)", group=perInstGroup)
+mym_customTP = input.float(90.0, "MYM: Take Profit (points)", group=perInstGroup)
+mym_customQty = input.int(1, "MYM: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+mcl_useCustom = input.bool(false, "MCL: Use Custom SL/TP/Size", group=perInstGroup)
+mcl_customSL = input.float(0.30, "MCL: Stop Loss (price $)", group=perInstGroup)
+mcl_customTP = input.float(0.50, "MCL: Take Profit (price $)", group=perInstGroup)
+mcl_customQty = input.int(1, "MCL: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+mgc_useCustom = input.bool(false, "MGC: Use Custom SL/TP/Size", group=perInstGroup)
+mgc_customSL = input.float(4.0, "MGC: Stop Loss (price $)", group=perInstGroup)
+mgc_customTP = input.float(7.0, "MGC: Take Profit (price $)", group=perInstGroup)
+mgc_customQty = input.int(1, "MGC: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+m2k_useCustom = input.bool(false, "M2K: Use Custom SL/TP/Size", group=perInstGroup)
+m2k_customSL = input.float(9.0, "M2K: Stop Loss (points)", group=perInstGroup)
+m2k_customTP = input.float(14.0, "M2K: Take Profit (points)", group=perInstGroup)
+m2k_customQty = input.int(1, "M2K: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+// ==================== 🔔 TRADERSPOST ALERTS (FIXED) ====================
+alertsGroup = "🔔 TradersPost Alerts (FIXED)"
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts", group=alertsGroup)
+useAutoSymbol = input.bool(true, "Auto-detect symbol from chart", group=alertsGroup)
+tradersPostSymbol = input.string("", "TradersPost Symbol Override (leave blank if auto)", group=alertsGroup)
+includeSignalPrice = input.bool(true, "Include `price` (market) + `entryPrice`", group=alertsGroup)
+alertOnlyMode = input.bool(false, "Alert Only Mode", group=alertsGroup)
+
+actualTicker = useAutoSymbol or str.length(tradersPostSymbol) == 0 ? syminfo.ticker : tradersPostSymbol
+
+// ==================== ⭐⭐⭐ TRUE HTF CONFIRMATION ====================
+htfGroup = "⭐⭐⭐ HTF EMA50 Confirmation"
+enableHTFConfirm = input.bool(true, "Enable HTF Confirmation", group=htfGroup)
+htf_tfA = input.timeframe("15", "HTF A", group=htfGroup)
+htf_tfB = input.timeframe("60", "HTF B", group=htfGroup)
+htf_tfC = input.timeframe("240", "HTF C", group=htfGroup)
+htfEmaLen = input.int(50, "HTF EMA Length", minval=10, maxval=200, group=htfGroup)
+minHTFAligned = input.int(1, "Min HTF Alignments Required (1 of 3 = 33%)", minval=1, maxval=3, group=htfGroup)
+allowImpulseBypassHTF = input.bool(true, "Allow IMPULSE / TREND bypass HTF", group=htfGroup)
+
+htfLongA = request.security(syminfo.tickerid, htf_tfA, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfLongB = request.security(syminfo.tickerid, htf_tfB, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfLongC = request.security(syminfo.tickerid, htf_tfC, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+
+htfShortA = request.security(syminfo.tickerid, htf_tfA, close < ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfShortB = request.security(syminfo.tickerid, htf_tfB, close < ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfShortC = request.security(syminfo.tickerid, htf_tfC, close < ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+
+htfAlignLongCount = (htfLongA ? 1 : 0) + (htfLongB ? 1 : 0) + (htfLongC ? 1 : 0)
+htfAlignShortCount = (htfShortA ? 1 : 0) + (htfShortB ? 1 : 0) + (htfShortC ? 1 : 0)
+
+// ==================== 📈 VOLATILITY REGIME FILTER ====================
+volRegimeGroup = "📈 Volatility Regime"
+enableVolRegime = input.bool(true, "Enable Volatility Regime Filter", group=volRegimeGroup)
+atrRegLen = input.int(20, "ATR Length", minval=5, maxval=50, group=volRegimeGroup)
+atrRegSmaLen = input.int(100, "ATR Baseline SMA", minval=20, maxval=300, group=volRegimeGroup)
+highVolThresh = input.float(1.2, "High Vol Threshold", minval=1.0, maxval=2.0, step=0.05, group=volRegimeGroup)
+lowVolThresh = input.float(0.8, "Low Vol Threshold", minval=0.4, maxval=1.0, step=0.05, group=volRegimeGroup)
+blockLowVol = input.bool(true, "Block LOW volatility", group=volRegimeGroup)
+blockHighVol = input.bool(false, "Block HIGH volatility", group=volRegimeGroup)
+allowImpulseBypassVol = input.bool(true, "Allow IMPULSE / TREND bypass Vol", group=volRegimeGroup)
+
+atrReg = ta.atr(atrRegLen)
+atrRegBase = ta.sma(atrReg, atrRegSmaLen)
+atrRegRatio = atrRegBase > 0 ? atrReg / atrRegBase : 1.0
+highVolRegime = atrRegRatio > highVolThresh
+lowVolRegime = atrRegRatio < lowVolThresh
+volRegimeOK = not enableVolRegime or ((not blockLowVol or not lowVolRegime) and (not blockHighVol or not highVolRegime))
+
+// ==================== 🔢 CALCULATIONS START ====================
+atr10 = ta.atr(10)
+atrMain = ta.atr(14)
+currentATR = ta.atr(14)
+
+// FIXED SESSION LOGIC
+currentHourET = hour(time, "America/New_York")
+currentMinuteET = minute(time, "America/New_York")
+currentTime = currentHourET * 100 + currentMinuteET
+
+isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
+isNoTradeZone = enableNoTradeZone and ((noTradeStart <= noTradeEnd and currentTime >= noTradeStart and currentTime < noTradeEnd) or (noTradeStart > noTradeEnd and (currentTime >= noTradeStart or currentTime < noTradeEnd)))
+canTradeNow = enable24_7Trading and isTradingHours and not isNoTradeZone
+
+// Hull MA
+hma(src, len) =>
+    half_length = math.max(math.round(len / 2), 1)
+    sqrt_length = math.max(math.round(math.sqrt(len)), 1)
+    wma_half = ta.wma(src, half_length)
+    wma_full = ta.wma(src, len)
+    wma_diff = 2 * wma_half - wma_full
+    ta.wma(wma_diff, sqrt_length)
+
+hullSrc = input.source(close, "Hull Source")
+baseHullMain = input.int(12, "Base Hull MA (Main)", minval=5, maxval=40)
+baseHullFast = input.int(7, "Base Hull MA (Fast)", minval=5, maxval=15)
+
+hullMain = hma(hullSrc, math.max(baseHullMain, 2))
+hullFast = hma(hullSrc, math.max(baseHullFast, 2))
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+hullAnyBullish = slopeMain == 1 or slopeFast == 1
+hullAnyBearish = slopeMain == -1 or slopeFast == -1
+hullMicroTurn = slopeFast != slopeFast[1]
+hullAcceleration = (slopeMain == slopeFast) and (slopeFast != 0)
+
+// Basic trend alignment (EMA)
+emaShort = ta.ema(close, 9)
+emaMedium = ta.ema(close, 21)
+emaLong = ta.ema(close, 50)
+trendAlignedLong = emaShort > emaMedium and emaMedium > emaLong and close > emaLong
+trendAlignedShort = emaShort < emaMedium and emaMedium < emaLong and close < emaLong
+
+// SuperTrend (minimal: reused for trend direction)
+basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4)
+baseAtrFactor = input.float(2.2, "Base ATR Factor", minval=1.8, maxval=3.0)
+baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12)
+
+pivotPeriod = basePivotPeriod
+atrFactor = baseAtrFactor
+atrPeriod = baseAtrPeriod
+
+ph = ta.pivothigh(pivotPeriod, pivotPeriod)
+pl = ta.pivotlow(pivotPeriod, pivotPeriod)
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrSuperTrend = ta.atr(atrPeriod)
+upBand = na(center) ? close - atrFactor * atrSuperTrend : center - atrFactor * atrSuperTrend
+dnBand = na(center) ? close + atrFactor * atrSuperTrend : center + atrFactor * atrSuperTrend
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+trendChange = trend != trend[1]
+
+// ADX
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+    minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+
+adxValue = adx(14, 14)
+
+// Choppy detection (same concept, but bypass-able)
+atrCurrent = ta.atr(14)
+atrAvg = ta.sma(atrCurrent, 20)
+isLowADX = adxValue < choppyADXThreshold
+isLowATR = atrCurrent < (atrAvg * choppyATRMultiplier)
+bbBasis = ta.sma(close, 20)
+bbDev = ta.stdev(close, 20)
+bbUpper = bbBasis + (bbDev * 2)
+bbLower = bbBasis - (bbDev * 2)
+bbWidth = (bbUpper - bbLower) / bbBasis
+isTightBB = bbWidth < choppyBBWidthThreshold
+choppyCount = (isLowADX ? 1 : 0) + (isLowATR ? 1 : 0) + (isTightBB ? 1 : 0)
+isChoppyRaw = choppyCount >= 2
+isChoppy = enableChoppyFilter and isChoppyRaw
+
+// Ranging vs trending (kept similar, but will allow breakout/impulse exceptions)
+trendStrengthPeriod = input.int(6, "Trend Strength Period", minval=4, maxval=20)
+priceRangeTrend = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
+trendStrength = priceRangeTrend > 0 ? math.abs(close - close[trendStrengthPeriod]) / priceRangeTrend : 0
+veryStrongTrend = trendStrength > 0.25
+strongTrend = trendStrength > 0.15
+rangingMarket = trendStrength < 0.08
+moderateTrend = not strongTrend and not rangingMarket
+
+// Candles
+candleBull = close > open
+candleBear = close < open
+bodySize = math.abs(close - open)
+totalRange = high - low
+bodyRatio = totalRange > 0 ? bodySize / totalRange : 0.0
+avgVolume = ta.sma(volume, 20)
+
+// Momentum override (as supplied)
+priceMovePct = math.abs((close - close[momentumLookback]) / close[momentumLookback]) * 100
+priceMovePoints = math.abs(close - close[momentumLookback])
+
+momentumUpMove = close > close[momentumLookback] and priceMovePct >= momentumThresholdPct
+momentumDownMove = close < close[momentumLookback] and priceMovePct >= momentumThresholdPct
+
+mnqMomentumUpMove = isMNQ and (close - close[momentumLookback]) >= momentumThresholdPoints
+mnqMomentumDownMove = isMNQ and (close[momentumLookback] - close) >= momentumThresholdPoints
+
+hasMomentumOverrideLong = enableMomentumOverride and (momentumUpMove or mnqMomentumUpMove) and candleBull
+hasMomentumOverrideShort = enableMomentumOverride and (momentumDownMove or mnqMomentumDownMove) and candleBear
+
+// Impulse detection (kept conceptually)
+volBase = ta.sma(volume, 50)
+volSurgeNow = (volBase > 0) and (volume >= volBase * impulseVolMult)
+barMove = math.abs(close - open)
+impulseMove = (atr10 > 0) and (barMove >= atr10 * impulseATRMult)
+rangeOK = (atr10 > 0) and ((high - low) >= atr10 * impulseRangeMinATR)
+bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
+
+impulseLong = enableImpulseOverride and candleBull and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
+impulseShort = enableImpulseOverride and candleBear and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
+
+// Consecutive candle tracking (FIXED: true consecutive series)
+var int consecBull = 0
+var int consecBear = 0
+consecBull := candleBull ? nz(consecBull[1]) + 1 : 0
+consecBear := candleBear ? nz(consecBear[1]) + 1 : 0
+
+// Trend override (simplified to match intent)
+isStrongVolume = volume > avgVolume * trendOverrideVolMultiplier
+isStrongRange = (high - low) > currentATR * trendOverrideRangeMultiplier
+hasStrongTrendOverrideBull = enableTrendOverride and (consecBull >= consecutiveCandlesRequired) and isStrongVolume and isStrongRange
+hasStrongTrendOverrideBear = enableTrendOverride and (consecBear >= consecutiveCandlesRequired) and isStrongVolume and isStrongRange
+
+// Continuation capture (NEW): momentum continuation in trend, triggers on break of recent highs/lows during a run
+contBodyOK = atrMain > 0 ? (bodySize >= atrMain * contMinBodyATR) : true
+contVolOK = volume >= avgVolume * contVolMult
+recentHigh = ta.highest(high, contBreakoutLookback)[1]
+recentLow = ta.lowest(low, contBreakoutLookback)[1]
+
+continuationLong = enableContinuation and candleBull and contBodyOK and contVolOK and (consecBull >= contMinRunBars) and close > recentHigh and slopeMain == 1 and trend == 1
+continuationShort = enableContinuation and candleBear and contBodyOK and contVolOK and (consecBear >= contMinRunBars) and close < recentLow and slopeMain == -1 and trend == -1
+
+// Breakout trades (Allowed in range if it’s a real expansion)
+breakoutVolOK = volume >= avgVolume * breakoutVolMult
+breakoutTapeOK = bbWidth >= breakoutMinBBWidth or atrRegRatio >= 0.9
+breakoutLong = enableBreakoutTrades and candleBull and breakoutVolOK and breakoutTapeOK and close > recentHigh
+breakoutShort = enableBreakoutTrades and candleBear and breakoutVolOK and breakoutTapeOK and close < recentLow
+
+// HTF confirmation (as supplied)
+htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= minHTFAligned) or hasStrongTrendOverrideBull or hasMomentumOverrideLong or impulseLong or continuationLong or breakoutLong
+htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= minHTFAligned) or hasStrongTrendOverrideBear or hasMomentumOverrideShort or impulseShort or continuationShort or breakoutShort
+
+// Trend-only router: avoid chop/range unless impulse/breakout/continuation
+trendRegimeOK_base = (veryStrongTrend or moderateTrend) and not isChoppy and not rangingMarket
+rangeExceptionLong = (impulseLong or breakoutLong or continuationLong or hasMomentumOverrideLong or hasStrongTrendOverrideBull)
+rangeExceptionShort = (impulseShort or breakoutShort or continuationShort or hasMomentumOverrideShort or hasStrongTrendOverrideBear)
+
+trendRegimeOK_Long = trendRegimeOK_base or (allowContinuationBypassRanging and rangeExceptionLong)
+trendRegimeOK_Short = trendRegimeOK_base or (allowContinuationBypassRanging and rangeExceptionShort)
+
+chopOK_Long = (not isChoppy) or (allowContinuationBypassChop and rangeExceptionLong)
+chopOK_Short = (not isChoppy) or (allowContinuationBypassChop and rangeExceptionShort)
+
+// Volume regime filter bypass for impulse/breakout/continuation
+volOK_Long = volRegimeOK or (allowImpulseBypassVol and rangeExceptionLong)
+volOK_Short = volRegimeOK or (allowImpulseBypassVol and rangeExceptionShort)
+
+// Basic entry bar filters
+bodyStrong = not requireBodyStrength or (atr10 > 0 and bodySize >= atr10 * minBodyPctOfATR)
+longBarOK = bodyStrong and (not requireCandleDirection or candleBull)
+shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
+
+// ==================== DAILY LIMITS / COUNTERS ====================
+enableDailyLossCircuit = input.bool(true, "✅ Enable Daily Loss Circuit", group="🛡️ Production Safety")
+dailyLossMode = input.string("Dollar", "Daily Loss Mode", options=["Percent", "Dollar"], group="🛡️ Production Safety")
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0)
+maxDailyLossDollars = input.float(450.0, "Max Daily Loss ($)", minval=50, maxval=5000, group="🛡️ Production Safety")
+
+var int todayTradeCount = 0
+newDayDetected = ta.change(time("D")) != 0
+
+var float dailyPnL = 0.0
+var float dayStartNetprofit = na
+var float dayStartEquity = na
+if barstate.isfirst
+    dayStartNetprofit := strategy.netprofit
+    dayStartEquity := strategy.equity
+if newDayDetected
+    dayStartNetprofit := strategy.netprofit
+    dayStartEquity := strategy.equity
+    dailyPnL := 0.0
+    todayTradeCount := 0
+
+dailyPnL := na(dayStartNetprofit) ? 0.0 : (strategy.netprofit - dayStartNetprofit)
+dailyLossLimitPct = (na(dayStartEquity) or dayStartEquity <= 0) ? 0.0 : (dayStartEquity * (maxDailyLoss / 100.0))
+maxLossReached = enableDailyLossCircuit and ((dailyLossMode == "Percent" and dailyPnL <= -dailyLossLimitPct) or (dailyLossMode == "Dollar" and dailyPnL <= -maxDailyLossDollars))
+profitTargetReached = enableDailyProfitTarget and dailyPnL >= dailyProfitTarget
+maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades
+
+// ==================== POSITION SIZING (KEEP SIMPLE FOR LIVE) ====================
+useFixedContractSize = input.bool(true, "Use Fixed Contract Size", group="Sizing")
+fixedContracts = input.int(1, "Fixed Contracts", minval=1, maxval=10, group="Sizing")
+finalContractQty = useFixedContractSize ? fixedContracts : 1
+
+// ==================== DEDUPE ====================
+enableDedupe = input.bool(true, "✅ Enable Dedupe", group="🛡️ Production Safety")
+dedupeBars = input.int(2, "Dedupe Bars", minval=0, maxval=50, group="🛡️ Production Safety")
+dedupeSameBar = input.bool(true, "Block 2nd entry same bar", group="🛡️ Production Safety")
+var bool tookTradeThisBar = false
+if barstate.isnew
+    tookTradeThisBar := false
+
+var int lastLongSignalBar = na
+var int lastShortSignalBar = na
+barsSinceLongSignal = na(lastLongSignalBar) ? 999999 : (bar_index - lastLongSignalBar)
+barsSinceShortSignal = na(lastShortSignalBar) ? 999999 : (bar_index - lastShortSignalBar)
+dedupeLongOK = not enableDedupe or (barsSinceLongSignal > dedupeBars)
+dedupeShortOK = not enableDedupe or (barsSinceShortSignal > dedupeBars)
+sameBarOK = not (enableDedupe and dedupeSameBar and tookTradeThisBar)
+
+// ==================== ENTRY LOGIC (PRIORITY + CONTINUATION) ====================
+bool canEnterNewPosition = strategy.position_size == 0
+bool baseSafety = canEnterNewPosition and not maxTradesReached and not maxLossReached and not profitTargetReached and canTradeNow
+
+// Priority selection output
+var string selectedPriority = "NONE"
+var string activeSignalType = "NONE"
+var string entryPriority = "NONE"
+
+bool canGoLong = baseSafety and trendRegimeOK_Long and chopOK_Long and volOK_Long and htfConfirmLongOK and longBarOK
+bool canGoShort = baseSafety and trendRegimeOK_Short and chopOK_Short and volOK_Short and htfConfirmShortOK and shortBarOK
+
+var bool shouldEnterLong = false
+var bool shouldEnterShort = false
+shouldEnterLong := false
+shouldEnterShort := false
+selectedPriority := "NONE"
+
+// P0: Momentum
+if enablePrioritySystem and allowPriority0 and not shouldEnterLong and not shouldEnterShort
+    if canGoLong and hasMomentumOverrideLong
+        shouldEnterLong := true
+        selectedPriority := "P0:MOMENTUM"
+    else if canGoShort and hasMomentumOverrideShort
+        shouldEnterShort := true
+        selectedPriority := "P0:MOMENTUM"
+
+// P1: Impulse
+if enablePrioritySystem and allowPriority1 and not shouldEnterLong and not shouldEnterShort
+    if canGoLong and impulseLong
+        shouldEnterLong := true
+        selectedPriority := "P1:IMPULSE"
+    else if canGoShort and impulseShort
+        shouldEnterShort := true
+        selectedPriority := "P1:IMPULSE"
+
+// P2: Strong trend override
+if enablePrioritySystem and allowPriority2 and not shouldEnterLong and not shouldEnterShort
+    if canGoLong and hasStrongTrendOverrideBull
+        shouldEnterLong := true
+        selectedPriority := "P2:TREND"
+    else if canGoShort and hasStrongTrendOverrideBear
+        shouldEnterShort := true
+        selectedPriority := "P2:TREND"
+
+// P8: Continuation / Breakout (NEW) — catches the “5–7 candles in a row” runs
+if enablePrioritySystem and allowPriority8 and not shouldEnterLong and not shouldEnterShort
+    if canGoLong and (continuationLong or breakoutLong)
+        shouldEnterLong := true
+        selectedPriority := continuationLong ? "P8:CONTINUATION" : "P8:BREAKOUT"
+    else if canGoShort and (continuationShort or breakoutShort)
+        shouldEnterShort := true
+        selectedPriority := continuationShort ? "P8:CONTINUATION" : "P8:BREAKOUT"
+
+// Fallback: simple trend aligned entry if nothing else (kept conservative)
+if enablePrioritySystem and not shouldEnterLong and not shouldEnterShort
+    if canGoLong and trendAlignedLong and trend == 1 and slopeMain == 1 and adxValue >= 18
+        shouldEnterLong := true
+        selectedPriority := "P5:ALIGN"
+    else if canGoShort and trendAlignedShort and trend == -1 and slopeMain == -1 and adxValue >= 18
+        shouldEnterShort := true
+        selectedPriority := "P5:ALIGN"
+
+shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
+shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
+
+longCondition = shouldEnterLong and not tookTradeThisBar
+shortCondition = shouldEnterShort and not tookTradeThisBar
+
+activeSignalType :=
+    hasMomentumOverrideLong or hasMomentumOverrideShort ? "MOMENTUM" :
+    impulseLong or impulseShort ? "IMPULSE" :
+    hasStrongTrendOverrideBull or hasStrongTrendOverrideBear ? "TREND" :
+    continuationLong or continuationShort ? "CONTINUATION" :
+    breakoutLong or breakoutShort ? "BREAKOUT" :
+    "NORMAL"
+
+entryPriority := selectedPriority
+
+if longCondition and strategy.position_size == 0
+    if not alertOnlyMode
+        strategy.entry("LONG", strategy.long, qty=finalContractQty, comment="LONG " + activeSignalType + " " + selectedPriority)
+        tookTradeThisBar := true
+        lastLongSignalBar := bar_index
+        todayTradeCount += 1
+
+if shortCondition and strategy.position_size == 0
+    if not alertOnlyMode
+        strategy.entry("SHORT", strategy.short, qty=finalContractQty, comment="SHORT " + activeSignalType + " " + selectedPriority)
+        tookTradeThisBar := true
+        lastShortSignalBar := bar_index
+        todayTradeCount += 1
+
+// ==================== EXITS (KENYA LADDER + FIXED SAFETY) ====================
+getActiveSL() =>
+    float sl = mnq_customSL
+    if isMES and mes_useCustom
+        sl := mes_customSL
+    else if isMNQ and mnq_useCustom
+        sl := mnq_customSL
+    else if isMYM and mym_useCustom
+        sl := mym_customSL
+    else if isMCL and mcl_useCustom
+        sl := mcl_customSL
+    else if isMGC and mgc_useCustom
+        sl := mgc_customSL
+    else if isM2K and m2k_useCustom
+        sl := m2k_customSL
+    sl
+
+getBackupSL() =>
+    isMES ? backupSL_MES : isMNQ ? backupSL_MNQ : backupSL_Default
+
+activeSL = getActiveSL()
+
+// Profit ladder (MNQ-focused; unchanged intent)
+if strategy.position_size > 0
+    localEntryPrice = strategy.position_avg_price
+    localStopLoss = localEntryPrice - (isMNQ ? mnq_customSL : activeSL)
+
+    tp1Ticks = math.round((isMNQ ? mnq_customTP1 : (activeSL * 1.4)) / syminfo.mintick)
+    tp2Ticks = math.round((isMNQ ? mnq_customTP2 : (activeSL * 2.0)) / syminfo.mintick)
+    tp3Ticks = math.round((isMNQ ? mnq_customTP3 : (activeSL * 2.8)) / syminfo.mintick)
+    tp4Ticks = math.round((isMNQ ? mnq_customTP4 : (activeSL * 3.6)) / syminfo.mintick)
+
+    strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
+    strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
+    strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
+    strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
+    strategy.exit("SL", stop=localStopLoss)
+
+if strategy.position_size < 0
+    localEntryPrice = strategy.position_avg_price
+    localStopLoss = localEntryPrice + (isMNQ ? mnq_customSL : activeSL)
+
+    tp1Ticks = math.round((isMNQ ? mnq_customTP1 : (activeSL * 1.4)) / syminfo.mintick)
+    tp2Ticks = math.round((isMNQ ? mnq_customTP2 : (activeSL * 2.0)) / syminfo.mintick)
+    tp3Ticks = math.round((isMNQ ? mnq_customTP3 : (activeSL * 2.8)) / syminfo.mintick)
+    tp4Ticks = math.round((isMNQ ? mnq_customTP4 : (activeSL * 3.6)) / syminfo.mintick)
+
+    strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
+    strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
+    strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
+    strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
+    strategy.exit("SL", stop=localStopLoss)
+
+// SAFETY: Backup stop loss + Nuclear stop (FIXED: uses high/low intrabar)
+var float entryPrice = na
+var int entryBar = na
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryPrice := strategy.position_avg_price
+    entryBar := bar_index
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryPrice := na
+    entryBar := na
+
+holdingBars = (strategy.position_size != 0 and not na(entryBar)) ? (bar_index - entryBar) : 0
+
+if enableBackupSL and strategy.position_size != 0 and not na(entryPrice)
+    backupSLDistance = getBackupSL()
+    if strategy.position_size > 0
+        backupStopLevel = entryPrice - backupSLDistance
+        if low <= backupStopLevel
+            strategy.close("LONG", comment="BACKUP_SL")
+    else
+        backupStopLevel = entryPrice + backupSLDistance
+        if high >= backupStopLevel
+            strategy.close("SHORT", comment="BACKUP_SL")
+
+// NEW: nuclear distance stop (uses factor * backup distance)
+if enableNuclearExit and strategy.position_size != 0 and not na(entryPrice)
+    nuclearDist = getBackupSL() * nuclearExtraFactor
+    if strategy.position_size > 0 and low <= (entryPrice - nuclearDist)
+        strategy.close_all(comment="NUCLEAR_DISTANCE")
+    if strategy.position_size < 0 and high >= (entryPrice + nuclearDist)
+        strategy.close_all(comment="NUCLEAR_DISTANCE")
+
+// Existing: nuclear max bars
+if enableNuclearExit and strategy.position_size != 0 and holdingBars >= nuclearMaxBars
+    strategy.close_all(comment="NUCLEAR_MAXBARS")
+
+// ==================== 🔔 TRADERSPOST WEBHOOK ALERTS (FIXED FORMAT) ====================
+// IMPORTANT:
+// - Uses numeric `price` fields (no quotes)
+// - Includes `price` for market order + `entryPrice` for systems needing reference
+// - Uses `actualTicker` defaulting to chart symbol (avoids expired hardcoded contracts)
+
+tp1PointsPrice = (isMNQ ? mnq_customTP1 : (activeSL * 1.4))
+
+if longCondition and strategy.position_size == 0 and enableTradersPostAlerts
+    localSL = close - (isMNQ ? mnq_customSL : activeSL)
+    localTP1 = close + tp1PointsPrice
+    longMsg = '{' +
+        '"ticker":"' + actualTicker + '",' +
+        '"action":"buy",' +
+        '"sentiment":"bullish",' +
+        '"orderType":"market",' +
+        (includeSignalPrice ? '"price":' + str.tostring(close) + ',' : '') +
+        '"quantity":' + str.tostring(finalContractQty) + ',' +
+        '"stopLoss":{"price":' + str.tostring(localSL) + '},' +
+        '"takeProfit":{"price":' + str.tostring(localTP1) + '},' +
+        '"signalType":"' + activeSignalType + '",' +
+        '"priority":"' + selectedPriority + '",' +
+        '"entryPrice":' + str.tostring(close) + ',' +
+        '"direction":"LONG",' +
+        '"htfAlignment":' + str.tostring(htfAlignLongCount) + ',' +
+        '"adx":' + str.tostring(adxValue) + ',' +
+        '"timestamp":"' + str.tostring(time) + '"' +
+    '}'
+    alert(longMsg, alert.freq_once_per_bar)
+
+if shortCondition and strategy.position_size == 0 and enableTradersPostAlerts
+    localSL = close + (isMNQ ? mnq_customSL : activeSL)
+    localTP1 = close - tp1PointsPrice
+    shortMsg = '{' +
+        '"ticker":"' + actualTicker + '",' +
+        '"action":"sell",' +
+        '"sentiment":"bearish",' +
+        '"orderType":"market",' +
+        (includeSignalPrice ? '"price":' + str.tostring(close) + ',' : '') +
+        '"quantity":' + str.tostring(finalContractQty) + ',' +
+        '"stopLoss":{"price":' + str.tostring(localSL) + '},' +
+        '"takeProfit":{"price":' + str.tostring(localTP1) + '},' +
+        '"signalType":"' + activeSignalType + '",' +
+        '"priority":"' + selectedPriority + '",' +
+        '"entryPrice":' + str.tostring(close) + ',' +
+        '"direction":"SHORT",' +
+        '"htfAlignment":' + str.tostring(htfAlignShortCount) + ',' +
+        '"adx":' + str.tostring(adxValue) + ',' +
+        '"timestamp":"' + str.tostring(time) + '"' +
+    '}'
+    alert(shortMsg, alert.freq_once_per_bar)
+
+// ==================== VISUALS ====================
+plot(hullMain, "Hull Main", color=slopeMain == 1 ? color.new(color.green, 45) : slopeMain == -1 ? color.new(color.red, 45) : color.new(color.gray, 70), linewidth=2)
+plot(hullFast, "Hull Fast", color=slopeFast == 1 ? color.new(color.lime, 35) : slopeFast == -1 ? color.new(color.orange, 35) : color.new(color.gray, 70), linewidth=1)
+bgcolor(isChoppy ? color.new(color.red, 92) : na, title="Choppy")
+bgcolor(rangingMarket ? color.new(color.gray, 93) : na, title="Ranging")
+
+plotshape(longCondition, "LONG", shape.triangleup, location.belowbar, color=color.new(color.green, 0), size=size.tiny, text=selectedPriority)
+plotshape(shortCondition, "SHORT", shape.triangledown, location.abovebar, color=color.new(color.red, 0), size=size.tiny, text=selectedPriority)
+
