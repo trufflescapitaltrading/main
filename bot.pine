@@ -1,5 +1,5 @@
 //@version=5
-strategy("MNQ 3m-1.13.2026 12:33 Claude V.70+% 5-Star Scalper 1800+ P0/P1/P2 ONLY", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+strategy("MNQ 5m-1.13.2026 12:33 Claude V.70+% 5-Star Scalper 1800+ P0/P1/P2 ONLY", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
 
 // ==================== 💰 DAILY PROFIT TARGET ====================
 profitTargetGroup = "💰 Daily Profit Target"
@@ -109,7 +109,7 @@ disableChoppyInPosition = input.bool(false, "Disable Choppy When In Position", g
 emergencyGroup = "V8 Emergency Safety System"
 enableBackupSL = input.bool(true, "Enable Backup Stop Loss", group=emergencyGroup)
 backupSL_MES = input.float(18.0, "MES Backup SL (points)", group=emergencyGroup)
-backupSL_MNQ = input.float(80.0, "MNQ Backup SL (points)", group=emergencyGroup)
+backupSL_MNQ = input.float(120.0, "MNQ Backup SL (points)", group=emergencyGroup)
 backupSL_Default = input.float(30.0, "Default Backup SL (points)", group=emergencyGroup)
 enableNuclearExit = input.bool(true, "Enable Nuclear Emergency Exit", group=emergencyGroup)
 nuclearExtraFactor = input.float(2.5, "Nuclear Distance Factor", minval=1.5, maxval=5.0, group=emergencyGroup)
@@ -213,13 +213,13 @@ mes_customSL = input.float(7.0, "MES: Stop Loss (points)", group=perInstGroup)
 mes_customTP = input.float(10.0, "MES: Take Profit (points)", group=perInstGroup)
 mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
 
-//FOR 3-MINUTE CHART (unchanged)
+//FOR 5-MINUTE CHART (OPTIMIZED)
 mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
-mnq_customSL = input.float(30.0, "MNQ: Stop Loss (points)", group=perInstGroup)
-mnq_customTP1 = input.float(35.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
-mnq_customTP2 = input.float(60.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
-mnq_customTP3 = input.float(90.0, "MNQ: TP3 (points) - 10%", group=perInstGroup)
-mnq_customTP4 = input.float(120.0, "MNQ: TP4 (points) - 5%", group=perInstGroup)
+mnq_customSL = input.float(50.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1 = input.float(45.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
+mnq_customTP2 = input.float(70.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
+mnq_customTP3 = input.float(100.0, "MNQ: TP3 (points) - 10%", group=perInstGroup)
+mnq_customTP4 = input.float(150.0, "MNQ: TP4 (points) - 5%", group=perInstGroup)
 mnq_customQty = input.int(1, "MNQ: Position Size", minval=1, maxval=50, group=perInstGroup)
 
 mym_useCustom = input.bool(false, "MYM: Use Custom SL/TP/Size", group=perInstGroup)
@@ -261,7 +261,7 @@ baseHullMain = input.int(12, "Base Hull MA (Main)", minval=5, maxval=40)
 baseHullFast = input.int(7, "Base Hull MA (Fast)", minval=5, maxval=15)
 baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22)
 
-hullPeriodMain = isMYM ? math.round(baseHullMain * 0.75) : isMNQ ? baseHullMain : isMES ? math.round(baseHullMain * 0.75) : isMCL ? math.round(baseHullMain * 0.85) : isMGC ? baseHullMain : isM2K ? math.round(baseHullMain * 0.8) : baseHullMain
+hullPeriodMain = isMYM ? math.round(baseHullMain * 0.75) : isMNQ ? math.round(baseHullMain * 1.2) : isMES ? math.round(baseHullMain * 0.75) : isMCL ? math.round(baseHullMain * 0.85) : isMGC ? baseHullMain : isM2K ? math.round(baseHullMain * 0.8) : baseHullMain
 hullPeriodFast = isMYM ? math.round(baseHullFast * 0.85) : isMNQ ? baseHullFast : isMES ? math.round(baseHullFast * 0.85) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : isM2K ? math.round(baseHullFast * 0.9) : baseHullFast
 hullPeriodSignal = isMYM ? math.round(baseHullSignal * 0.85) : isMNQ ? baseHullSignal : isMES ? math.round(baseHullSignal * 0.85) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : isM2K ? math.round(baseHullSignal * 0.9) : baseHullSignal
 
@@ -505,7 +505,7 @@ useMarketRegime = input.bool(true, "Use Market Regime Detection")
 baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12)
 baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12)
 
-trendStrengthPeriod = isMYM ? math.round(baseTrendPeriod * 0.95) : isMNQ ? baseTrendPeriod : isMES ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isM2K ? math.round(baseTrendPeriod * 1.1) : baseTrendPeriod
+trendStrengthPeriod = isMYM ? math.round(baseTrendPeriod * 1.0) : isMNQ ? math.round(baseTrendPeriod * 1.2) : isMES ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isM2K ? math.round(baseTrendPeriod * 1.1) : baseTrendPeriod
 volatilityPeriod = isMYM ? math.round(baseVolPeriod * 0.95) : isMNQ ? baseVolPeriod : isMES ? baseVolPeriod : isMCL ? math.round(baseVolPeriod * 1.1) : isMGC ? math.round(baseVolPeriod * 1.2) : isM2K ? math.round(baseVolPeriod * 1.0) : baseVolPeriod
 
 useVolumeFilter = input.bool(true, "Use Volume Filter")
