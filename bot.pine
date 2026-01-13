@@ -109,10 +109,10 @@ disableChoppyInPosition = input.bool(false, "Disable Choppy When In Position", g
 emergencyGroup = "V8 Emergency Safety System"
 enableBackupSL = input.bool(true, "Enable Backup Stop Loss", group=emergencyGroup)
 backupSL_MES = input.float(18.0, "MES Backup SL (points)", group=emergencyGroup)
-backupSL_MNQ = input.float(120.0, "MNQ Backup SL (points)", group=emergencyGroup)
+backupSL_MNQ = input.float(80.0, "MNQ Backup SL (points)", group=emergencyGroup)
 backupSL_Default = input.float(30.0, "Default Backup SL (points)", group=emergencyGroup)
 enableNuclearExit = input.bool(true, "Enable Nuclear Emergency Exit", group=emergencyGroup)
-nuclearExtraFactor = input.float(3.0, "Nuclear Distance Factor", minval=1.5, maxval=5.0, group=emergencyGroup)
+nuclearExtraFactor = input.float(2.5, "Nuclear Distance Factor", minval=1.5, maxval=5.0, group=emergencyGroup)
 nuclearMaxBars = input.int(150, "Nuclear Max Bars", minval=10, maxval=500, group=emergencyGroup)
 
 // ==================== 🕐 SESSION FILTERS (FIXED) ====================
@@ -215,7 +215,7 @@ mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=pe
 
 //FOR 3-MINUTE CHART (unchanged)
 mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
-mnq_customSL = input.float(40.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customSL = input.float(30.0, "MNQ: Stop Loss (points)", group=perInstGroup)
 mnq_customTP1 = input.float(35.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
 mnq_customTP2 = input.float(60.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
 mnq_customTP3 = input.float(90.0, "MNQ: TP3 (points) - 10%", group=perInstGroup)
