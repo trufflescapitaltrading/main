@@ -392,7 +392,7 @@ exitControlsGroup = "🚨 Exit Controls"
 minBarsBeforeExit = input.int(1, "Min Bars Before Any Exit", minval=0, maxval=5, group=exitControlsGroup)
 minBarsBeforeSignalReversal = input.int(2, "Min Bars Before Signal Reversal", minval=1, maxval=10, group=exitControlsGroup)
 
-useSignalReversalExits = input.bool(false, "Signal Reversal Exits - DISABLED", group=exitControlsGroup)
+useSignalReversalExits = input.bool(true, "Signal Reversal Exits - ENABLED", group=exitControlsGroup)
 useEndOfDayExits = input.bool(true, "End of Day Exits", group=exitControlsGroup)
 endOfDayTime = input.int(1550, "End of Day Time (ET)", minval=1500, maxval=1700, group=exitControlsGroup)
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
@@ -1605,11 +1605,15 @@ if enableBackupSL and strategy.position_size != 0 and not na(entryPrice)
 if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclearMaxBars
     strategy.close_all(comment="NUCLEAR_EXIT")
 
+// Signal Reversal Logic: ONLY Close if we have a STRONGER opposing signal
+strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull
+strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear
+
 if useSignalReversalExits and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
-    if strategy.position_size > 0 and ultraSellSignal
-        strategy.close("LONG", comment="SIGNAL_REVERSAL")
-    else if strategy.position_size < 0 and ultraBuySignal
-        strategy.close("SHORT", comment="SIGNAL_REVERSAL")
+    if strategy.position_size > 0 and strongOpposingSell
+        strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
+    else if strategy.position_size < 0 and strongOpposingBuy
+        strategy.close("SHORT", comment="SIGNAL_REVERSAL_STRONG")
 
 if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay
     strategy.close_all(comment="EOD_EXIT")
