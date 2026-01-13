@@ -1,0 +1,712 @@
+//@version=5
+strategy("MNQ 3m-1.13.2026 V.71 IMPROVED 5-Star Scalper - ALL FIXES APPLIED", 
+     overlay=true, 
+     initial_capital=25000, 
+     default_qty_type=strategy.fixed, 
+     default_qty_value=1, 
+     pyramiding=1, 
+     calc_on_order_fills=true,  // Changed to true for better order fill handling
+     calc_on_every_tick=true, 
+     process_orders_on_close=true,  // Changed to true for immediate stop loss execution
+     backtest_fill_limits_assumption=0, 
+     dynamic_requests=true)
+
+// ============================================================================
+// IMPROVEMENTS MADE IN V.71:
+// 1. STOP LOSS FIX: Consolidated exit logic, process_orders_on_close=true
+// 2. ENTRY CONDITIONS: Loosened filters to capture more trending moves
+// 3. TREND CONTINUATION: Added multi-candle trend detection
+// 4. TRADERSPOST: Fixed JSON format (numbers not strings), updated contract
+// 5. MOMENTUM OVERRIDE: Enhanced P0/P1/P2 to bypass restrictive filters
+// ============================================================================
+
+// ==================== INPUT GROUPS ====================
+string riskGroup = "=== RISK MANAGEMENT ==="
+string entryGroup = "=== ENTRY CONDITIONS ==="
+string htfGroup = "=== MULTI-TIMEFRAME ==="
+string filterGroup = "=== MARKET FILTERS ==="
+string trendGroup = "=== TREND DETECTION ==="
+string exitGroup = "=== EXIT SETTINGS ==="
+string perInstGroup = "=== INSTRUMENT SETTINGS ==="
+string emergencyGroup = "=== EMERGENCY EXITS ==="
+string profitGroup = "=== PROFIT TARGETS ==="
+string alertGroup = "=== TRADERSPOST ALERTS ==="
+string sessionGroup = "=== SESSION SETTINGS ==="
+
+// ==================== RISK MANAGEMENT ====================
+dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", group=riskGroup)
+dailyLossLimit = input.float(500.0, "Daily Loss Limit ($)", group=riskGroup)
+dailyLossPercent = input.float(2.0, "Daily Loss Circuit (%)", group=riskGroup)
+maxPositionSize = input.int(5, "Max Position Size", minval=1, maxval=20, group=riskGroup)
+enableDynamicSizing = input.bool(true, "Enable Dynamic Position Sizing", group=riskGroup)
+
+// ==================== INSTRUMENT SETTINGS (MNQ) ====================
+mnq_customSL = input.float(25.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1 = input.float(35.0, "MNQ: Take Profit 1 (points)", group=perInstGroup)
+mnq_customTP2 = input.float(55.0, "MNQ: Take Profit 2 (points)", group=perInstGroup)
+mnq_customTP3 = input.float(75.0, "MNQ: Take Profit 3 (points)", group=perInstGroup)
+mnq_customTP4 = input.float(100.0, "MNQ: Take Profit 4 (points)", group=perInstGroup)
+mnq_tickSize = 0.25
+mnq_tickValue = 0.50
+
+// ==================== EMERGENCY EXITS ====================
+backupSL_MNQ = input.float(50.0, "MNQ Backup SL (points)", group=emergencyGroup, tooltip="Triggered if primary SL fails")
+nuclearSL_MNQ = input.float(80.0, "MNQ Nuclear SL (points)", group=emergencyGroup, tooltip="Last resort emergency exit")
+maxHoldBars = input.int(40, "Max Hold Bars", minval=5, maxval=100, group=emergencyGroup)
+enableQuickExit = input.bool(true, "Enable Quick Exit Mode", group=emergencyGroup)
+
+// ==================== ENTRY CONDITIONS ====================
+// LOOSENED THRESHOLDS TO CAPTURE MORE TRADES
+minStarScore = input.int(3, "Minimum Star Score", minval=1, maxval=5, group=entryGroup, tooltip="Lowered from 4 to capture more setups")
+enableMomentumOverride = input.bool(true, "Enable Momentum Override (P0)", group=entryGroup)
+enableImpulseOverride = input.bool(true, "Enable Impulse Override (P1)", group=entryGroup)
+enableTrendOverride = input.bool(true, "Enable Strong Trend Override (P2)", group=entryGroup)
+
+// Priority enables
+allowPriority3 = input.bool(true, "Allow P3 (5-Star Entry)", group=entryGroup)
+allowPriority4 = input.bool(true, "Allow P4 (4-Star Entry)", group=entryGroup)
+allowPriority5 = input.bool(true, "Allow P5 (3-Star Entry)", group=entryGroup)
+allowPriority6 = input.bool(true, "Allow P6 (2-Star Entry)", group=entryGroup)
+allowPriority7 = input.bool(true, "Allow P7 (Swing Signal)", group=entryGroup)
+
+// ==================== MULTI-TIMEFRAME SETTINGS ====================
+// LOOSENED: Only require 1 of 3 timeframes (33%)
+minHTFAligned = input.int(1, "Min HTF Alignments Required (1 of 3 = 33%)", minval=0, maxval=3, group=htfGroup)
+htf1 = input.timeframe("15", "HTF 1", group=htfGroup)
+htf2 = input.timeframe("60", "HTF 2", group=htfGroup)
+htf3 = input.timeframe("240", "HTF 3", group=htfGroup)
+bypassHTFForMomentum = input.bool(true, "Bypass HTF for P0/P1 Momentum", group=htfGroup)
+
+// ==================== MARKET FILTERS ====================
+// LOOSENED FILTER THRESHOLDS
+choppyADXThreshold = input.float(18.0, "Choppy Market ADX Threshold", group=filterGroup, tooltip="Lowered from 20 to allow more entries")
+choppyATRMultiplier = input.float(0.4, "Choppy ATR Multiplier", group=filterGroup, tooltip="Lowered from 0.5")
+choppyBBWidth = input.float(0.008, "Choppy BB Width Threshold", group=filterGroup, tooltip="Lowered from 0.01")
+
+grayADXThreshold = input.float(15.0, "Gray Zone ADX Threshold", group=filterGroup, tooltip="Lowered from 18")
+grayATRMultiplier = input.float(0.3, "Gray Zone ATR Multiplier", group=filterGroup, tooltip="Lowered from 0.4")
+grayBBWidthThreshold = input.float(0.006, "Gray Zone BB Width", group=filterGroup, tooltip="Lowered from 0.008")
+grayVolumeMultiplier = input.float(0.6, "Gray Zone Volume Multiplier", group=filterGroup, tooltip="Lowered from 0.7")
+
+// ==================== TREND CONTINUATION SETTINGS (NEW) ====================
+enableTrendContinuation = input.bool(true, "Enable Trend Continuation Detection", group=trendGroup)
+minConsecutiveCandles = input.int(2, "Min Consecutive Same-Direction Candles", minval=2, maxval=5, group=trendGroup)
+minTrendMovePoints = input.float(40.0, "Min Trend Move (points)", group=trendGroup, tooltip="Minimum points for trend confirmation")
+trendMomentumMultiplier = input.float(1.2, "Trend Momentum ATR Multiplier", group=trendGroup)
+
+// ==================== SESSION SETTINGS ====================
+enableSessionFilter = input.bool(true, "Enable Session Filter", group=sessionGroup)
+sessionStart = input.session("0830-1600", "Trading Session (EST)", group=sessionGroup)
+enablePreMarket = input.bool(false, "Allow Pre-Market Trading", group=sessionGroup)
+enableAfterHours = input.bool(false, "Allow After-Hours Trading", group=sessionGroup)
+
+// ==================== TRADERSPOST ALERTS ====================
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts", group=alertGroup)
+// FIXED: Updated to current contract (June 2026)
+tradersPostSymbol = input.string("MNQM2026", "TradersPost Symbol (Update contract!)", group=alertGroup, tooltip="Update to current front-month contract")
+useAutoSymbol = input.bool(true, "Auto-detect symbol from chart", group=alertGroup, tooltip="Recommended: Uses chart symbol automatically")
+includeEntryPrice = input.bool(true, "Include Entry Price in Signal", group=alertGroup)
+
+// ==================== INDICATOR CALCULATIONS ====================
+
+// === Moving Averages ===
+sma9 = ta.sma(close, 9)
+sma50 = ta.sma(close, 50)
+sma180 = ta.sma(close, 180)
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+
+// Hull Moving Average
+hmaLength = input.int(20, "HMA Length", minval=5)
+hma = ta.hma(close, hmaLength)
+hmaSlope = hma - hma[1]
+
+// === ATR & Volatility ===
+atrLength = input.int(14, "ATR Length")
+atr = ta.atr(atrLength)
+atrSma = ta.sma(atr, 50)
+volatilityRatio = atr / atrSma
+
+// === ADX ===
+adxLength = input.int(14, "ADX Length")
+[diPlus, diMinus, adxValue] = ta.dmi(adxLength, adxLength)
+
+// === Bollinger Bands ===
+bbLength = input.int(20, "BB Length")
+bbMult = input.float(2.0, "BB Multiplier")
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, bbLength, bbMult)
+bbWidth = (bbUpper - bbLower) / bbMiddle
+
+// === RSI ===
+rsiLength = input.int(14, "RSI Length")
+rsi = ta.rsi(close, rsiLength)
+
+// === Stochastic ===
+stochK = ta.stoch(close, high, low, 14)
+stochD = ta.sma(stochK, 3)
+
+// === SuperTrend ===
+stFactor = input.float(3.0, "SuperTrend Factor")
+stPeriod = input.int(10, "SuperTrend Period")
+[superTrend, stDirection] = ta.supertrend(stFactor, stPeriod)
+
+// === Volume ===
+volumeSma = ta.sma(volume, 20)
+volumeRatio = volume / volumeSma
+
+// ==================== MULTI-TIMEFRAME DATA ====================
+htf1_ema50 = request.security(syminfo.tickerid, htf1, ta.ema(close, 50))
+htf2_ema50 = request.security(syminfo.tickerid, htf2, ta.ema(close, 50))
+htf3_ema50 = request.security(syminfo.tickerid, htf3, ta.ema(close, 50))
+
+htf1_bullish = close > htf1_ema50
+htf2_bullish = close > htf2_ema50
+htf3_bullish = close > htf3_ema50
+
+htf1_bearish = close < htf1_ema50
+htf2_bearish = close < htf2_ema50
+htf3_bearish = close < htf3_ema50
+
+htfBullishCount = (htf1_bullish ? 1 : 0) + (htf2_bullish ? 1 : 0) + (htf3_bullish ? 1 : 0)
+htfBearishCount = (htf1_bearish ? 1 : 0) + (htf2_bearish ? 1 : 0) + (htf3_bearish ? 1 : 0)
+
+// ==================== TREND CONTINUATION DETECTION (NEW) ====================
+// Detect consecutive candles in same direction
+greenCandle = close > open
+redCandle = close < open
+
+// Count consecutive green/red candles
+var int consecutiveGreen = 0
+var int consecutiveRed = 0
+
+if greenCandle
+    consecutiveGreen := consecutiveGreen + 1
+    consecutiveRed := 0
+else if redCandle
+    consecutiveRed := consecutiveRed + 1
+    consecutiveGreen := 0
+else
+    consecutiveGreen := 0
+    consecutiveRed := 0
+
+// Calculate move size over consecutive candles
+var float trendStartPrice = close
+var float currentTrendMove = 0.0
+
+if consecutiveGreen == 1
+    trendStartPrice := open
+if consecutiveRed == 1
+    trendStartPrice := open
+
+currentTrendMove := math.abs(close - trendStartPrice)
+
+// Strong trend continuation signals
+strongBullishContinuation = consecutiveGreen >= minConsecutiveCandles and 
+                            currentTrendMove >= minTrendMovePoints and
+                            hmaSlope > 0 and
+                            close > ema9
+
+strongBearishContinuation = consecutiveRed >= minConsecutiveCandles and 
+                            currentTrendMove >= minTrendMovePoints and
+                            hmaSlope < 0 and
+                            close < ema9
+
+// ==================== CANDLESTICK PATTERNS ====================
+// Bullish Patterns
+bullishEngulfing = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bullishHammer = (high - low) > 3 * math.abs(close - open) and (close - low) / (high - low) > 0.6 and (open - low) / (high - low) > 0.6
+morningStar = close[2] < open[2] and math.abs(close[1] - open[1]) < (high[1] - low[1]) * 0.3 and close > open and close > (open[2] + close[2]) / 2
+bullishHarami = close[1] < open[1] and close > open and close < open[1] and open > close[1]
+piercingLine = close[1] < open[1] and close > open and open < close[1] and close > (open[1] + close[1]) / 2
+threeWhiteSoldiers = close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
+bullishKicker = close[1] < open[1] and close > open and open > open[1]
+tweezerBottom = low == low[1] and close > open and close[1] < open[1]
+risingThree = close[4] > open[4] and close > open and close > close[4] and low > low[4] and high < high[4]
+
+// Bearish Patterns
+bearishEngulfing = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+bearishHammer = (high - low) > 3 * math.abs(close - open) and (high - close) / (high - low) > 0.6 and (high - open) / (high - low) > 0.6
+eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) < (high[1] - low[1]) * 0.3 and close < open and close < (open[2] + close[2]) / 2
+bearishHarami = close[1] > open[1] and close < open and close > open[1] and open < close[1]
+darkCloudCover = close[1] > open[1] and close < open and open > close[1] and close < (open[1] + close[1]) / 2
+threeBlackCrows = close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+bearishKicker = close[1] > open[1] and close < open and open < open[1]
+tweezerTop = high == high[1] and close < open and close[1] > open[1]
+fallingThree = close[4] < open[4] and close < open and close < close[4] and high < high[4] and low > low[4]
+
+// Pattern scoring
+bullishPatternScore = (bullishEngulfing ? 2 : 0) + (bullishHammer ? 1 : 0) + (morningStar ? 2 : 0) + 
+                      (bullishHarami ? 1 : 0) + (piercingLine ? 1 : 0) + (threeWhiteSoldiers ? 2 : 0) +
+                      (bullishKicker ? 2 : 0) + (tweezerBottom ? 1 : 0) + (risingThree ? 1 : 0)
+
+bearishPatternScore = (bearishEngulfing ? 2 : 0) + (bearishHammer ? 1 : 0) + (eveningStar ? 2 : 0) + 
+                      (bearishHarami ? 1 : 0) + (darkCloudCover ? 1 : 0) + (threeBlackCrows ? 2 : 0) +
+                      (bearishKicker ? 2 : 0) + (tweezerTop ? 1 : 0) + (fallingThree ? 1 : 0)
+
+// ==================== STAR SCORE CALCULATION ====================
+// Calculate comprehensive star score (1-5)
+var int starScoreLong = 0
+var int starScoreShort = 0
+
+// Long score components
+trendAlignedLong = close > ema21 and ema21 > ema50 and hmaSlope > 0
+momentumLong = rsi > 50 and rsi < 75 and stochK > stochD
+volatilityOK = bbWidth > grayBBWidthThreshold and volatilityRatio > 0.7
+volumeConfirm = volumeRatio > 0.8
+superTrendLong = stDirection < 0
+
+starScoreLong := (trendAlignedLong ? 1 : 0) + (momentumLong ? 1 : 0) + (volatilityOK ? 1 : 0) + 
+                 (volumeConfirm ? 1 : 0) + (superTrendLong ? 1 : 0) + (bullishPatternScore > 0 ? 1 : 0)
+starScoreLong := math.min(starScoreLong, 5)
+
+// Short score components
+trendAlignedShort = close < ema21 and ema21 < ema50 and hmaSlope < 0
+momentumShort = rsi < 50 and rsi > 25 and stochK < stochD
+superTrendShort = stDirection > 0
+
+starScoreShort := (trendAlignedShort ? 1 : 0) + (momentumShort ? 1 : 0) + (volatilityOK ? 1 : 0) + 
+                  (volumeConfirm ? 1 : 0) + (superTrendShort ? 1 : 0) + (bearishPatternScore > 0 ? 1 : 0)
+starScoreShort := math.min(starScoreShort, 5)
+
+// ==================== MARKET CONDITION FILTERS ====================
+// Choppy market detection (LOOSENED)
+isChoppy = adxValue < choppyADXThreshold and 
+           volatilityRatio < choppyATRMultiplier and 
+           bbWidth < choppyBBWidth
+
+// Gray zone detection (LOOSENED)  
+isGrayZone = adxValue < grayADXThreshold and 
+             volatilityRatio < grayATRMultiplier and 
+             bbWidth < grayBBWidthThreshold and
+             volumeRatio < grayVolumeMultiplier
+
+// ==================== SESSION FILTER ====================
+inSession = true
+if enableSessionFilter
+    inSession := not na(time(timeframe.period, sessionStart, "America/New_York"))
+
+// ==================== PRIORITY SIGNAL DETECTION ====================
+// P0: MOMENTUM OVERRIDE - Strongest signal, bypasses most filters
+p0_bullish = enableMomentumOverride and 
+             adxValue > 30 and 
+             diPlus > diMinus and 
+             rsi > 55 and rsi < 80 and
+             close > ema9 and
+             hmaSlope > atr * 0.1 and
+             (consecutiveGreen >= 2 or strongBullishContinuation)
+
+p0_bearish = enableMomentumOverride and 
+             adxValue > 30 and 
+             diMinus > diPlus and 
+             rsi < 45 and rsi > 20 and
+             close < ema9 and
+             hmaSlope < -atr * 0.1 and
+             (consecutiveRed >= 2 or strongBearishContinuation)
+
+// P1: IMPULSE OVERRIDE - Strong breakout/impulse moves
+p1_bullish = enableImpulseOverride and
+             close > bbUpper and
+             volumeRatio > 1.3 and
+             adxValue > 22 and
+             rsi > 55 and
+             hmaSlope > 0
+
+p1_bearish = enableImpulseOverride and
+             close < bbLower and
+             volumeRatio > 1.3 and
+             adxValue > 22 and
+             rsi < 45 and
+             hmaSlope < 0
+
+// P2: STRONG TREND OVERRIDE - Clear trending conditions
+p2_bullish = enableTrendOverride and
+             adxValue > 25 and
+             diPlus > diMinus and
+             close > ema21 and ema21 > ema50 and
+             stDirection < 0 and
+             (htfBullishCount >= 1 or bypassHTFForMomentum)
+
+p2_bearish = enableTrendOverride and
+             adxValue > 25 and
+             diMinus > diPlus and
+             close < ema21 and ema21 < ema50 and
+             stDirection > 0 and
+             (htfBearishCount >= 1 or bypassHTFForMomentum)
+
+// P3-P6: Star-based entries (with loosened conditions)
+p3_bullish = allowPriority3 and starScoreLong >= 5 and htfBullishCount >= minHTFAligned
+p3_bearish = allowPriority3 and starScoreShort >= 5 and htfBearishCount >= minHTFAligned
+
+p4_bullish = allowPriority4 and starScoreLong >= 4 and htfBullishCount >= minHTFAligned
+p4_bearish = allowPriority4 and starScoreShort >= 4 and htfBearishCount >= minHTFAligned
+
+p5_bullish = allowPriority5 and starScoreLong >= 3 and htfBullishCount >= minHTFAligned
+p5_bearish = allowPriority5 and starScoreShort >= 3 and htfBearishCount >= minHTFAligned
+
+p6_bullish = allowPriority6 and starScoreLong >= 2 and htfBullishCount >= minHTFAligned and adxValue > 20
+p6_bearish = allowPriority6 and starScoreShort >= 2 and htfBearishCount >= minHTFAligned and adxValue > 20
+
+// P7: Swing signal - trend following on pullbacks
+p7_bullish = allowPriority7 and close > ema50 and close < ema21 and hmaSlope > 0 and rsi < 45 and rsi > 30
+p7_bearish = allowPriority7 and close < ema50 and close > ema21 and hmaSlope < 0 and rsi > 55 and rsi < 70
+
+// ==================== TREND CONTINUATION ENTRIES (NEW) ====================
+// Special entry for capturing multi-candle moves
+trendContinuationLong = enableTrendContinuation and
+                        strongBullishContinuation and
+                        adxValue > 20 and
+                        close > ema21 and
+                        not isChoppy
+
+trendContinuationShort = enableTrendContinuation and
+                         strongBearishContinuation and
+                         adxValue > 20 and
+                         close < ema21 and
+                         not isChoppy
+
+// ==================== FINAL ENTRY CONDITIONS ====================
+// Determine priority and signal type
+var string signalType = ""
+var string priorityLevel = ""
+
+// Long conditions - P0/P1/P2 bypass choppy/gray filters
+longConditionP0 = p0_bullish and inSession
+longConditionP1 = p1_bullish and inSession and not p0_bullish
+longConditionP2 = p2_bullish and inSession and not p0_bullish and not p1_bullish
+longConditionTrend = trendContinuationLong and inSession and not p0_bullish and not p1_bullish and not p2_bullish
+
+// Standard entries require non-choppy conditions (but loosened)
+longConditionP3 = p3_bullish and inSession and not isChoppy and not longConditionP0 and not longConditionP1 and not longConditionP2 and not longConditionTrend
+longConditionP4 = p4_bullish and inSession and not isChoppy and not longConditionP0 and not longConditionP1 and not longConditionP2 and not longConditionTrend and not longConditionP3
+longConditionP5 = p5_bullish and inSession and not isGrayZone and not longConditionP0 and not longConditionP1 and not longConditionP2 and not longConditionTrend and not longConditionP3 and not longConditionP4
+longConditionP6 = p6_bullish and inSession and not isGrayZone and not longConditionP0 and not longConditionP1 and not longConditionP2 and not longConditionTrend and not longConditionP3 and not longConditionP4 and not longConditionP5
+longConditionP7 = p7_bullish and inSession and not isGrayZone and not longConditionP0 and not longConditionP1 and not longConditionP2 and not longConditionTrend and not longConditionP3 and not longConditionP4 and not longConditionP5 and not longConditionP6
+
+// Short conditions - P0/P1/P2 bypass choppy/gray filters
+shortConditionP0 = p0_bearish and inSession
+shortConditionP1 = p1_bearish and inSession and not p0_bearish
+shortConditionP2 = p2_bearish and inSession and not p0_bearish and not p1_bearish
+shortConditionTrend = trendContinuationShort and inSession and not p0_bearish and not p1_bearish and not p2_bearish
+
+// Standard short entries
+shortConditionP3 = p3_bearish and inSession and not isChoppy and not shortConditionP0 and not shortConditionP1 and not shortConditionP2 and not shortConditionTrend
+shortConditionP4 = p4_bearish and inSession and not isChoppy and not shortConditionP0 and not shortConditionP1 and not shortConditionP2 and not shortConditionTrend and not shortConditionP3
+shortConditionP5 = p5_bearish and inSession and not isGrayZone and not shortConditionP0 and not shortConditionP1 and not shortConditionP2 and not shortConditionTrend and not shortConditionP3 and not shortConditionP4
+shortConditionP6 = p6_bearish and inSession and not isGrayZone and not shortConditionP0 and not shortConditionP1 and not shortConditionP2 and not shortConditionTrend and not shortConditionP3 and not shortConditionP4 and not shortConditionP5
+shortConditionP7 = p7_bearish and inSession and not isGrayZone and not shortConditionP0 and not shortConditionP1 and not shortConditionP2 and not shortConditionTrend and not shortConditionP3 and not shortConditionP4 and not shortConditionP5 and not shortConditionP6
+
+// Combined conditions
+longCondition = longConditionP0 or longConditionP1 or longConditionP2 or longConditionTrend or 
+                longConditionP3 or longConditionP4 or longConditionP5 or longConditionP6 or longConditionP7
+
+shortCondition = shortConditionP0 or shortConditionP1 or shortConditionP2 or shortConditionTrend or
+                 shortConditionP3 or shortConditionP4 or shortConditionP5 or shortConditionP6 or shortConditionP7
+
+// Set priority level for alerts
+if longConditionP0 or shortConditionP0
+    priorityLevel := "P0:MOMENTUM"
+    signalType := "MOMENTUM"
+else if longConditionP1 or shortConditionP1
+    priorityLevel := "P1:IMPULSE"
+    signalType := "IMPULSE"
+else if longConditionP2 or shortConditionP2
+    priorityLevel := "P2:TREND"
+    signalType := "TREND"
+else if longConditionTrend or shortConditionTrend
+    priorityLevel := "P2:CONTINUATION"
+    signalType := "CONTINUATION"
+else if longConditionP3 or shortConditionP3
+    priorityLevel := "P3:5STAR"
+    signalType := "STAR"
+else if longConditionP4 or shortConditionP4
+    priorityLevel := "P4:4STAR"
+    signalType := "STAR"
+else if longConditionP5 or shortConditionP5
+    priorityLevel := "P5:3STAR"
+    signalType := "STAR"
+else if longConditionP6 or shortConditionP6
+    priorityLevel := "P6:2STAR"
+    signalType := "STAR"
+else if longConditionP7 or shortConditionP7
+    priorityLevel := "P7:SWING"
+    signalType := "SWING"
+
+// ==================== POSITION SIZING ====================
+baseQty = 1
+var int finalContractQty = baseQty
+
+if enableDynamicSizing
+    // Increase size for high-confidence setups
+    if longConditionP0 or shortConditionP0
+        finalContractQty := math.min(3, maxPositionSize)
+    else if longConditionP1 or shortConditionP1 or longConditionP2 or shortConditionP2
+        finalContractQty := math.min(2, maxPositionSize)
+    else
+        finalContractQty := 1
+else
+    finalContractQty := baseQty
+
+// ==================== DAILY P&L TRACKING ====================
+var float dailyPnL = 0.0
+var int lastTradeDay = 0
+
+currentDay = dayofmonth
+if currentDay != lastTradeDay
+    dailyPnL := 0.0
+    lastTradeDay := currentDay
+
+// Update daily PnL
+if strategy.closedtrades > 0
+    lastTradePnL = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    dailyPnL := dailyPnL + lastTradePnL
+
+// Circuit breakers
+hitDailyProfit = dailyPnL >= dailyProfitTarget
+hitDailyLoss = dailyPnL <= -dailyLossLimit or (strategy.equity / strategy.initial_capital - 1) * 100 <= -dailyLossPercent
+
+allowEntryLong = not hitDailyProfit and not hitDailyLoss
+allowEntryShort = not hitDailyProfit and not hitDailyLoss
+
+// ==================== STRATEGY EXECUTION ====================
+// Track entry bar for max hold
+var int entryBar = 0
+
+// LONG ENTRY
+if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0
+    strategy.entry("Long", strategy.long, qty=finalContractQty)
+    entryBar := bar_index
+
+// SHORT ENTRY  
+if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0
+    strategy.entry("Short", strategy.short, qty=finalContractQty)
+    entryBar := bar_index
+
+// ==================== EXIT MANAGEMENT (CONSOLIDATED & FIXED) ====================
+// Kenya Profit System: 60/25/10/5 partial take-profit ladder
+// FIXED: Proper tick conversion and consolidated exit logic
+
+if strategy.position_size > 0  // LONG POSITION
+    localEntryPrice = strategy.position_avg_price
+    
+    // Calculate absolute price levels
+    localStopLoss = localEntryPrice - mnq_customSL
+    localBackupSL = localEntryPrice - backupSL_MNQ
+    localNuclearSL = localEntryPrice - nuclearSL_MNQ
+    
+    // Calculate tick-based profits for TP (points / tickSize)
+    tp1Ticks = math.round(mnq_customTP1 / mnq_tickSize)
+    tp2Ticks = math.round(mnq_customTP2 / mnq_tickSize)
+    tp3Ticks = math.round(mnq_customTP3 / mnq_tickSize)
+    tp4Ticks = math.round(mnq_customTP4 / mnq_tickSize)
+    
+    // CONSOLIDATED EXIT: All exits in one call with from_entry
+    // Primary exits with partial take profits
+    strategy.exit("TP1_Long", from_entry="Long", qty_percent=60, profit=tp1Ticks, stop=localStopLoss)
+    strategy.exit("TP2_Long", from_entry="Long", qty_percent=25, profit=tp2Ticks, stop=localStopLoss)
+    strategy.exit("TP3_Long", from_entry="Long", qty_percent=10, profit=tp3Ticks, stop=localStopLoss)
+    strategy.exit("TP4_Long", from_entry="Long", qty_percent=5, profit=tp4Ticks, stop=localStopLoss)
+    
+    // Backup stop loss (wider) - catches if primary fails
+    strategy.exit("BackupSL_Long", from_entry="Long", stop=localBackupSL)
+    
+    // Nuclear emergency exit
+    if close <= localNuclearSL
+        strategy.close("Long", comment="NUCLEAR EXIT")
+    
+    // Max hold bars exit
+    if bar_index - entryBar >= maxHoldBars
+        strategy.close("Long", comment="MAX HOLD EXIT")
+    
+    // Quick exit on reversal signal
+    if enableQuickExit and (shortConditionP0 or shortConditionP1)
+        strategy.close("Long", comment="QUICK EXIT - REVERSAL")
+
+if strategy.position_size < 0  // SHORT POSITION
+    localEntryPrice = strategy.position_avg_price
+    
+    // Calculate absolute price levels (reversed for short)
+    localStopLoss = localEntryPrice + mnq_customSL
+    localBackupSL = localEntryPrice + backupSL_MNQ
+    localNuclearSL = localEntryPrice + nuclearSL_MNQ
+    
+    // Calculate tick-based profits for TP
+    tp1Ticks = math.round(mnq_customTP1 / mnq_tickSize)
+    tp2Ticks = math.round(mnq_customTP2 / mnq_tickSize)
+    tp3Ticks = math.round(mnq_customTP3 / mnq_tickSize)
+    tp4Ticks = math.round(mnq_customTP4 / mnq_tickSize)
+    
+    // CONSOLIDATED EXIT: All exits in one call with from_entry
+    strategy.exit("TP1_Short", from_entry="Short", qty_percent=60, profit=tp1Ticks, stop=localStopLoss)
+    strategy.exit("TP2_Short", from_entry="Short", qty_percent=25, profit=tp2Ticks, stop=localStopLoss)
+    strategy.exit("TP3_Short", from_entry="Short", qty_percent=10, profit=tp3Ticks, stop=localStopLoss)
+    strategy.exit("TP4_Short", from_entry="Short", qty_percent=5, profit=tp4Ticks, stop=localStopLoss)
+    
+    // Backup stop loss
+    strategy.exit("BackupSL_Short", from_entry="Short", stop=localBackupSL)
+    
+    // Nuclear emergency exit
+    if close >= localNuclearSL
+        strategy.close("Short", comment="NUCLEAR EXIT")
+    
+    // Max hold bars exit
+    if bar_index - entryBar >= maxHoldBars
+        strategy.close("Short", comment="MAX HOLD EXIT")
+    
+    // Quick exit on reversal signal
+    if enableQuickExit and (longConditionP0 or longConditionP1)
+        strategy.close("Short", comment="QUICK EXIT - REVERSAL")
+
+// End of day exit
+isLastBar = (hour == 15 and minute >= 55) or hour >= 16
+if isLastBar and strategy.position_size != 0
+    strategy.close_all(comment="EOD EXIT")
+
+// ==================== TRADERSPOST ALERTS (FIXED JSON FORMAT) ====================
+// FIXED: Prices sent as numbers (not strings), updated contract symbol, proper structure
+
+actualTicker = useAutoSymbol ? syminfo.ticker : tradersPostSymbol
+
+// Long entry alert
+if longCondition and strategy.position_size[1] == 0 and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
+    localSL = close - mnq_customSL
+    localTP1 = close + mnq_customTP1
+    
+    // FIXED JSON: Numbers without quotes, stopPrice instead of limitPrice for stop loss
+    longEntryMessage = '{' + 
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"buy",' +
+         '"sentiment":"bullish",' +
+         '"orderType":"market",' +
+         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"price":' + str.tostring(close) + ',' +
+         '"stopLoss":{"stopPrice":' + str.tostring(localSL) + ',"type":"stop"},' +
+         '"takeProfit":{"limitPrice":' + str.tostring(localTP1) + '},' +
+         '"signalType":"' + signalType + '",' +
+         '"priority":"' + priorityLevel + '",' +
+         '"entryPrice":' + str.tostring(close) + ',' +
+         '"direction":"LONG",' +
+         '"starScore":' + str.tostring(starScoreLong) + ',' +
+         '"htfAlignment":' + str.tostring(htfBullishCount) + ',' +
+         '"adx":' + str.tostring(adxValue) + ',' +
+         '"rsi":' + str.tostring(rsi) + ',' +
+         '"consecutiveCandles":' + str.tostring(consecutiveGreen) + ',' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(longEntryMessage, alert.freq_once_per_bar)
+
+// Short entry alert
+if shortCondition and strategy.position_size[1] == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
+    localSL = close + mnq_customSL
+    localTP1 = close - mnq_customTP1
+    
+    // FIXED JSON: Numbers without quotes
+    shortEntryMessage = '{' + 
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"sell",' +
+         '"sentiment":"bearish",' +
+         '"orderType":"market",' +
+         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"price":' + str.tostring(close) + ',' +
+         '"stopLoss":{"stopPrice":' + str.tostring(localSL) + ',"type":"stop"},' +
+         '"takeProfit":{"limitPrice":' + str.tostring(localTP1) + '},' +
+         '"signalType":"' + signalType + '",' +
+         '"priority":"' + priorityLevel + '",' +
+         '"entryPrice":' + str.tostring(close) + ',' +
+         '"direction":"SHORT",' +
+         '"starScore":' + str.tostring(starScoreShort) + ',' +
+         '"htfAlignment":' + str.tostring(htfBearishCount) + ',' +
+         '"adx":' + str.tostring(adxValue) + ',' +
+         '"rsi":' + str.tostring(rsi) + ',' +
+         '"consecutiveCandles":' + str.tostring(consecutiveRed) + ',' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(shortEntryMessage, alert.freq_once_per_bar)
+
+// Exit alerts
+if strategy.position_size[1] != 0 and strategy.position_size == 0 and enableTradersPostAlerts
+    exitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"sentiment":"flat",' +
+         '"orderType":"market"' +
+         '}'
+    alert(exitMessage, alert.freq_once_per_bar)
+
+// ==================== VISUAL INDICATORS ====================
+// Plot moving averages
+plot(ema9, "EMA 9", color=color.new(color.blue, 50), linewidth=1)
+plot(ema21, "EMA 21", color=color.new(color.orange, 50), linewidth=1)
+plot(ema50, "EMA 50", color=color.new(color.red, 50), linewidth=2)
+plot(hma, "HMA", color=color.new(color.purple, 30), linewidth=2)
+
+// Plot SuperTrend
+plot(superTrend, "SuperTrend", color=stDirection < 0 ? color.green : color.red, linewidth=2, style=plot.style_linebr)
+
+// Signal markers
+plotshape(longConditionP0 and strategy.position_size[1] == 0, "P0 Long", shape.triangleup, location.belowbar, color.new(color.lime, 0), size=size.normal)
+plotshape(shortConditionP0 and strategy.position_size[1] == 0, "P0 Short", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.normal)
+
+plotshape(longConditionP1 and strategy.position_size[1] == 0, "P1 Long", shape.triangleup, location.belowbar, color.new(color.green, 20), size=size.small)
+plotshape(shortConditionP1 and strategy.position_size[1] == 0, "P1 Short", shape.triangledown, location.abovebar, color.new(color.maroon, 20), size=size.small)
+
+plotshape((longConditionP2 or longConditionTrend) and strategy.position_size[1] == 0, "P2/Trend Long", shape.circle, location.belowbar, color.new(color.teal, 30), size=size.tiny)
+plotshape((shortConditionP2 or shortConditionTrend) and strategy.position_size[1] == 0, "P2/Trend Short", shape.circle, location.abovebar, color.new(color.purple, 30), size=size.tiny)
+
+// Trend continuation markers
+plotshape(strongBullishContinuation and strategy.position_size == 0, "Bull Continuation", shape.arrowup, location.belowbar, color.new(color.lime, 50), size=size.tiny)
+plotshape(strongBearishContinuation and strategy.position_size == 0, "Bear Continuation", shape.arrowdown, location.abovebar, color.new(color.red, 50), size=size.tiny)
+
+// Background colors for market conditions
+bgcolor(isChoppy ? color.new(color.gray, 90) : na, title="Choppy Market")
+bgcolor(hitDailyProfit ? color.new(color.green, 85) : na, title="Daily Profit Hit")
+bgcolor(hitDailyLoss ? color.new(color.red, 85) : na, title="Daily Loss Hit")
+
+// ==================== INFO TABLE ====================
+var table infoTable = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Metric", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "Value", text_color=color.white, text_size=size.small)
+    
+    table.cell(infoTable, 0, 1, "ADX", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(adxValue, "#.#"), text_color=adxValue > 25 ? color.lime : color.yellow, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 2, "RSI", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(rsi, "#.#"), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 3, "HTF Align", text_color=color.white, text_size=size.tiny)
+    htfColor = close > open ? (htfBullishCount >= minHTFAligned ? color.lime : color.yellow) : (htfBearishCount >= minHTFAligned ? color.lime : color.yellow)
+    htfText = close > open ? str.tostring(htfBullishCount) + "/3 Bull" : str.tostring(htfBearishCount) + "/3 Bear"
+    table.cell(infoTable, 1, 3, htfText, text_color=htfColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 4, "Star Score", text_color=color.white, text_size=size.tiny)
+    starText = close > open ? str.tostring(starScoreLong) + "★ Long" : str.tostring(starScoreShort) + "★ Short"
+    table.cell(infoTable, 1, 4, starText, text_color=color.yellow, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 5, "Consec Candles", text_color=color.white, text_size=size.tiny)
+    candleText = consecutiveGreen > 0 ? str.tostring(consecutiveGreen) + " Green" : str.tostring(consecutiveRed) + " Red"
+    candleColor = consecutiveGreen >= minConsecutiveCandles ? color.lime : (consecutiveRed >= minConsecutiveCandles ? color.red : color.gray)
+    table.cell(infoTable, 1, 5, candleText, text_color=candleColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 6, "Trend Move", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, str.tostring(currentTrendMove, "#.#") + " pts", text_color=currentTrendMove >= minTrendMovePoints ? color.lime : color.gray, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 7, "Market", text_color=color.white, text_size=size.tiny)
+    marketText = isChoppy ? "CHOPPY" : (isGrayZone ? "GRAY" : "CLEAR")
+    marketColor = isChoppy ? color.red : (isGrayZone ? color.yellow : color.lime)
+    table.cell(infoTable, 1, 7, marketText, text_color=marketColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 8, "Daily P&L", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 8, "$" + str.tostring(dailyPnL, "#.##"), text_color=dailyPnL >= 0 ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 9, "Position", text_color=color.white, text_size=size.tiny)
+    posText = strategy.position_size > 0 ? "LONG " + str.tostring(strategy.position_size) : (strategy.position_size < 0 ? "SHORT " + str.tostring(math.abs(strategy.position_size)) : "FLAT")
+    posColor = strategy.position_size > 0 ? color.lime : (strategy.position_size < 0 ? color.red : color.gray)
+    table.cell(infoTable, 1, 9, posText, text_color=posColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 10, "Priority", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 10, priorityLevel != "" ? priorityLevel : "NONE", text_color=color.yellow, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 11, "Symbol", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 11, actualTicker, text_color=color.aqua, text_size=size.tiny)
