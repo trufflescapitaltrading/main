@@ -108,7 +108,7 @@ disableChoppyInPosition = input.bool(false, "Disable Choppy When In Position", g
 
 emergencyGroup = "V8 Emergency Safety System"
 enableBackupSL = input.bool(true, "Enable Backup Stop Loss", group=emergencyGroup)
-backupSL_MES = input.float(18.0, "MES Backup SL (points)", group=emergencyGroup)
+backupSL_MES = input.float(40.0, "MES Backup SL (points)", group=emergencyGroup)
 backupSL_MNQ = input.float(120.0, "MNQ Backup SL (points)", group=emergencyGroup)
 backupSL_Default = input.float(30.0, "Default Backup SL (points)", group=emergencyGroup)
 enableNuclearExit = input.bool(true, "Enable Nuclear Emergency Exit", group=emergencyGroup)
@@ -208,9 +208,9 @@ var int todayTradeCount = 0
 // ==================== 📊 PER-INSTRUMENT SETTINGS ====================
 perInstGroup = "Per-Instrument Trade Settings"
 
-mes_useCustom = input.bool(false, "MES: Use Custom SL/TP/Size", group=perInstGroup)
-mes_customSL = input.float(7.0, "MES: Stop Loss (points)", group=perInstGroup)
-mes_customTP = input.float(10.0, "MES: Take Profit (points)", group=perInstGroup)
+mes_useCustom = input.bool(true, "MES: Use Custom SL/TP/Size", group=perInstGroup)
+mes_customSL = input.float(14.0, "MES: Stop Loss (points)", group=perInstGroup)
+mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=perInstGroup)
 mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
 
 //FOR 5-MINUTE CHART (OPTIMIZED)
@@ -1557,13 +1557,21 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
 // ==================== 🔥🔥🔥 KENYA 11.14.2025 PROFIT SYSTEM (60/25/10/5) - 100% PRESERVED 🔥🔥🔥 ====================
 if strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
-    localStopLoss = localEntryPrice - mnq_customSL
     
-    // KENYA PROFIT LADDER: 60% / 25% / 10% / 5%
-    tp1Points = math.round(mnq_customTP1 / syminfo.mintick)
-    tp2Points = math.round(mnq_customTP2 / syminfo.mintick)
-    tp3Points = math.round(mnq_customTP3 / syminfo.mintick)
-    tp4Points = math.round(mnq_customTP4 / syminfo.mintick)
+    // Check Instrument for Correct SL/TP Calculation
+    float currentSL = isMES ? mes_customSL : mnq_customSL
+    float currentTP1 = isMES ? mes_customTP : mnq_customTP1
+    float currentTP2 = isMES ? mes_customTP * 1.5 : mnq_customTP2
+    float currentTP3 = isMES ? mes_customTP * 2.5 : mnq_customTP3
+    float currentTP4 = isMES ? mes_customTP * 4.0 : mnq_customTP4
+    
+    localStopLoss = localEntryPrice - currentSL
+    
+    // Convert Points to Ticks for Strategy Exit
+    tp1Points = math.round(currentTP1 / syminfo.mintick)
+    tp2Points = math.round(currentTP2 / syminfo.mintick)
+    tp3Points = math.round(currentTP3 / syminfo.mintick)
+    tp4Points = math.round(currentTP4 / syminfo.mintick)
     
     if math.abs(strategy.position_size) == 1
         // Single Contract Mode: Aim for TP2 (Trend Capture) instead of TP1 (Scalp)
@@ -1577,13 +1585,21 @@ if strategy.position_size > 0
 
 if strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
-    localStopLoss = localEntryPrice + mnq_customSL
     
-    // KENYA PROFIT LADDER: 60% / 25% / 10% / 5%
-    tp1Points = math.round(mnq_customTP1 / syminfo.mintick)
-    tp2Points = math.round(mnq_customTP2 / syminfo.mintick)
-    tp3Points = math.round(mnq_customTP3 / syminfo.mintick)
-    tp4Points = math.round(mnq_customTP4 / syminfo.mintick)
+    // Check Instrument for Correct SL/TP Calculation
+    float currentSL = isMES ? mes_customSL : mnq_customSL
+    float currentTP1 = isMES ? mes_customTP : mnq_customTP1
+    float currentTP2 = isMES ? mes_customTP * 1.5 : mnq_customTP2
+    float currentTP3 = isMES ? mes_customTP * 2.5 : mnq_customTP3
+    float currentTP4 = isMES ? mes_customTP * 4.0 : mnq_customTP4
+
+    localStopLoss = localEntryPrice + currentSL
+    
+    // Convert Points to Ticks for Strategy Exit
+    tp1Points = math.round(currentTP1 / syminfo.mintick)
+    tp2Points = math.round(currentTP2 / syminfo.mintick)
+    tp3Points = math.round(currentTP3 / syminfo.mintick)
+    tp4Points = math.round(currentTP4 / syminfo.mintick)
     
     if math.abs(strategy.position_size) == 1
         // Single Contract Mode: Aim for TP2 (Trend Capture) instead of TP1 (Scalp)
