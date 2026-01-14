@@ -1426,16 +1426,19 @@ if strategy.position_size > 0
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
-    // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (not 3m) to avoid negative expectancy on 3m.
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
+
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
     float baseTP3 = isMES ? mes_customTP * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
     float baseTP4 = isMES ? mes_customTP * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
+
+    // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (never in Kenya 3m mode).
     float tpMult = (highWinRateMode and isMnq5m and not kenyaActive) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
     float slMult = (highWinRateMode and isMnq5m and not kenyaActive) ? widerSLMultiplier : 1.0
+
     float currentSL = kenyaActive ? baseSL : (baseSL * slMult)
     float currentTP1 = kenyaActive ? baseTP1 : (baseTP1 * tpMult)
     float currentTP2 = kenyaActive ? baseTP2 : (baseTP2 * tpMult)
@@ -1444,8 +1447,8 @@ if strategy.position_size > 0
 
     v71_tp1Target := currentTP1
 
-    // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
     if kenyaActive
+        // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
         localStopLoss = localEntryPrice - currentSL
         tp1Ticks = math.round(currentTP1 / syminfo.mintick)
         tp2Ticks = math.round(currentTP2 / syminfo.mintick)
@@ -1457,59 +1460,58 @@ if strategy.position_size > 0
         strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
         strategy.exit("SL", stop=localStopLoss)
     else
-        // --- V71 logic continues below ---
-
+        // --- V71 logic ---
         currentProfitPts = close - localEntryPrice
         if currentProfitPts > 0
             v71_profitBarsCount := v71_profitBarsCount + 1
         else
             v71_profitBarsCount := 0
 
-    if currentProfitPts > v71_maxProfitSeen
-        v71_maxProfitSeen := currentProfitPts
+        if currentProfitPts > v71_maxProfitSeen
+            v71_maxProfitSeen := currentProfitPts
 
-    if not tp1Hit and high >= localEntryPrice + currentTP1
-        tp1Hit := true
+        if not tp1Hit and high >= localEntryPrice + currentTP1
+            tp1Hit := true
 
-    float beOffsetPoints = 0.0
-    if beAfterTP1UseFees
-        oneWayFees = commissionPerContract + extraFeesPerContract
-        roundTripFees = oneWayFees * 2
-        slipPts = slippageTicksOneWay * syminfo.mintick
-        beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
+        float beOffsetPoints = 0.0
+        if beAfterTP1UseFees
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
 
-    localStopLoss = localEntryPrice - currentSL
-    localBEStop = localEntryPrice + beOffsetPoints
+        localStopLoss = localEntryPrice - currentSL
+        localBEStop = localEntryPrice + beOffsetPoints
 
-    v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
-    if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
-        v71_trailingActive := true
-        v71_newTrailingStop = localEntryPrice + v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
-        if na(v71_trailingStop) or v71_newTrailingStop > v71_trailingStop
-            v71_trailingStop := v71_newTrailingStop
+        v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
+        if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
+            v71_trailingActive := true
+            v71_newTrailingStop = localEntryPrice + v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
+            if na(v71_trailingStop) or v71_newTrailingStop > v71_trailingStop
+                v71_trailingStop := v71_newTrailingStop
 
-    v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
-    if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
-        v71_profitLockActive := true
-        v71_lockedProfitLevel := localEntryPrice + currentProfitPts * (profitLockKeepPct / 100.0)
+        v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
+        if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
+            v71_profitLockActive := true
+            v71_lockedProfitLevel := localEntryPrice + currentProfitPts * (profitLockKeepPct / 100.0)
 
-    float v71_bestStop = localStopLoss
-    if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
-        v71_bestStop := localBEStop
-    if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop > v71_bestStop
-        v71_bestStop := v71_trailingStop
-    if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel > v71_bestStop
-        v71_bestStop := v71_lockedProfitLevel
+        float v71_bestStop = localStopLoss
+        if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
+            v71_bestStop := localBEStop
+        if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop > v71_bestStop
+            v71_bestStop := v71_trailingStop
+        if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel > v71_bestStop
+            v71_bestStop := v71_lockedProfitLevel
 
-    float activeStop = v71_bestStop
-    tp1Ticks = math.round(currentTP1 / syminfo.mintick)
-    tp2Ticks = math.round(currentTP2 / syminfo.mintick)
-    tp3Ticks = math.round(currentTP3 / syminfo.mintick)
-    tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        float activeStop = v71_bestStop
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
 
-    v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
-    v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
-    bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
+        v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
+        v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
+        bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
 
         if math.abs(strategy.position_size) == 1
             // Optional MNQ 3m booster: smaller target + BE protection to lift WR.
@@ -1539,7 +1541,6 @@ if strategy.position_size < 0
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
-    // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (not 3m) to avoid negative expectancy on 3m.
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -1578,51 +1579,51 @@ if strategy.position_size < 0
         else
             v71_profitBarsCount := 0
 
-    if currentProfitPts > v71_maxProfitSeen
-        v71_maxProfitSeen := currentProfitPts
+        if currentProfitPts > v71_maxProfitSeen
+            v71_maxProfitSeen := currentProfitPts
 
-    if not tp1Hit and low <= localEntryPrice - currentTP1
-        tp1Hit := true
+        if not tp1Hit and low <= localEntryPrice - currentTP1
+            tp1Hit := true
 
-    float beOffsetPoints = 0.0
-    if beAfterTP1UseFees
-        oneWayFees = commissionPerContract + extraFeesPerContract
-        roundTripFees = oneWayFees * 2
-        slipPts = slippageTicksOneWay * syminfo.mintick
-        beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
+        float beOffsetPoints = 0.0
+        if beAfterTP1UseFees
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
 
-    localStopLoss = localEntryPrice + currentSL
-    localBEStop = localEntryPrice - beOffsetPoints
+        localStopLoss = localEntryPrice + currentSL
+        localBEStop = localEntryPrice - beOffsetPoints
 
-    v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
-    if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
-        v71_trailingActive := true
-        v71_newTrailingStop = localEntryPrice - v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
-        if na(v71_trailingStop) or v71_newTrailingStop < v71_trailingStop
-            v71_trailingStop := v71_newTrailingStop
+        v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
+        if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
+            v71_trailingActive := true
+            v71_newTrailingStop = localEntryPrice - v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
+            if na(v71_trailingStop) or v71_newTrailingStop < v71_trailingStop
+                v71_trailingStop := v71_newTrailingStop
 
-    v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
-    if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
-        v71_profitLockActive := true
-        v71_lockedProfitLevel := localEntryPrice - currentProfitPts * (profitLockKeepPct / 100.0)
+        v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
+        if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
+            v71_profitLockActive := true
+            v71_lockedProfitLevel := localEntryPrice - currentProfitPts * (profitLockKeepPct / 100.0)
 
-    float v71_bestStop = localStopLoss
-    if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
-        v71_bestStop := localBEStop
-    if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop < v71_bestStop
-        v71_bestStop := v71_trailingStop
-    if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel < v71_bestStop
-        v71_bestStop := v71_lockedProfitLevel
+        float v71_bestStop = localStopLoss
+        if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
+            v71_bestStop := localBEStop
+        if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop < v71_bestStop
+            v71_bestStop := v71_trailingStop
+        if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel < v71_bestStop
+            v71_bestStop := v71_lockedProfitLevel
 
-    float activeStop = v71_bestStop
-    tp1Ticks = math.round(currentTP1 / syminfo.mintick)
-    tp2Ticks = math.round(currentTP2 / syminfo.mintick)
-    tp3Ticks = math.round(currentTP3 / syminfo.mintick)
-    tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        float activeStop = v71_bestStop
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
 
-    v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
-    v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
-    bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
+        v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
+        v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
+        bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
 
         if math.abs(strategy.position_size) == 1
             // Optional MNQ 3m booster: smaller target + BE protection to lift WR.
