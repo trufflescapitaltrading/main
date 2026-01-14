@@ -1565,11 +1565,15 @@ if strategy.position_size > 0
     tp3Points = math.round(mnq_customTP3 / syminfo.mintick)
     tp4Points = math.round(mnq_customTP4 / syminfo.mintick)
     
-    strategy.exit("TP1", qty_percent=60, profit=tp1Points)
-    strategy.exit("TP2", qty_percent=25, profit=tp2Points)
-    strategy.exit("TP3", qty_percent=10, profit=tp3Points)
-    strategy.exit("TP4", qty_percent=5, profit=tp4Points)
-    strategy.exit("SL", stop=localStopLoss)
+    if math.abs(strategy.position_size) == 1
+        // Single Contract Mode: Aim for TP2 (Trend Capture) instead of TP1 (Scalp)
+        strategy.exit("TP_SINGLE", qty_percent=100, profit=tp2Points, stop=localStopLoss)
+    else
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+        strategy.exit("SL", stop=localStopLoss)
 
 if strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
@@ -1581,11 +1585,15 @@ if strategy.position_size < 0
     tp3Points = math.round(mnq_customTP3 / syminfo.mintick)
     tp4Points = math.round(mnq_customTP4 / syminfo.mintick)
     
-    strategy.exit("TP1", qty_percent=60, profit=tp1Points)
-    strategy.exit("TP2", qty_percent=25, profit=tp2Points)
-    strategy.exit("TP3", qty_percent=10, profit=tp3Points)
-    strategy.exit("TP4", qty_percent=5, profit=tp4Points)
-    strategy.exit("SL", stop=localStopLoss)
+    if math.abs(strategy.position_size) == 1
+        // Single Contract Mode: Aim for TP2 (Trend Capture) instead of TP1 (Scalp)
+        strategy.exit("TP_SINGLE", qty_percent=100, profit=tp2Points, stop=localStopLoss)
+    else
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+        strategy.exit("SL", stop=localStopLoss)
 
 // ==================== 🛡️ SAFETY EXITS (WIDE - NO INTERFERENCE) ====================
 getBackupSL() =>
