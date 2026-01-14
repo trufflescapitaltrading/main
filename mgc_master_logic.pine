@@ -28,11 +28,23 @@ rsi_len = input.int(14, "RSI Length")
 rsi_ob = input.int(60, "RSI Overbought")
 rsi_os = input.int(40, "RSI Oversold")
 
-// Risk Management
+// Risk Management Parameters
 min_rr = input.float(1.5, "Min Risk/Reward (Unused in logic directly)")
+be_trigger_r = input.float(0.75, "Breakeven Trigger (R)") // Lowered from 1.0 to 0.75 for win rate
 be_buffer_mult = input.float(0.1, "BE Buffer Mult")
 stop_loss_atr_mult = input.float(2.5, "Stop Loss ATR Mult")
 trailing_stop_activation_r_mult = input.float(0.5, "Trailing Activation R Mult")
+
+// Take Profit Parameters
+tp1_r = input.float(0.5, "TP1 Target (R)")
+tp2_r = input.float(1.0, "TP2 Target (R)")
+tp3_r = input.float(1.5, "TP3 Target (R)")
+tp4_r = input.float(2.0, "TP4 Target (R)")
+tp1_pct = input.float(0.4, "TP1 Percent (0-1)")
+tp2_pct = input.float(0.3, "TP2 Percent (0-1)")
+tp3_pct = input.float(0.2, "TP3 Percent (0-1)")
+tp4_pct = input.float(0.1, "TP4 Percent (0-1)")
+
 
 // Daily Limits
 daily_loss_limit_amount = input.float(1000.0, "Daily Loss Limit ($)")
@@ -43,7 +55,7 @@ max_consecutive_losses = input.int(3, "Max Consecutive Losses")
 // Filters
 quality_threshold = input.float(80.0, "Quality Threshold")
 adx_length = input.int(14, "ADX Length")
-adx_threshold = input.int(25, "ADX Threshold")
+adx_threshold = input.int(30, "ADX Threshold") // Raised from 25
 session_string = input.session("0600-2100:1234567", "Session Filter (UTC)")
 
 // --- Indicators ---
@@ -204,10 +216,10 @@ if strategy.position_size != 0
     // Breakeven Logic
     float new_sl = na
     if is_long
-        if cur_price >= entry_price + r
+        if cur_price >= entry_price + (initial_r * be_trigger_r) // Configurable Trigger
             new_sl := entry_price + (r * be_buffer_mult)
     else
-        if cur_price <= entry_price - r
+        if cur_price <= entry_price - (initial_r * be_trigger_r) // Configurable Trigger
             new_sl := entry_price - (r * be_buffer_mult)
 
     // Trailing Stop Logic (SuperTrend)
@@ -243,17 +255,17 @@ if strategy.position_size != 0
                 current_stop := new_sl
                 
     // Execute Exits
-    // TP Splits: 0.4, 0.3, 0.2, 0.1 at 0.5R, 1.0R, 1.5R, 2.0R
+    // TP Splits configurable via inputs
     
-    qty_1 = math.round(initial_qty * 0.4)
-    qty_2 = math.round(initial_qty * 0.3)
-    qty_3 = math.round(initial_qty * 0.2)
-    qty_4 = math.round(initial_qty * 0.1) // Remainder effectively
+    qty_1 = math.round(initial_qty * tp1_pct)
+    qty_2 = math.round(initial_qty * tp2_pct)
+    qty_3 = math.round(initial_qty * tp3_pct)
+    qty_4 = math.round(initial_qty * tp4_pct)
     
-    tp1_p = is_long ? entry_price + (0.5 * r) : entry_price - (0.5 * r)
-    tp2_p = is_long ? entry_price + (1.0 * r) : entry_price - (1.0 * r)
-    tp3_p = is_long ? entry_price + (1.5 * r) : entry_price - (1.5 * r)
-    tp4_p = is_long ? entry_price + (2.0 * r) : entry_price - (2.0 * r)
+    tp1_p = is_long ? entry_price + (tp1_r * r) : entry_price - (tp1_r * r)
+    tp2_p = is_long ? entry_price + (tp2_r * r) : entry_price - (tp2_r * r)
+    tp3_p = is_long ? entry_price + (tp3_r * r) : entry_price - (tp3_r * r)
+    tp4_p = is_long ? entry_price + (tp4_r * r) : entry_price - (tp4_r * r)
     
     id_base = is_long ? "Exit Long" : "Exit Short"
     
