@@ -1,5 +1,5 @@
 //@version=5
-strategy("MNQ/MES Multi-TF 1.13.2026 Claude V.70+% 5-Star Scalper P1/P2 SAFE", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+strategy("MNQ/MES 3m/5m Multi-TF 1.13.2026 Claude V.70+% 5-Star Scalper P1/P2 SAFE", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
 
 // ==================== 💰 DAILY PROFIT TARGET ====================
 profitTargetGroup = "💰 Daily Profit Target"
@@ -213,8 +213,13 @@ mes_customSL = input.float(14.0, "MES: Stop Loss (points)", group=perInstGroup)
 mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=perInstGroup)
 mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
 
-//FOR 5-MINUTE CHART (OPTIMIZED)
-mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
+//FOR 3-MINUTE CHART (OPTIMIZED)
+mnq_useCustom3m = input.bool(false, "MNQ 3m: Use 3m Settings", group=perInstGroup)
+mnq_customSL_3m = input.float(30.0, "MNQ 3m: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1_3m = input.float(35.0, "MNQ 3m: TP1 (points) - 60%", group=perInstGroup)
+mnq_customTP2_3m = input.float(60.0, "MNQ 3m: TP2 (points) - 25%", group=perInstGroup)
+mnq_customTP3_3m = input.float(90.0, "MNQ 3m: TP3 (points) - 10%", group=perInstGroup)
+mnq_customTP4_3m = input.float(120.0, "MNQ 3m: TP4 (points) - 5%", group=perInstGroup)
 mnq_customSL = input.float(50.0, "MNQ: Stop Loss (points)", group=perInstGroup)
 mnq_customTP1 = input.float(45.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
 mnq_customTP2 = input.float(70.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
@@ -1559,11 +1564,13 @@ if strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
     
     // Check Instrument for Correct SL/TP Calculation
-    float currentSL = isMES ? mes_customSL : mnq_customSL
-    float currentTP1 = isMES ? mes_customTP : mnq_customTP1
-    float currentTP2 = isMES ? mes_customTP * 1.5 : mnq_customTP2
-    float currentTP3 = isMES ? mes_customTP * 2.5 : mnq_customTP3
-    float currentTP4 = isMES ? mes_customTP * 4.0 : mnq_customTP4
+    bool is3m = timeframe.period == "3"
+    
+    float currentSL = isMES ? mes_customSL : (is3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1 = isMES ? mes_customTP : (is3m ? mnq_customTP1_3m : mnq_customTP1)
+    float currentTP2 = isMES ? mes_customTP * 1.5 : (is3m ? mnq_customTP2_3m : mnq_customTP2)
+    float currentTP3 = isMES ? mes_customTP * 2.5 : (is3m ? mnq_customTP3_3m : mnq_customTP3)
+    float currentTP4 = isMES ? mes_customTP * 4.0 : (is3m ? mnq_customTP4_3m : mnq_customTP4)
     
     localStopLoss = localEntryPrice - currentSL
     localTP1 = localEntryPrice + currentTP1
@@ -1588,11 +1595,13 @@ if strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
     
     // Check Instrument for Correct SL/TP Calculation
-    float currentSL = isMES ? mes_customSL : mnq_customSL
-    float currentTP1 = isMES ? mes_customTP : mnq_customTP1
-    float currentTP2 = isMES ? mes_customTP * 1.5 : mnq_customTP2
-    float currentTP3 = isMES ? mes_customTP * 2.5 : mnq_customTP3
-    float currentTP4 = isMES ? mes_customTP * 4.0 : mnq_customTP4
+    bool is3m = timeframe.period == "3"
+
+    float currentSL = isMES ? mes_customSL : (is3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1 = isMES ? mes_customTP : (is3m ? mnq_customTP1_3m : mnq_customTP1)
+    float currentTP2 = isMES ? mes_customTP * 1.5 : (is3m ? mnq_customTP2_3m : mnq_customTP2)
+    float currentTP3 = isMES ? mes_customTP * 2.5 : (is3m ? mnq_customTP3_3m : mnq_customTP3)
+    float currentTP4 = isMES ? mes_customTP * 4.0 : (is3m ? mnq_customTP4_3m : mnq_customTP4)
 
     localStopLoss = localEntryPrice + currentSL
     localTP1 = localEntryPrice - currentTP1
@@ -1656,8 +1665,9 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
 
 // LONG Entry Alert
 if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
-    float currentSL_pts = isMES ? mes_customSL : mnq_customSL
-    float currentTP1_pts = isMES ? mes_customTP : mnq_customTP1
+    bool is3m = timeframe.period == "3"
+    float currentSL_pts = isMES ? mes_customSL : (is3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (is3m ? mnq_customTP1_3m : mnq_customTP1)
     
     localSL = close - currentSL_pts
     localTP1 = close + currentTP1_pts
@@ -1684,8 +1694,9 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
 
 // SHORT Entry Alert
 if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
-    float currentSL_pts = isMES ? mes_customSL : mnq_customSL
-    float currentTP1_pts = isMES ? mes_customTP : mnq_customTP1
+    bool is3m = timeframe.period == "3"
+    float currentSL_pts = isMES ? mes_customSL : (is3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (is3m ? mnq_customTP1_3m : mnq_customTP1)
     
     localSL = close + currentSL_pts
     localTP1 = close - currentTP1_pts
