@@ -1135,7 +1135,7 @@ if strategy.position_size != 0 and strategy.position_size[1] == 0
     v71_profitLockActive := false
     v71_lockedProfitLevel := na
     v71_profitBarsCount := 0
-    v71_entryRSI := ta.rsi(close, 7)
+    v71_entryRSI := rsi
     v71_tp1Target := na
 
 if strategy.position_size != 0 and not na(entryPrice)
@@ -1592,8 +1592,8 @@ if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclea
     strategy.close_all(comment="NUCLEAR_EXIT")
 
 // V71: Momentum-Fade Exit System
-v71_rsiNow = ta.rsi(close, 7)
-v71_rsiPrev = ta.rsi(close[momentumFadeBars], 7)
+v71_rsiNow = rsi
+v71_rsiPrev = rsi[momentumFadeBars]
 v71_inProfit = strategy.position_size > 0 ? (close > entryPrice) : strategy.position_size < 0 ? (close < entryPrice) : false
 if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars
     if strategy.position_size > 0
