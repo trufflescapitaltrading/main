@@ -368,6 +368,17 @@ volChop = volume < (volMA * volContractionMult)
 grayZoneFactors = (adxChop ? 1 : 0) + (atrCompression ? 1 : 0) + (bbChop ? 1 : 0) + (volChop ? 1 : 0)
 grayZone = useGrayZone and (grayZoneFactors >= 4)
 
+// ==================== CANDLE DIRECTION CONTROL (HIGH WR FEATURE) ====================
+group_candle = "Candle Direction Control"
+useCandleDirectionControl = input.bool(true, "Require candle direction (green for long / red for short)", group=group_candle)
+minBodyAtrPct = input.float(0.15, "Min body size as % of ATR", minval=0.05, maxval=0.6, group=group_candle, tooltip="Avoids tiny/doji entries. 0.15 means candle body >= 15% of ATR(14).")
+
+atr14 = ta.atr(14)
+candleBody = math.abs(close - open)
+bodyAtrOk = atr14 > 0 ? (candleBody >= (atr14 * minBodyAtrPct)) : true
+candleOkLong = (not useCandleDirectionControl) or ((close > open) and bodyAtrOk)
+candleOkShort = (not useCandleDirectionControl) or ((close < open) and bodyAtrOk)
+
 // ==================== CANDLESTICK PATTERN QUALITY (18 PATTERNS, TIERED) ====================
 // IMPORTANT: Patterns are confirmation quality, not stand-alone signals.
 // Tier 1: Three White Soldiers / Three Black Crows, Bullish/Bearish Engulfing
@@ -453,6 +464,12 @@ useQualityGate = input.bool(true, "Enable Quality Score gating", group=group_qua
 qualityThreshold = input.int(70, "Minimum Quality Threshold (%)", minval=50, maxval=90, group=group_quality)
 qualityOverrideFloorPct = input.int(80, "Override requires ≥ % of threshold", minval=50, maxval=100, group=group_quality, tooltip="80 means: must be ≥ 0.8 * threshold to allow overrides.")
 
+highWinRateMode = input.bool(true, "High Win Rate Mode (targets ~75–85% WR)", group=group_quality, tooltip="Tightens trend/MTF/ADX and raises effective quality threshold. Impulse/breakout still allowed as exception.")
+highWRQualityFloor = input.int(80, "High WR Min Quality (%)", minval=70, maxval=95, group=group_quality)
+highWRMinAlignedHTF = input.int(2, "High WR Min aligned HTFs", minval=1, maxval=3, group=group_quality)
+highWRRequireADX = input.bool(true, "High WR requires ADX >= floor (non-impulse)", group=group_quality)
+highWRRequireSignalStrong = input.bool(false, "High WR requires strong signal line", group=group_quality, tooltip="If ON: requires full SMA/EMA stack alignment (stricter, fewer trades).")
+
 // Trend regime (0-4 -> 0-30)
 trendScore4 = strongTrend ? 4 : moderateTrend ? 3 : 0
 trendPoints = (trendScore4 / 4.0) * 30.0
@@ -533,6 +550,21 @@ extremeOverrideShort = extremeShort
 qualityPassLong = (not useQualityGate) or (qualityLong >= qualityThreshold) or (overrideAllowedLong and (impulseOverrideLong or consecutiveTrendOverrideLong or extremeOverrideLong))
 qualityPassShort = (not useQualityGate) or (qualityShort >= qualityThreshold) or (overrideAllowedShort and (impulseOverrideShort or consecutiveTrendOverrideShort or extremeOverrideShort))
 
+effectiveQualityThreshold = highWinRateMode ? math.max(qualityThreshold, highWRQualityFloor) : qualityThreshold
+effectiveOverrideFloor = effectiveQualityThreshold * (qualityOverrideFloorPct / 100.0)
+effectiveOverrideAllowedLong = qualityLong >= effectiveOverrideFloor
+effectiveOverrideAllowedShort = qualityShort >= effectiveOverrideFloor
+
+effectiveQualityPassLong =
+     (not useQualityGate) or
+     (qualityLong >= effectiveQualityThreshold) or
+     (effectiveOverrideAllowedLong and (impulseOverrideLong or consecutiveTrendOverrideLong or extremeOverrideLong))
+
+effectiveQualityPassShort =
+     (not useQualityGate) or
+     (qualityShort >= effectiveQualityThreshold) or
+     (effectiveOverrideAllowedShort and (impulseOverrideShort or consecutiveTrendOverrideShort or extremeOverrideShort))
+
 // ==================== IMPULSE / CONTINUATION (NEW) ====================
 group_entryfix = "Entry Fixes (Continuation + Impulse)"
 useContinuationEntries = input.bool(true, "Enable Continuation Entries", group=group_entryfix)
@@ -561,11 +593,12 @@ minAlignedTimeframes = input.int(1, "Min aligned HTFs (1=33%)", minval=0, maxval
 
 mtfDirScore(tf) =>
     // simple, robust HTF direction: HMA slope + EMA20 position + RSI bias
+    htfClose = request.security(syminfo.tickerid, tf, close)
     htfHma = request.security(syminfo.tickerid, tf, ta.hma(close, 25))
     htfEma = request.security(syminfo.tickerid, tf, ta.ema(close, 20))
     htfRsi = request.security(syminfo.tickerid, tf, ta.rsi(close, 6))
-    up = (htfHma > htfHma[1]) and (close > htfEma) and (htfRsi > 50)
-    dn = (htfHma < htfHma[1]) and (close < htfEma) and (htfRsi < 50)
+    up = (htfHma > htfHma[1]) and (htfClose > htfEma) and (htfRsi > 50)
+    dn = (htfHma < htfHma[1]) and (htfClose < htfEma) and (htfRsi < 50)
     [up, dn]
 
 [htf1Up, htf1Dn] = mtfDirScore(htf1)
@@ -577,6 +610,10 @@ mtfAlignedDnCount = (htf1Dn ? 1 : 0) + (htf2Dn ? 1 : 0) + (htf3Dn ? 1 : 0)
 
 mtfOkLong = not useMTF or (mtfAlignedUpCount >= minAlignedTimeframes)
 mtfOkShort = not useMTF or (mtfAlignedDnCount >= minAlignedTimeframes)
+
+mtfRequired = highWinRateMode ? highWRMinAlignedHTF : minAlignedTimeframes
+effectiveMtfOkLong = not useMTF or (mtfAlignedUpCount >= mtfRequired)
+effectiveMtfOkShort = not useMTF or (mtfAlignedDnCount >= mtfRequired)
 
 // ==================== SIGNAL LOGIC (ORIGINAL + FIXED) ====================
 microBuySignal = (priceUp and slopeFast == 1 and slopeMain == 1) or (close > smaBasis and trend == 1 and hullAnyBullish) or microBreakoutUp
@@ -663,8 +700,28 @@ sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPre
 chopOkLong = (not grayZone) or impulseOverrideLong or extremeOverrideLong
 chopOkShort = (not grayZone) or impulseOverrideShort or extremeOverrideShort
 
-ultraBuyCondition = isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and ultraBuySignal and regimeOkLong and mtfOkLong and chopOkLong and qualityPassLong
-ultraSellCondition = isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and ultraSellSignal and regimeOkShort and mtfOkShort and chopOkShort and qualityPassShort
+effectiveTrendOk = highWinRateMode ? strongTrend : (strongTrend or moderateTrend)
+effectiveRegimeOkLong = (not useMarketRegime) or effectiveTrendOk or (rangingMarket and allowImpulseInRange)
+effectiveRegimeOkShort = (not useMarketRegime) or effectiveTrendOk or (rangingMarket and allowImpulseInRange)
+
+effectiveAdxOkLong = (not highWinRateMode) or (not highWRRequireADX) or (adx >= adxFloor) or impulseOverrideLong or extremeOverrideLong
+effectiveAdxOkShort = (not highWinRateMode) or (not highWRRequireADX) or (adx >= adxFloor) or impulseOverrideShort or extremeOverrideShort
+
+effectiveSignalOkLong = (not highWinRateMode) or (not highWRRequireSignalStrong) or signalLineLongStrong or impulseOverrideLong or extremeOverrideLong
+effectiveSignalOkShort = (not highWinRateMode) or (not highWRRequireSignalStrong) or signalLineShortStrong or impulseOverrideShort or extremeOverrideShort
+
+effectiveCandleOkLong = candleOkLong or impulseOverrideLong or extremeOverrideLong
+effectiveCandleOkShort = candleOkShort or impulseOverrideShort or extremeOverrideShort
+
+ultraBuyCondition =
+     isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and
+     ultraBuySignal and effectiveRegimeOkLong and effectiveMtfOkLong and chopOkLong and
+     effectiveAdxOkLong and effectiveSignalOkLong and effectiveCandleOkLong and effectiveQualityPassLong
+
+ultraSellCondition =
+     isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and
+     ultraSellSignal and effectiveRegimeOkShort and effectiveMtfOkShort and chopOkShort and
+     effectiveAdxOkShort and effectiveSignalOkShort and effectiveCandleOkShort and effectiveQualityPassShort
 
 // ==================== REVERSALS (FIX FOR MISSED TURNS) ====================
 group_rev = "Reversal Handling"
@@ -1078,10 +1135,10 @@ if barstate.islast
     dirTxt = trend == 1 ? "BULL" : trend == -1 ? "BEAR" : "NEUTRAL"
     qLongTxt = str.tostring(math.round(qualityLong, 1)) + "%"
     qShortTxt = str.tostring(math.round(qualityShort, 1)) + "%"
-    passLong = qualityPassLong and chopOkLong and regimeOkLong and mtfOkLong
-    passShort = qualityPassShort and chopOkShort and regimeOkShort and mtfOkShort
+    passLong = effectiveQualityPassLong and chopOkLong and effectiveRegimeOkLong and effectiveMtfOkLong and effectiveAdxOkLong and effectiveSignalOkLong and effectiveCandleOkLong
+    passShort = effectiveQualityPassShort and chopOkShort and effectiveRegimeOkShort and effectiveMtfOkShort and effectiveAdxOkShort and effectiveSignalOkShort and effectiveCandleOkShort
 
-    table.cell(qualityTable, 0, 0, "QUALITY (thr " + str.tostring(qualityThreshold) + "%)", text_color=color.white, bgcolor=color.new(color.aqua, 70))
+    table.cell(qualityTable, 0, 0, "QUALITY (thr " + str.tostring(effectiveQualityThreshold) + "%)", text_color=color.white, bgcolor=color.new(color.aqua, 70))
     table.cell(qualityTable, 1, 0, instrumentOk ? "MGC" : "WRONG SYMBOL", text_color=instrumentOk ? color.lime : color.red, bgcolor=color.new(color.black, 0))
 
     table.cell(qualityTable, 0, 1, "Regime", text_color=color.gray)
