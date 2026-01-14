@@ -421,7 +421,7 @@ if strategy.position_size != 0
     if bars_held > 15 and open_profit < (atr_val * 0.5) // Stalling
         strategy.close_all(comment="Time Stalling")
         if use_automation
-             alert('{"action": "close", "reason": "stalling"}', alert.freq_once_per_bar)
+            alert('{"action": "close", "reason": "stalling"}', alert.freq_once_per_bar)
 
 // =============================================================================
 // 8. PnL Tracking
