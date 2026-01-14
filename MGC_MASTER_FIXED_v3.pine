@@ -332,6 +332,52 @@ microMomentumBear = (rsi < rsi[1])
 priceUp = close > close[1]
 priceDown = close < close[1]
 
+// ==================== IMPULSE / CONTINUATION (ENTRY ENGINE) ====================
+group_entryfix = "Entry Fixes (Continuation + Impulse)"
+useContinuationEntries = input.bool(true, "Enable Continuation Entries", group=group_entryfix)
+minConsecutiveForContinuation = input.int(2, "Min consecutive candles for continuation", minval=2, maxval=6, group=group_entryfix)
+useImpulseOverride = input.bool(true, "Enable Impulse/Breakout Override", group=group_entryfix)
+impulseAtrMult = input.float(1.1, "Impulse candle size (ATR multiple)", minval=0.9, maxval=1.6, group=group_entryfix)
+impulseVolMult = input.float(1.8, "Impulse volume surge (x avg)", minval=1.2, maxval=3.0, group=group_entryfix)
+
+volMA = ta.sma(volume, 20)
+rangeTR = ta.tr(true)
+impulseCandle = (rangeTR >= (ta.atr(14) * impulseAtrMult)) and (volume >= (volMA * impulseVolMult))
+
+consecutiveGreen = close > open ? nz(consecutiveGreen[1]) + 1 : 0
+consecutiveRed = close < open ? nz(consecutiveRed[1]) + 1 : 0
+
+continuationLong = useContinuationEntries and (consecutiveGreen >= minConsecutiveForContinuation) and (trend == 1) and (slopeMain == 1) and (close > hullMain) and momentumBullish
+continuationShort = useContinuationEntries and (consecutiveRed >= minConsecutiveForContinuation) and (trend == -1) and (slopeMain == -1) and (close < hullMain) and momentumBearish
+
+// ==================== MULTI-TIMEFRAME CONFIRMATION ====================
+group_mtf = "MTF Confirmation"
+useMTF = input.bool(true, "Enable MTF Confirmation", group=group_mtf)
+htf1 = input.timeframe("15", "HTF1", group=group_mtf)
+htf2 = input.timeframe("60", "HTF2", group=group_mtf)
+htf3 = input.timeframe("240", "HTF3", group=group_mtf)
+minAlignedTimeframes = input.int(1, "Min aligned HTFs (1=33%)", minval=0, maxval=3, group=group_mtf)
+
+mtfDirScore(tf) =>
+    // HTF direction: HTF HMA slope + HTF close vs HTF EMA20 + HTF RSI bias
+    htfClose = request.security(syminfo.tickerid, tf, close)
+    htfHma = request.security(syminfo.tickerid, tf, ta.hma(close, 25))
+    htfEma = request.security(syminfo.tickerid, tf, ta.ema(close, 20))
+    htfRsi = request.security(syminfo.tickerid, tf, ta.rsi(close, 6))
+    up = (htfHma > htfHma[1]) and (htfClose > htfEma) and (htfRsi > 50)
+    dn = (htfHma < htfHma[1]) and (htfClose < htfEma) and (htfRsi < 50)
+    [up, dn]
+
+[htf1Up, htf1Dn] = mtfDirScore(htf1)
+[htf2Up, htf2Dn] = mtfDirScore(htf2)
+[htf3Up, htf3Dn] = mtfDirScore(htf3)
+
+mtfAlignedUpCount = (htf1Up ? 1 : 0) + (htf2Up ? 1 : 0) + (htf3Up ? 1 : 0)
+mtfAlignedDnCount = (htf1Dn ? 1 : 0) + (htf2Dn ? 1 : 0) + (htf3Dn ? 1 : 0)
+
+mtfOkLong = not useMTF or (mtfAlignedUpCount >= minAlignedTimeframes)
+mtfOkShort = not useMTF or (mtfAlignedDnCount >= minAlignedTimeframes)
+
 // ==================== SIGNAL LINE SYSTEM (MGC) ====================
 group_signal = "Signal Line System"
 sma9 = ta.sma(close, 9)
@@ -547,6 +593,13 @@ impulseOverrideShort = useImpulseOverride and impulseCandle and microBreakoutDn
 extremeOverrideLong = extremeLong
 extremeOverrideShort = extremeShort
 
+// MTF rule: normal trades use stricter requirement in High WR mode,
+// but impulse/breakout and extreme-trend setups can use the base MTF minimum (typically 1-of-3).
+normalMtfReq = highWinRateMode ? highWRMinAlignedHTF : minAlignedTimeframes
+impulseMtfReq = minAlignedTimeframes
+effectiveMtfOkLong = (not useMTF) or ((impulseOverrideLong or extremeOverrideLong) ? (mtfAlignedUpCount >= impulseMtfReq) : (mtfAlignedUpCount >= normalMtfReq))
+effectiveMtfOkShort = (not useMTF) or ((impulseOverrideShort or extremeOverrideShort) ? (mtfAlignedDnCount >= impulseMtfReq) : (mtfAlignedDnCount >= normalMtfReq))
+
 qualityPassLong = (not useQualityGate) or (qualityLong >= qualityThreshold) or (overrideAllowedLong and (impulseOverrideLong or consecutiveTrendOverrideLong or extremeOverrideLong))
 qualityPassShort = (not useQualityGate) or (qualityShort >= qualityThreshold) or (overrideAllowedShort and (impulseOverrideShort or consecutiveTrendOverrideShort or extremeOverrideShort))
 
@@ -565,55 +618,7 @@ effectiveQualityPassShort =
      (qualityShort >= effectiveQualityThreshold) or
      (effectiveOverrideAllowedShort and (impulseOverrideShort or consecutiveTrendOverrideShort or extremeOverrideShort))
 
-// ==================== IMPULSE / CONTINUATION (NEW) ====================
-group_entryfix = "Entry Fixes (Continuation + Impulse)"
-useContinuationEntries = input.bool(true, "Enable Continuation Entries", group=group_entryfix)
-minConsecutiveForContinuation = input.int(2, "Min consecutive candles for continuation", minval=2, maxval=6, group=group_entryfix)
-useImpulseOverride = input.bool(true, "Enable Impulse/Breakout Override", group=group_entryfix)
-impulseAtrMult = input.float(1.1, "Impulse candle size (ATR multiple)", minval=0.9, maxval=1.6, group=group_entryfix)
-impulseVolMult = input.float(1.8, "Impulse volume surge (x avg)", minval=1.2, maxval=3.0, group=group_entryfix)
-
-volMA = ta.sma(volume, 20)
-rangeTR = ta.tr(true)
-impulseCandle = (rangeTR >= (ta.atr(14) * impulseAtrMult)) and (volume >= (volMA * impulseVolMult))
-
-consecutiveGreen = close > open ? nz(consecutiveGreen[1]) + 1 : 0
-consecutiveRed = close < open ? nz(consecutiveRed[1]) + 1 : 0
-
-continuationLong = useContinuationEntries and (consecutiveGreen >= minConsecutiveForContinuation) and (trend == 1) and (slopeMain == 1) and (close > hullMain) and momentumBullish
-continuationShort = useContinuationEntries and (consecutiveRed >= minConsecutiveForContinuation) and (trend == -1) and (slopeMain == -1) and (close < hullMain) and momentumBearish
-
-// ==================== MULTI-TIMEFRAME CONFIRMATION (NEW) ====================
-group_mtf = "MTF Confirmation"
-useMTF = input.bool(true, "Enable MTF Confirmation", group=group_mtf)
-htf1 = input.timeframe("15", "HTF1", group=group_mtf)
-htf2 = input.timeframe("60", "HTF2", group=group_mtf)
-htf3 = input.timeframe("240", "HTF3", group=group_mtf)
-minAlignedTimeframes = input.int(1, "Min aligned HTFs (1=33%)", minval=0, maxval=3, group=group_mtf)
-
-mtfDirScore(tf) =>
-    // simple, robust HTF direction: HMA slope + EMA20 position + RSI bias
-    htfClose = request.security(syminfo.tickerid, tf, close)
-    htfHma = request.security(syminfo.tickerid, tf, ta.hma(close, 25))
-    htfEma = request.security(syminfo.tickerid, tf, ta.ema(close, 20))
-    htfRsi = request.security(syminfo.tickerid, tf, ta.rsi(close, 6))
-    up = (htfHma > htfHma[1]) and (htfClose > htfEma) and (htfRsi > 50)
-    dn = (htfHma < htfHma[1]) and (htfClose < htfEma) and (htfRsi < 50)
-    [up, dn]
-
-[htf1Up, htf1Dn] = mtfDirScore(htf1)
-[htf2Up, htf2Dn] = mtfDirScore(htf2)
-[htf3Up, htf3Dn] = mtfDirScore(htf3)
-
-mtfAlignedUpCount = (htf1Up ? 1 : 0) + (htf2Up ? 1 : 0) + (htf3Up ? 1 : 0)
-mtfAlignedDnCount = (htf1Dn ? 1 : 0) + (htf2Dn ? 1 : 0) + (htf3Dn ? 1 : 0)
-
-mtfOkLong = not useMTF or (mtfAlignedUpCount >= minAlignedTimeframes)
-mtfOkShort = not useMTF or (mtfAlignedDnCount >= minAlignedTimeframes)
-
-mtfRequired = highWinRateMode ? highWRMinAlignedHTF : minAlignedTimeframes
-effectiveMtfOkLong = not useMTF or (mtfAlignedUpCount >= mtfRequired)
-effectiveMtfOkShort = not useMTF or (mtfAlignedDnCount >= mtfRequired)
+// (Moved MTF + continuation engine above signal-line/quality blocks)
 
 // ==================== SIGNAL LOGIC (ORIGINAL + FIXED) ====================
 microBuySignal = (priceUp and slopeFast == 1 and slopeMain == 1) or (close > smaBasis and trend == 1 and hullAnyBullish) or microBreakoutUp
