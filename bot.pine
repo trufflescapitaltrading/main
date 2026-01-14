@@ -1,5 +1,5 @@
 //@version=5
-strategy("MNQ 5m-1.13.2026 12:33 Claude V.70+% 5-Star Scalper 1800+ P0/P1/P2 ONLY", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+strategy("MNQ 5m-1.13.2026 12:33 Claude V.70+% 5-Star Scalper 1800+ P1/P2 ONLY (SAFE MODE)", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
 
 // ==================== 💰 DAILY PROFIT TARGET ====================
 profitTargetGroup = "💰 Daily Profit Target"
@@ -71,7 +71,7 @@ widerSLMultiplier = input.float(1.5, "Wider SL Multiplier", minval=1.0, maxval=2
 // ==================== ⭐ PRIORITY HIERARCHY SYSTEM ====================
 priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
 enablePrioritySystem = input.bool(true, "✅ Enable Priority Hierarchy", group=priorityGroup)
-allowPriority0 = input.bool(true, "P0: Momentum Override 🎯", group=priorityGroup)
+allowPriority0 = input.bool(false, "P0: Momentum Override 🎯", group=priorityGroup)
 allowPriority1 = input.bool(true, "P1: Impulse Override 🚀", group=priorityGroup)
 allowPriority2 = input.bool(true, "P2: Strong Trend Override 📈", group=priorityGroup)
 allowPriority3 = input.bool(false, "P3: 5-Star Entry", group=priorityGroup)
