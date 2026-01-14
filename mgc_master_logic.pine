@@ -57,6 +57,8 @@ quality_threshold = input.float(80.0, "Quality Threshold")
 adx_length = input.int(14, "ADX Length")
 adx_threshold = input.int(30, "ADX Threshold") // Raised from 25
 session_string = input.session("0600-2100:1234567", "Session Filter (UTC)")
+use_automation = input.bool(true, "Enable TradersPost Alerts")
+
 
 // --- Indicators ---
 
@@ -175,11 +177,15 @@ strong_short = main_slope_down and score_bear >= 80 and st_bearish and close < h
 
 valid_short = (ultra_short or strong_short) and score_bear >= quality_threshold and stars_bear >= 4 and adx_ok and in_session and not daily_stopped
 
-// --- Position Management Variables ---
+// Variables for Trade State
 var float entry_price = 0.0
 var float initial_sl = 0.0
 var float initial_r = 0.0
 var float initial_qty = 0.0
+var bool tp1_hit = false
+var bool tp2_hit = false
+var bool tp3_hit = false
+var bool tp4_hit = false
 
 // Position Sizing
 qty_to_trade = manual_contracts
@@ -192,6 +198,8 @@ if use_atr_sizing
 if valid_long and strategy.position_size == 0
     sl_price = close - (atr_val * stop_loss_atr_mult)
     strategy.entry("Long", strategy.long, qty=qty_to_trade, comment="Long")
+    if use_automation
+        alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_to_trade) + ', "price": ' + str.tostring(close) + ', "stop_loss": ' + str.tostring(sl_price) + '}', alert.freq_once_per_bar_close)
     // Initialize state
     entry_price := close
     initial_sl := sl_price
@@ -201,6 +209,8 @@ if valid_long and strategy.position_size == 0
 if valid_short and strategy.position_size == 0
     sl_price = close + (atr_val * stop_loss_atr_mult)
     strategy.entry("Short", strategy.short, qty=qty_to_trade, comment="Short")
+    if use_automation
+        alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_to_trade) + ', "price": ' + str.tostring(close) + ', "stop_loss": ' + str.tostring(sl_price) + '}', alert.freq_once_per_bar_close)
     // Initialize state
     entry_price := close
     initial_sl := sl_price
@@ -274,6 +284,61 @@ if strategy.position_size != 0
     strategy.exit("TP2", from_entry = is_long ? "Long" : "Short", qty = qty_2, limit = tp2_p, stop = current_stop)
     strategy.exit("TP3", from_entry = is_long ? "Long" : "Short", qty = qty_3, limit = tp3_p, stop = current_stop)
     strategy.exit("TP4", from_entry = is_long ? "Long" : "Short", qty = qty_4, limit = tp4_p, stop = current_stop)
+
+    // Automation Alerts for Exits
+    // Note: strategy.exit triggers automatically in backtest. 
+    // For live alerts, we need to detect IF the price hits these levels and fire an alert.
+    // However, PineScript alerts fire on the Close of the bar or immediately. 
+    // Detecting intra-bar partial exits for alerts without repainting is tricky.
+    // Standard approach: Use "alert_message" parameter in strategy.exit if using webhook on strategy execution.
+    // BUT user asked for `alert()` function calls specifically.
+    // We can simulate exit alerts by checking if High/Low crossed levels.
+    
+    if use_automation
+        // Check for STOP LOSS / TRAILING STOP hit
+        stop_hit_long = is_long and low <= current_stop
+        stop_hit_short = not is_long and high >= current_stop
+        
+        if stop_hit_long
+            alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(strategy.position_size) + ', "reason": "stop_loss"}', alert.freq_once_per_bar)
+        if stop_hit_short
+            alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(math.abs(strategy.position_size)) + ', "reason": "stop_loss"}', alert.freq_once_per_bar)
+
+        // Check for TP hits (Simplified for automation: fires when price crosses, assuming fill)
+        // This is complex for partials. TradersPost often prefers "exit" commands.
+        // If we want to exit a specific QTY:
+        
+        // TP1
+        if is_long and high >= tp1_p and not tp1_hit
+            alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_1) + ', "reason": "TP1"}', alert.freq_once_per_bar)
+            tp1_hit := true
+        if not is_long and low <= tp1_p and not tp1_hit
+            alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_1) + ', "reason": "TP1"}', alert.freq_once_per_bar)
+            tp1_hit := true
+
+        // TP2
+        if is_long and high >= tp2_p and not tp2_hit
+            alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_2) + ', "reason": "TP2"}', alert.freq_once_per_bar)
+            tp2_hit := true
+        if not is_long and low <= tp2_p and not tp2_hit
+            alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_2) + ', "reason": "TP2"}', alert.freq_once_per_bar)
+            tp2_hit := true
+
+        // TP3
+        if is_long and high >= tp3_p and not tp3_hit
+            alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_3) + ', "reason": "TP3"}', alert.freq_once_per_bar)
+            tp3_hit := true
+        if not is_long and low <= tp3_p and not tp3_hit
+            alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_3) + ', "reason": "TP3"}', alert.freq_once_per_bar)
+            tp3_hit := true
+
+        // TP4
+        if is_long and high >= tp4_p and not tp4_hit
+            alert('{"action": "sell", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_4) + ', "reason": "TP4"}', alert.freq_once_per_bar)
+            tp4_hit := true
+        if not is_long and low <= tp4_p and not tp4_hit
+            alert('{"action": "buy", "symbol": "' + syminfo.ticker + '", "quantity": ' + str.tostring(qty_4) + ', "reason": "TP4"}', alert.freq_once_per_bar)
+            tp4_hit := true
     
     // Catch-all stop for remaining (if rounding errors or if above TPs didn't cover 100% due to int math)
     // strategy.exit("Stop All", from_entry = is_long ? "Long" : "Short", stop = current_stop)
