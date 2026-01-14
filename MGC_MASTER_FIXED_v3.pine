@@ -368,29 +368,81 @@ volChop = volume < (volMA * volContractionMult)
 grayZoneFactors = (adxChop ? 1 : 0) + (atrCompression ? 1 : 0) + (bbChop ? 1 : 0) + (volChop ? 1 : 0)
 grayZone = useGrayZone and (grayZoneFactors >= 4)
 
-// ==================== CANDLESTICK PATTERN QUALITY (LIGHTWEIGHT) ====================
-// Tier 1: Engulfing, Three Soldiers/Crows
-// Tier 3: Hammer/Shooting Star
-// Tier 4: Doji/Spinning Top
+// ==================== CANDLESTICK PATTERN QUALITY (18 PATTERNS, TIERED) ====================
+// IMPORTANT: Patterns are confirmation quality, not stand-alone signals.
+// Tier 1: Three White Soldiers / Three Black Crows, Bullish/Bearish Engulfing
+// Tier 2: Morning Star / Evening Star, Piercing Line / Dark Cloud Cover
+// Tier 3: Hammer / Shooting Star, Inverted Hammer / Hanging Man, Bullish/Bearish Harami
+// Tier 4: Marubozu (bull/bear), Doji, Spinning Top
 body = math.abs(close - open)
 range = math.max(high - low, syminfo.mintick)
 upperWick = high - math.max(open, close)
 lowerWick = math.min(open, close) - low
-isDoji = (body / range) <= 0.2
-isHammer = (lowerWick / range) >= 0.55 and (upperWick / range) <= 0.2 and close > open
-isShootingStar = (upperWick / range) >= 0.55 and (lowerWick / range) <= 0.2 and close < open
+bodyPct = body / range
+upperPct = upperWick / range
+lowerPct = lowerWick / range
 
-bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
-bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+isBull = close > open
+isBear = close < open
 
-threeWhiteSoldiers = close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
-threeBlackCrows = close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+isDoji = bodyPct <= 0.20
+isSpinningTop = bodyPct <= 0.35 and upperPct >= 0.15 and lowerPct >= 0.15
 
-patternTierLong = threeWhiteSoldiers or bullEngulf ? 1 : isHammer ? 3 : isDoji ? 4 : 0
-patternTierShort = threeBlackCrows or bearEngulf ? 1 : isShootingStar ? 3 : isDoji ? 4 : 0
+isLongBody = bodyPct >= 0.60
+isSmallBody = bodyPct <= 0.30
 
+// Tier 4: Marubozu (bull/bear)
+isBullMarubozu = isBull and isLongBody and upperPct <= 0.08 and lowerPct <= 0.08
+isBearMarubozu = isBear and isLongBody and upperPct <= 0.08 and lowerPct <= 0.08
+
+// Tier 3: Hammer family (single candle, direction-aware)
+isHammer = isBull and (lowerPct >= 0.55) and (upperPct <= 0.20) and (bodyPct >= 0.15)
+isShootingStar = isBear and (upperPct >= 0.55) and (lowerPct <= 0.20) and (bodyPct >= 0.15)
+isInvertedHammer = isBull and (upperPct >= 0.55) and (lowerPct <= 0.20) and (bodyPct >= 0.15)
+isHangingMan = isBear and (lowerPct >= 0.55) and (upperPct <= 0.20) and (bodyPct >= 0.15)
+
+// Tier 1: Engulfing
+bullEngulf = isBull and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearEngulf = isBear and close[1] > open[1] and close <= open[1] and open >= close[1]
+
+// Tier 1: Three Soldiers / Crows (basic structure)
+threeWhiteSoldiers = isBull and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
+threeBlackCrows = isBear and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+
+// Tier 3: Harami
+prevBodyHigh = math.max(open[1], close[1])
+prevBodyLow = math.min(open[1], close[1])
+currBodyHigh = math.max(open, close)
+currBodyLow = math.min(open, close)
+
+bullHarami = isBull and close[1] < open[1] and isSmallBody and (currBodyHigh <= prevBodyHigh) and (currBodyLow >= prevBodyLow)
+bearHarami = isBear and close[1] > open[1] and isSmallBody and (currBodyHigh <= prevBodyHigh) and (currBodyLow >= prevBodyLow)
+
+// Tier 2: Piercing Line / Dark Cloud Cover (2-candle reversal)
+prevMid = (open[1] + close[1]) / 2.0
+piercingLine = isBull and close[1] < open[1] and open < close[1] and close > prevMid and close < open[1]
+darkCloudCover = isBear and close[1] > open[1] and open > close[1] and close < prevMid and close > open[1]
+
+// Tier 2: Morning Star / Evening Star (3-candle reversal, simplified)
+prev2Mid = (open[2] + close[2]) / 2.0
+midCandleSmall = math.abs(close[1] - open[1]) / math.max(high[1] - low[1], syminfo.mintick) <= 0.35
+morningStar = isBull and close[2] < open[2] and midCandleSmall and close > prev2Mid
+eveningStar = isBear and close[2] > open[2] and midCandleSmall and close < prev2Mid
+
+// Choose highest-quality tier per direction (lower number = higher tier)
+patternTierLong = (threeWhiteSoldiers or bullEngulf) ? 1 :
+     (morningStar or piercingLine) ? 2 :
+     (isHammer or isInvertedHammer or bullHarami) ? 3 :
+     (isBullMarubozu or isDoji or isSpinningTop) ? 4 : 0
+
+patternTierShort = (threeBlackCrows or bearEngulf) ? 1 :
+     (eveningStar or darkCloudCover) ? 2 :
+     (isShootingStar or isHangingMan or bearHarami) ? 3 :
+     (isBearMarubozu or isDoji or isSpinningTop) ? 4 : 0
+
+// Pattern component is 0–10 points (Quality Score spec uses 10 for Pattern Quality)
 patternPointsFromTier(tier) =>
-    tier == 1 ? 10.0 : tier == 2 ? 7.0 : tier == 3 ? 4.0 : tier == 4 ? 2.0 : 0.0
+    tier == 1 ? 10.0 : tier == 2 ? 7.5 : tier == 3 ? 5.0 : tier == 4 ? 2.5 : 0.0
 
 patternPointsLong = patternPointsFromTier(patternTierLong)
 patternPointsShort = patternPointsFromTier(patternTierShort)
