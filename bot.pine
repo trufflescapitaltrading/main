@@ -1685,6 +1685,17 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
          '}'
     
     alert(shortEntryMessage, alert.freq_once_per_bar)
+// EXIT Alert (Triggered when strategy closes a position)
+if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
+    exitMessage = '{' + '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"orderType":"market",' +
+         '"sentiment":"flat",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    
+    alert(exitMessage, alert.freq_once_per_bar)
+
 // ==================== 📊 VISUAL INDICATORS ====================
 hullMainColor = slopeMain == 1 ? color.new(color.green, 50) : slopeMain == -1 ? color.new(color.red, 50) : color.new(color.gray, 70)
 hullFastColor = slopeFast == 1 ? color.new(color.lime, 30) : slopeFast == -1 ? color.new(color.orange, 30) : color.new(color.gray, 50)
