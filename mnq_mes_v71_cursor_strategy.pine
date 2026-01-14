@@ -1413,9 +1413,11 @@ if strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-    bool isMnqWinTF = isMNQ and (is3min or is5min)
-    float tpMult = (highWinRateMode and isMnqWinTF) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
-    float slMult = (highWinRateMode and isMnqWinTF) ? widerSLMultiplier : 1.0
+    // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (not 3m) to avoid negative expectancy on 3m.
+    bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
+    bool isMnq5m = isMNQ and is5min
+    float tpMult = (highWinRateMode and isMnq5m) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
+    float slMult = (highWinRateMode and isMnq5m) ? widerSLMultiplier : 1.0
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
@@ -1495,9 +1497,11 @@ if strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-    bool isMnqWinTF = isMNQ and (is3min or is5min)
-    float tpMult = (highWinRateMode and isMnqWinTF) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
-    float slMult = (highWinRateMode and isMnqWinTF) ? widerSLMultiplier : 1.0
+    // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (not 3m) to avoid negative expectancy on 3m.
+    bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
+    bool isMnq5m = isMNQ and is5min
+    float tpMult = (highWinRateMode and isMnq5m) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
+    float slMult = (highWinRateMode and isMnq5m) ? widerSLMultiplier : 1.0
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
