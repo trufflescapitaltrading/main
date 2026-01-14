@@ -1,0 +1,622 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © MGCMasterLogic - Converted from Python/LumiBot Strategy
+
+//@version=5
+strategy("MGC Master Logic V7.1", 
+     overlay=true, 
+     initial_capital=50000, 
+     default_qty_type=strategy.fixed, 
+     default_qty_value=12,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=0.50,
+     slippage=1,
+     process_orders_on_close=false,
+     calc_on_every_tick=false,
+     max_bars_back=500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS - Strategy Parameters
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Position Sizing
+i_manualContracts   = input.int(12, "Manual Contracts", minval=1, group="Position Sizing")
+i_useAtrSizing      = input.bool(false, "Use ATR-Based Sizing", group="Position Sizing")
+i_atrRiskPct        = input.float(1.0, "ATR Risk % of Equity", minval=0.1, maxval=5.0, step=0.1, group="Position Sizing") / 100
+
+// HMA Settings
+i_hmaMainLen        = input.int(55, "HMA Main Length", minval=1, group="HMA Settings")
+i_hmaFastLen        = input.int(21, "HMA Fast Length", minval=1, group="HMA Settings")
+i_hmaSignalLen      = input.int(13, "HMA Signal Length", minval=1, group="HMA Settings")
+
+// Envelope Settings
+i_envelopePct       = input.float(0.2, "Envelope %", minval=0.01, maxval=5.0, step=0.01, group="Envelope Settings") / 100
+
+// SuperTrend Settings
+i_supertrendMult    = input.float(3.0, "SuperTrend Multiplier", minval=0.1, maxval=10.0, step=0.1, group="SuperTrend Settings")
+i_supertrendLen     = input.int(10, "SuperTrend Length", minval=1, group="SuperTrend Settings")
+
+// RSI Settings
+i_rsiLen            = input.int(14, "RSI Length", minval=1, group="RSI Settings")
+i_rsiOB             = input.int(60, "RSI Overbought", minval=50, maxval=100, group="RSI Settings")
+i_rsiOS             = input.int(40, "RSI Oversold", minval=0, maxval=50, group="RSI Settings")
+
+// ADX Settings
+i_adxLength         = input.int(14, "ADX Length", minval=1, group="ADX Settings")
+i_adxThreshold      = input.int(25, "ADX Threshold", minval=1, maxval=100, group="ADX Settings")
+
+// ATR Settings
+i_atrLength         = input.int(14, "ATR Length", minval=1, group="ATR Settings")
+
+// Risk Management
+i_minRR             = input.float(1.5, "Minimum Risk/Reward", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+i_stopLossAtrMult   = input.float(2.5, "Stop Loss ATR Multiplier", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+i_beBufferMult      = input.float(0.1, "Breakeven Buffer Multiplier", minval=0.0, maxval=1.0, step=0.05, group="Risk Management")
+i_trailActivationR  = input.float(0.5, "Trailing Stop Activation (R Multiple)", minval=0.1, maxval=2.0, step=0.1, group="Risk Management")
+
+// Take Profit Settings
+i_tp1Split          = input.float(40, "TP1 Split %", minval=0, maxval=100, group="Take Profit") / 100
+i_tp2Split          = input.float(30, "TP2 Split %", minval=0, maxval=100, group="Take Profit") / 100
+i_tp3Split          = input.float(20, "TP3 Split %", minval=0, maxval=100, group="Take Profit") / 100
+i_tp4Split          = input.float(10, "TP4 Split %", minval=0, maxval=100, group="Take Profit") / 100
+i_tp1Mult           = input.float(0.5, "TP1 R Multiple", minval=0.1, maxval=5.0, step=0.1, group="Take Profit")
+i_tp2Mult           = input.float(1.0, "TP2 R Multiple", minval=0.1, maxval=5.0, step=0.1, group="Take Profit")
+i_tp3Mult           = input.float(1.5, "TP3 R Multiple", minval=0.1, maxval=5.0, step=0.1, group="Take Profit")
+i_tp4Mult           = input.float(2.0, "TP4 R Multiple", minval=0.1, maxval=5.0, step=0.1, group="Take Profit")
+
+// Quality Gate
+i_qualityThreshold  = input.int(80, "Quality Threshold %", minval=0, maxval=100, group="Quality Gate")
+
+// Session Filter
+i_useSessionFilter  = input.bool(true, "Use Session Filter", group="Session Filter")
+i_sessionStart      = input.int(6, "Session Start Hour (UTC)", minval=0, maxval=23, group="Session Filter")
+i_sessionEnd        = input.int(21, "Session End Hour (UTC)", minval=0, maxval=23, group="Session Filter")
+
+// Daily Limits (for display/alerts - PineScript can't enforce across sessions like Python)
+i_dailyLossLimit    = input.float(1000.0, "Daily Loss Limit $", minval=0, group="Daily Limits")
+i_dailyProfitTarget = input.float(1000.0, "Daily Profit Target $", minval=0, group="Daily Limits")
+i_maxConsecLosses   = input.int(3, "Max Consecutive Losses", minval=1, maxval=10, group="Daily Limits")
+i_circuitBreakerPct = input.float(15.0, "Circuit Breaker DD %", minval=1, maxval=50, group="Daily Limits") / 100
+
+// Max Hold Time (in bars)
+i_maxHoldBars       = input.int(32, "Max Hold Time (bars)", minval=1, tooltip="For 15m timeframe, 32 bars = 8 hours", group="Risk Management")
+
+// Visual Settings
+i_showHMA           = input.bool(true, "Show HMA Lines", group="Visuals")
+i_showSupertrend    = input.bool(true, "Show SuperTrend", group="Visuals")
+i_showEnvelopes     = input.bool(false, "Show Envelopes", group="Visuals")
+i_showSignals       = input.bool(true, "Show Entry Signals", group="Visuals")
+i_showTPLevels      = input.bool(true, "Show TP Levels", group="Visuals")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FUNCTIONS - Indicator Calculations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Weighted Moving Average
+wma(src, length) =>
+    ta.wma(src, length)
+
+// Hull Moving Average
+hma(src, length) =>
+    halfLen = math.floor(length / 2)
+    sqrtLen = math.floor(math.sqrt(length))
+    wmaHalf = ta.wma(src, halfLen)
+    wmaFull = ta.wma(src, length)
+    hmaRaw = 2 * wmaHalf - wmaFull
+    ta.wma(hmaRaw, sqrtLen)
+
+// SuperTrend Calculation
+supertrend(factor, atrPeriod) =>
+    atr = ta.atr(atrPeriod)
+    hl2Val = hl2
+    upperBand = hl2Val + factor * atr
+    lowerBand = hl2Val - factor * atr
+    
+    var float superTrend = na
+    var int direction = 1
+    
+    prevSuperTrend = nz(superTrend[1], upperBand)
+    prevDirection = nz(direction[1], 1)
+    
+    lowerBand := lowerBand > nz(lowerBand[1]) or close[1] < nz(lowerBand[1]) ? lowerBand : nz(lowerBand[1])
+    upperBand := upperBand < nz(upperBand[1]) or close[1] > nz(upperBand[1]) ? upperBand : nz(upperBand[1])
+    
+    if prevSuperTrend == nz(upperBand[1])
+        direction := close > upperBand ? -1 : 1
+    else
+        direction := close < lowerBand ? 1 : -1
+    
+    superTrend := direction == -1 ? lowerBand : upperBand
+    
+    [superTrend, direction]
+
+// ADX Calculation
+calcADX(adxLen) =>
+    upMove = high - high[1]
+    downMove = low[1] - low
+    
+    plusDM = upMove > downMove and upMove > 0 ? upMove : 0
+    minusDM = downMove > upMove and downMove > 0 ? downMove : 0
+    
+    trueRange = ta.tr(true)
+    
+    smoothedPlusDM = ta.rma(plusDM, adxLen)
+    smoothedMinusDM = ta.rma(minusDM, adxLen)
+    smoothedTR = ta.rma(trueRange, adxLen)
+    
+    plusDI = smoothedTR != 0 ? (smoothedPlusDM / smoothedTR) * 100 : 0
+    minusDI = smoothedTR != 0 ? (smoothedMinusDM / smoothedTR) * 100 : 0
+    
+    dx = (plusDI + minusDI) != 0 ? math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100 : 0
+    adx = ta.rma(dx, adxLen)
+    
+    [adx, plusDI, minusDI]
+
+// Session Filter Check
+isSessionActive() =>
+    if not i_useSessionFilter
+        true
+    else
+        hourNow = hour(time, "UTC")
+        hourNow >= i_sessionStart and hourNow < i_sessionEnd
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INDICATOR CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// HMA Calculations
+hmaMain = hma(close, i_hmaMainLen)
+hmaFast = hma(close, i_hmaFastLen)
+hmaSignal = hma(close, i_hmaSignalLen)
+
+// ATR
+atrValue = ta.atr(i_atrLength)
+
+// RSI
+rsiValue = ta.rsi(close, i_rsiLen)
+
+// SuperTrend
+[superTrendLine, superTrendDir] = supertrend(i_supertrendMult, i_supertrendLen)
+
+// ADX
+[adxValue, plusDI, minusDI] = calcADX(i_adxLength)
+
+// Envelopes
+envUpper = close * (1 + i_envelopePct)
+envLower = close * (1 - i_envelopePct)
+
+// HMA Slope (4-bar lookback as in Python)
+hmaMainSlope = hmaMain - hmaMain[4]
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUALITY SCORE CALCULATION (5-Star System)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Quality Score Components
+// 1: Trend alignment - HMA fast > signal (for longs)
+q1_trendAlign = hmaFast > hmaSignal ? 1 : 0
+
+// 2: Price above/below main HMA
+q2_pricePosition = close > hmaMain ? 1 : 0
+
+// 3: SuperTrend direction (1 = bullish, -1 = bearish)
+// Note: Our supertrend function returns 1 for bearish, -1 for bullish (opposite)
+q3_superTrend = superTrendDir == -1 ? 1 : 0  // -1 means bullish in our function
+
+// 4: RSI bias
+q4_rsiBias = rsiValue > 50 ? 1 : 0
+
+// 5: Envelope harmony (price within envelope for longs)
+q5_envelope = close >= envLower ? 1 : 0
+
+// Calculate quality score for LONG
+qualityStarsLong = q1_trendAlign + q2_pricePosition + q3_superTrend + q4_rsiBias + q5_envelope
+qualityScoreLong = qualityStarsLong / 5.0 * 100
+
+// Calculate quality score for SHORT (inverted logic)
+q1_trendAlignShort = hmaFast < hmaSignal ? 1 : 0
+q2_pricePositionShort = close < hmaMain ? 1 : 0
+q3_superTrendShort = superTrendDir == 1 ? 1 : 0  // 1 means bearish
+q4_rsiBiasShort = rsiValue < 50 ? 1 : 0
+q5_envelopeShort = close <= envUpper ? 1 : 0
+
+qualityStarsShort = q1_trendAlignShort + q2_pricePositionShort + q3_superTrendShort + q4_rsiBiasShort + q5_envelopeShort
+qualityScoreShort = qualityStarsShort / 5.0 * 100
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTRY SIGNAL LOGIC
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Session check
+sessionOK = isSessionActive()
+
+// ADX filter
+adxOK = adxValue >= i_adxThreshold
+
+// Long Signals
+ultraLong = sessionOK and adxOK and 
+            qualityScoreLong >= 90 and 
+            qualityStarsLong >= 4 and
+            superTrendDir == -1 and  // Bullish SuperTrend
+            rsiValue > i_rsiOB and 
+            hmaFast > hmaSignal and
+            hmaMainSlope > 0
+
+strongLong = sessionOK and adxOK and 
+             qualityScoreLong >= 80 and 
+             qualityStarsLong >= 4 and
+             superTrendDir == -1 and  // Bullish SuperTrend
+             close > hmaMain and
+             hmaMainSlope > 0 and
+             not ultraLong  // Don't duplicate if ultra already triggers
+
+// Short Signals
+ultraShort = sessionOK and adxOK and 
+             qualityScoreShort >= 90 and 
+             qualityStarsShort >= 4 and
+             superTrendDir == 1 and  // Bearish SuperTrend
+             rsiValue < i_rsiOS and 
+             hmaFast < hmaSignal and
+             hmaMainSlope < 0
+
+strongShort = sessionOK and adxOK and 
+              qualityScoreShort >= 80 and 
+              qualityStarsShort >= 4 and
+              superTrendDir == 1 and  // Bearish SuperTrend
+              close < hmaMain and
+              hmaMainSlope < 0 and
+              not ultraShort  // Don't duplicate if ultra already triggers
+
+// Combined signals
+longSignal = ultraLong or strongLong
+shortSignal = ultraShort or strongShort
+
+// Signal type for labeling
+signalType = ultraLong ? "ULTRA LONG" : strongLong ? "STRONG LONG" : ultraShort ? "ULTRA SHORT" : strongShort ? "STRONG SHORT" : ""
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POSITION SIZING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+calcPositionSize() =>
+    if i_useAtrSizing and atrValue > 0
+        riskPerTrade = strategy.equity * i_atrRiskPct
+        stopDist = math.max(atrValue * i_stopLossAtrMult, close * 0.001)
+        math.max(1, math.floor(riskPerTrade / stopDist))
+    else
+        i_manualContracts
+
+positionSize = calcPositionSize()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STOP LOSS AND TAKE PROFIT CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+stopDistance = atrValue * i_stopLossAtrMult
+
+// Long trade levels
+longStopLoss = close - stopDistance
+longRValue = stopDistance  // 1R = stop distance
+longTP1 = close + (longRValue * i_tp1Mult)
+longTP2 = close + (longRValue * i_tp2Mult)
+longTP3 = close + (longRValue * i_tp3Mult)
+longTP4 = close + (longRValue * i_tp4Mult)
+longBreakeven = close + (longRValue * i_beBufferMult)
+
+// Short trade levels
+shortStopLoss = close + stopDistance
+shortRValue = stopDistance  // 1R = stop distance
+shortTP1 = close - (shortRValue * i_tp1Mult)
+shortTP2 = close - (shortRValue * i_tp2Mult)
+shortTP3 = close - (shortRValue * i_tp3Mult)
+shortTP4 = close - (shortRValue * i_tp4Mult)
+shortBreakeven = close - (shortRValue * i_beBufferMult)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGY EXECUTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Track entry bar for max hold time
+var int entryBar = na
+var float entryPrice = na
+var float initialStop = na
+var float currentStop = na
+var bool tp1Hit = false
+var bool tp2Hit = false
+var bool tp3Hit = false
+var bool tp4Hit = false
+var int consecutiveLosses = 0
+
+// Calculate quantities for each TP level
+tp1Qty = math.max(1, math.round(positionSize * i_tp1Split))
+tp2Qty = math.max(1, math.round(positionSize * i_tp2Split))
+tp3Qty = math.max(1, math.round(positionSize * i_tp3Split))
+tp4Qty = math.max(0, positionSize - tp1Qty - tp2Qty - tp3Qty)  // Remainder
+
+// Entry conditions - only enter if not already in position
+noPosition = strategy.position_size == 0
+
+// Check consecutive losses limit
+canTrade = consecutiveLosses < i_maxConsecLosses
+
+// Long Entry
+if longSignal and noPosition and canTrade
+    // Enter long position
+    strategy.entry("Long", strategy.long, qty=positionSize)
+    entryBar := bar_index
+    entryPrice := close
+    initialStop := longStopLoss
+    currentStop := longStopLoss
+    tp1Hit := false
+    tp2Hit := false
+    tp3Hit := false
+    tp4Hit := false
+    
+    // Set initial stop loss
+    strategy.exit("SL_Long", "Long", stop=longStopLoss)
+    
+    // Alert
+    alert("MGC Long Entry: " + signalType + " | Price: " + str.tostring(close, "#.##") + " | Stop: " + str.tostring(longStopLoss, "#.##"), alert.freq_once_per_bar)
+
+// Short Entry
+if shortSignal and noPosition and canTrade
+    // Enter short position
+    strategy.entry("Short", strategy.short, qty=positionSize)
+    entryBar := bar_index
+    entryPrice := close
+    initialStop := shortStopLoss
+    currentStop := shortStopLoss
+    tp1Hit := false
+    tp2Hit := false
+    tp3Hit := false
+    tp4Hit := false
+    
+    // Set initial stop loss
+    strategy.exit("SL_Short", "Short", stop=shortStopLoss)
+    
+    // Alert
+    alert("MGC Short Entry: " + signalType + " | Price: " + str.tostring(close, "#.##") + " | Stop: " + str.tostring(shortStopLoss, "#.##"), alert.freq_once_per_bar)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXIT MANAGEMENT - Take Profits & Trailing Stop
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Long Position Management
+if strategy.position_size > 0
+    rValue = nz(entryPrice - initialStop, stopDistance)
+    if rValue <= 0
+        rValue := stopDistance
+    
+    // TP1 Exit
+    tp1Target = entryPrice + (rValue * i_tp1Mult)
+    if not tp1Hit and high >= tp1Target
+        strategy.close("Long", comment="TP1", qty_percent=i_tp1Split * 100)
+        tp1Hit := true
+        alert("MGC Long TP1 Hit: " + str.tostring(tp1Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP2 Exit
+    tp2Target = entryPrice + (rValue * i_tp2Mult)
+    if not tp2Hit and tp1Hit and high >= tp2Target
+        strategy.close("Long", comment="TP2", qty_percent=i_tp2Split / (1 - i_tp1Split) * 100)
+        tp2Hit := true
+        // Move to breakeven after TP2
+        beLevel = entryPrice + (rValue * i_beBufferMult)
+        if beLevel > currentStop
+            currentStop := beLevel
+            strategy.exit("SL_Long", "Long", stop=currentStop)
+        alert("MGC Long TP2 Hit: " + str.tostring(tp2Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP3 Exit
+    tp3Target = entryPrice + (rValue * i_tp3Mult)
+    if not tp3Hit and tp2Hit and high >= tp3Target
+        remainingPct = i_tp3Split / (1 - i_tp1Split - i_tp2Split)
+        strategy.close("Long", comment="TP3", qty_percent=remainingPct * 100)
+        tp3Hit := true
+        alert("MGC Long TP3 Hit: " + str.tostring(tp3Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP4 Exit (final target)
+    tp4Target = entryPrice + (rValue * i_tp4Mult)
+    if not tp4Hit and tp3Hit and high >= tp4Target
+        strategy.close("Long", comment="TP4")
+        tp4Hit := true
+        alert("MGC Long TP4 Hit: " + str.tostring(tp4Target, "#.##"), alert.freq_once_per_bar)
+    
+    // Trailing Stop using SuperTrend (activate after 0.5R profit)
+    profitR = (close - entryPrice) / rValue
+    if profitR >= i_trailActivationR and superTrendLine > currentStop
+        currentStop := superTrendLine
+        strategy.exit("SL_Long", "Long", stop=currentStop)
+    
+    // Max hold time exit
+    if bar_index - entryBar >= i_maxHoldBars
+        strategy.close("Long", comment="Max Hold Time")
+        alert("MGC Long Max Hold Exit", alert.freq_once_per_bar)
+    
+    // EOD Exit (session end)
+    if not isSessionActive()
+        strategy.close("Long", comment="EOD Exit")
+        alert("MGC Long EOD Exit", alert.freq_once_per_bar)
+
+// Short Position Management
+if strategy.position_size < 0
+    rValue = nz(initialStop - entryPrice, stopDistance)
+    if rValue <= 0
+        rValue := stopDistance
+    
+    // TP1 Exit
+    tp1Target = entryPrice - (rValue * i_tp1Mult)
+    if not tp1Hit and low <= tp1Target
+        strategy.close("Short", comment="TP1", qty_percent=i_tp1Split * 100)
+        tp1Hit := true
+        alert("MGC Short TP1 Hit: " + str.tostring(tp1Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP2 Exit
+    tp2Target = entryPrice - (rValue * i_tp2Mult)
+    if not tp2Hit and tp1Hit and low <= tp2Target
+        strategy.close("Short", comment="TP2", qty_percent=i_tp2Split / (1 - i_tp1Split) * 100)
+        tp2Hit := true
+        // Move to breakeven after TP2
+        beLevel = entryPrice - (rValue * i_beBufferMult)
+        if beLevel < currentStop
+            currentStop := beLevel
+            strategy.exit("SL_Short", "Short", stop=currentStop)
+        alert("MGC Short TP2 Hit: " + str.tostring(tp2Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP3 Exit
+    tp3Target = entryPrice - (rValue * i_tp3Mult)
+    if not tp3Hit and tp2Hit and low <= tp3Target
+        remainingPct = i_tp3Split / (1 - i_tp1Split - i_tp2Split)
+        strategy.close("Short", comment="TP3", qty_percent=remainingPct * 100)
+        tp3Hit := true
+        alert("MGC Short TP3 Hit: " + str.tostring(tp3Target, "#.##"), alert.freq_once_per_bar)
+    
+    // TP4 Exit (final target)
+    tp4Target = entryPrice - (rValue * i_tp4Mult)
+    if not tp4Hit and tp3Hit and low <= tp4Target
+        strategy.close("Short", comment="TP4")
+        tp4Hit := true
+        alert("MGC Short TP4 Hit: " + str.tostring(tp4Target, "#.##"), alert.freq_once_per_bar)
+    
+    // Trailing Stop using SuperTrend (activate after 0.5R profit)
+    profitR = (entryPrice - close) / rValue
+    if profitR >= i_trailActivationR and superTrendLine < currentStop
+        currentStop := superTrendLine
+        strategy.exit("SL_Short", "Short", stop=currentStop)
+    
+    // Max hold time exit
+    if bar_index - entryBar >= i_maxHoldBars
+        strategy.close("Short", comment="Max Hold Time")
+        alert("MGC Short Max Hold Exit", alert.freq_once_per_bar)
+    
+    // EOD Exit (session end)
+    if not isSessionActive()
+        strategy.close("Short", comment="EOD Exit")
+        alert("MGC Short EOD Exit", alert.freq_once_per_bar)
+
+// Track consecutive losses (simplified - based on closed trades)
+if strategy.closedtrades > 0
+    lastTradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if lastTradeProfit < 0
+        consecutiveLosses := consecutiveLosses + 1
+    else
+        consecutiveLosses := 0
+
+// Reset consecutive losses on new day
+if dayofweek != dayofweek[1]
+    consecutiveLosses := 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLOTTING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// HMA Lines
+plot(i_showHMA ? hmaMain : na, "HMA Main", color=color.blue, linewidth=2)
+plot(i_showHMA ? hmaFast : na, "HMA Fast", color=color.green, linewidth=1)
+plot(i_showHMA ? hmaSignal : na, "HMA Signal", color=color.orange, linewidth=1)
+
+// SuperTrend
+supertrendColor = superTrendDir == -1 ? color.green : color.red
+plot(i_showSupertrend ? superTrendLine : na, "SuperTrend", color=supertrendColor, linewidth=2, style=plot.style_linebr)
+
+// Envelopes
+plot(i_showEnvelopes ? envUpper : na, "Envelope Upper", color=color.new(color.purple, 70))
+plot(i_showEnvelopes ? envLower : na, "Envelope Lower", color=color.new(color.purple, 70))
+
+// Entry Signals
+plotshape(i_showSignals and longSignal and noPosition ? low : na, "Long Signal", 
+          shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(i_showSignals and shortSignal and noPosition ? high : na, "Short Signal", 
+          shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// TP Levels (only show when in position)
+plot(i_showTPLevels and strategy.position_size > 0 ? entryPrice + ((entryPrice - initialStop) * i_tp1Mult) : na, 
+     "Long TP1", color=color.new(color.green, 50), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size > 0 ? entryPrice + ((entryPrice - initialStop) * i_tp2Mult) : na, 
+     "Long TP2", color=color.new(color.green, 40), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size > 0 ? entryPrice + ((entryPrice - initialStop) * i_tp3Mult) : na, 
+     "Long TP3", color=color.new(color.green, 30), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size > 0 ? entryPrice + ((entryPrice - initialStop) * i_tp4Mult) : na, 
+     "Long TP4", color=color.new(color.green, 20), style=plot.style_linebr)
+
+plot(i_showTPLevels and strategy.position_size < 0 ? entryPrice - ((initialStop - entryPrice) * i_tp1Mult) : na, 
+     "Short TP1", color=color.new(color.red, 50), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size < 0 ? entryPrice - ((initialStop - entryPrice) * i_tp2Mult) : na, 
+     "Short TP2", color=color.new(color.red, 40), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size < 0 ? entryPrice - ((initialStop - entryPrice) * i_tp3Mult) : na, 
+     "Short TP3", color=color.new(color.red, 30), style=plot.style_linebr)
+plot(i_showTPLevels and strategy.position_size < 0 ? entryPrice - ((initialStop - entryPrice) * i_tp4Mult) : na, 
+     "Short TP4", color=color.new(color.red, 20), style=plot.style_linebr)
+
+// Stop Loss Line
+plot(strategy.position_size != 0 ? currentStop : na, "Current Stop", color=color.red, style=plot.style_linebr, linewidth=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INFO TABLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var table infoTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    // Quality Score Display
+    table.cell(infoTable, 0, 0, "Quality Long", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, str.tostring(qualityScoreLong, "#.#") + "% (" + str.tostring(qualityStarsLong) + "★)", 
+               text_color=qualityScoreLong >= i_qualityThreshold ? color.green : color.red, text_size=size.small)
+    
+    table.cell(infoTable, 0, 1, "Quality Short", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(qualityScoreShort, "#.#") + "% (" + str.tostring(qualityStarsShort) + "★)", 
+               text_color=qualityScoreShort >= i_qualityThreshold ? color.green : color.red, text_size=size.small)
+    
+    // ADX
+    table.cell(infoTable, 0, 2, "ADX", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(adxValue, "#.#"), 
+               text_color=adxValue >= i_adxThreshold ? color.green : color.red, text_size=size.small)
+    
+    // RSI
+    table.cell(infoTable, 0, 3, "RSI", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 3, str.tostring(rsiValue, "#.#"), 
+               text_color=rsiValue > i_rsiOB ? color.green : rsiValue < i_rsiOS ? color.red : color.gray, text_size=size.small)
+    
+    // SuperTrend Direction
+    table.cell(infoTable, 0, 4, "SuperTrend", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 4, superTrendDir == -1 ? "BULLISH" : "BEARISH", 
+               text_color=superTrendDir == -1 ? color.green : color.red, text_size=size.small)
+    
+    // Session Status
+    table.cell(infoTable, 0, 5, "Session", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 5, sessionOK ? "ACTIVE" : "CLOSED", 
+               text_color=sessionOK ? color.green : color.red, text_size=size.small)
+    
+    // Position Status
+    table.cell(infoTable, 0, 6, "Position", text_color=color.white, text_size=size.small)
+    posText = strategy.position_size > 0 ? "LONG " + str.tostring(strategy.position_size) : 
+              strategy.position_size < 0 ? "SHORT " + str.tostring(math.abs(strategy.position_size)) : "FLAT"
+    posColor = strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(infoTable, 1, 6, posText, text_color=posColor, text_size=size.small)
+    
+    // ATR Value
+    table.cell(infoTable, 0, 7, "ATR", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 7, str.tostring(atrValue, "#.##"), text_color=color.white, text_size=size.small)
+    
+    // Consecutive Losses
+    table.cell(infoTable, 0, 8, "Consec Losses", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 8, str.tostring(consecutiveLosses) + "/" + str.tostring(i_maxConsecLosses), 
+               text_color=consecutiveLosses >= i_maxConsecLosses ? color.red : color.green, text_size=size.small)
+    
+    // Signal
+    table.cell(infoTable, 0, 9, "Signal", text_color=color.white, text_size=size.small)
+    sigColor = longSignal ? color.green : shortSignal ? color.red : color.gray
+    sigText = longSignal or shortSignal ? signalType : "NONE"
+    table.cell(infoTable, 1, 9, sigText, text_color=sigColor, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// General alerts for external systems
+alertcondition(longSignal and noPosition and canTrade, "Long Entry Signal", "MGC Long Entry Signal")
+alertcondition(shortSignal and noPosition and canTrade, "Short Entry Signal", "MGC Short Entry Signal")
+alertcondition(ultraLong, "Ultra Long Signal", "MGC Ultra Long Signal - Highest Quality")
+alertcondition(ultraShort, "Ultra Short Signal", "MGC Ultra Short Signal - Highest Quality")
+alertcondition(strongLong, "Strong Long Signal", "MGC Strong Long Signal")
+alertcondition(strongShort, "Strong Short Signal", "MGC Strong Short Signal")
+alertcondition(not sessionOK and sessionOK[1], "Session End", "MGC Trading Session Ended")
+alertcondition(sessionOK and not sessionOK[1], "Session Start", "MGC Trading Session Started")
