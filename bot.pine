@@ -1,0 +1,1151 @@
+//@version=5
+strategy("DRAFT TESTING 🏆 +V.MGC1!.01 COMPLETE FIXED PROFIT LOGIC - LIVE READY",
+overlay=true,
+initial_capital=25000,
+default_qty_type=strategy.cash,
+default_qty_value=1000,
+commission_type=strategy.commission.cash_per_contract,
+commission_value=1.60,
+slippage=2,
+calc_on_every_tick=true,
+pyramiding=2,
+process_orders_on_close=false,
+max_bars_back=5000)
+
+// ==================== LIVE TRADING CONFIGURATION ====================
+group_live = "🔴 Live Trading Setup"
+enableLiveAlerts = input.bool(true, "Enable Live Trading Alerts", group=group_live)
+brokerType = input.string("TradersPost", "Broker Type", options=["TradersPost", "Tradovate Direct", "Custom Webhook"], group=group_live)
+accountId = input.string("", "Account ID (Optional)", group=group_live, tooltip="Leave blank for default account")
+enableEntryAlerts = input.bool(true, "Send Entry Alerts", group=group_live)
+enableExitAlerts = input.bool(true, "Send Exit Alerts", group=group_live)
+enableStopModificationAlerts = input.bool(true, "Send Stop Modification Alerts", group=group_live)
+enableEmergencyAlerts = input.bool(true, "Send Emergency Alerts", group=group_live)
+
+tradersPostSymbol = input.string("", "TradersPost Symbol Override", group=group_live, tooltip="Leave blank to use chart symbol. Example: MGCZ2024")
+orderType = input.string("market", "Order Type", options=["market", "limit"], group=group_live)
+
+getAlertSymbol() =>
+    tradersPostSymbol != "" ? tradersPostSymbol : syminfo.ticker
+
+hasAccountId() =>
+    str.length(accountId) > 0
+
+// ==================== INITIALIZATION & VALIDATION ====================
+var bool isInitialized = false
+var int initBarsRequired = 50
+var int initCounter = 0
+
+if not isInitialized
+    initCounter += 1
+    if initCounter >= initBarsRequired
+        isInitialized := true
+
+// ==================== INSTRUMENT DETECTION ====================
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroFutures = isMNQ or isMCL or isMGC or isMES or isMYM or isM2K
+
+// ==================== MANUAL POSITION SIZE ====================
+useManualPositionSize = input.bool(true, "Use Manual Position Sizes (CONTRACTS)", group="Position Sizing")
+mnqManualContracts = input.int(1, "MNQ Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+mclManualContracts = input.int(1, "MCL Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+mgcManualContracts = input.int(1, "MGC Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+mesManualContracts = input.int(1, "MES Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+mymManualContracts = input.int(1, "MYM Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+m2kManualContracts = input.int(1, "M2K Manual Contracts", minval=1, maxval=50, group="Position Sizing")
+
+currentManualContracts = isMNQ ? mnqManualContracts : isMCL ? mclManualContracts : isMGC ? mgcManualContracts : isMES ? mesManualContracts : isMYM ? mymManualContracts : isM2K ? m2kManualContracts : 1
+
+// ==================== COMMISSION & SLIPPAGE ====================
+mnqCommission = input.float(0.52, "MNQ Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+mclCommission = input.float(1.60, "MCL Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+mgcCommission = input.float(1.60, "MGC Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+mesCommission = input.float(0.52, "MES Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+mymCommission = input.float(0.85, "MYM Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+m2kCommission = input.float(0.65, "M2K Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+
+mnqSlippage = input.int(2, "MNQ Slippage (ticks)", minval=0, maxval=10, group="Costs")
+mclSlippage = input.int(2, "MCL Slippage (ticks)", minval=0, maxval=10, group="Costs")
+mgcSlippage = input.int(2, "MGC Slippage (ticks)", minval=0, maxval=10, group="Costs")
+mesSlippage = input.int(2, "MES Slippage (ticks)", minval=0, maxval=10, group="Costs")
+mymSlippage = input.int(2, "MYM Slippage (ticks)", minval=0, maxval=10, group="Costs")
+m2kSlippage = input.int(2, "M2K Slippage (ticks)", minval=0, maxval=10, group="Costs")
+
+currentCommission = isMNQ ? mnqCommission : isMCL ? mclCommission : isMGC ? mgcCommission : isMES ? mesCommission : isMYM ? mymCommission : isM2K ? m2kCommission : 1.60
+currentSlippage = isMNQ ? mnqSlippage : isMCL ? mclSlippage : isMGC ? mgcSlippage : isMES ? mesSlippage : isMYM ? mymSlippage : isM2K ? m2kSlippage : 2
+
+// ==================== 🔥 COMPLETE PERFORMANCE TRACKING (FIXED) ====================
+var int totalTrades = 0
+var int winningTrades = 0
+var int losingTrades = 0
+var float totalProfit = 0.0
+var float totalLoss = 0.0
+var float largestWin = 0.0
+var float largestLoss = 0.0
+var float dailyPnL = 0.0
+var float runningPnL = 0.0
+var bool hardStopHit = false
+var int consecutiveLosses = 0
+var int consecutiveWins = 0
+var float maxDrawdown = 0.0
+var float peakEquity = 0.0
+
+// ==================== PROFIT PROTECTION ====================
+enableProfitProtection = input.bool(true, "Enable Profit Protection", group="Profit Protection")
+profitProtectionTrigger = input.int(12, "Protection Trigger (ticks)", minval=4, maxval=30, group="Profit Protection")
+profitProtectionBuffer = input.int(6, "Protection Buffer (ticks above BE)", minval=2, maxval=15, group="Profit Protection")
+tightenNearTP1 = input.bool(true, "Tighten Trail Near TP1", group="Profit Protection")
+
+var float protectionStop = na
+var bool protectionActive = false
+
+// ==================== INSTRUMENT MULTIPLIERS ====================
+mnqMultiplier = input.float(1.8, "MNQ Trade Multiplier", minval=1.2, maxval=3.0, group="Instrument Settings")
+mclMultiplier = input.float(1.6, "MCL Trade Multiplier", minval=1.2, maxval=2.5, group="Instrument Settings")
+mgcMultiplier = input.float(1.4, "MGC Trade Multiplier", minval=1.0, maxval=2.2, group="Instrument Settings")
+mesMultiplier = input.float(1.5, "MES Trade Multiplier", minval=1.2, maxval=2.5, group="Instrument Settings")
+mymMultiplier = input.float(1.3, "MYM Trade Multiplier", minval=1.0, maxval=2.0, group="Instrument Settings")
+m2kMultiplier = input.float(1.4, "M2K Trade Multiplier", minval=1.0, maxval=2.2, group="Instrument Settings")
+
+// ==================== HULL MA SETTINGS ====================
+hullSrc = input.source(close, "Hull Source", group="Hull MA")
+baseHullMain = input.int(25, "Base Hull MA (Main)", minval=15, maxval=40, group="Hull MA")
+baseHullFast = input.int(9, "Base Hull MA (Fast)", minval=6, maxval=15, group="Hull MA")
+baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22, group="Hull MA")
+
+hullPeriodMain = isMNQ ? math.round(baseHullMain * 0.7) : isMCL ? math.round(baseHullMain * 0.9) : isMGC ? baseHullMain : isMES ? math.round(baseHullMain * 0.8) : isMYM ? math.round(baseHullMain * 0.85) : isM2K ? math.round(baseHullMain * 0.75) : baseHullMain
+hullPeriodFast = isMNQ ? math.round(baseHullFast * 0.8) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : isMES ? math.round(baseHullFast * 0.85) : isMYM ? math.round(baseHullFast * 0.9) : isM2K ? math.round(baseHullFast * 0.8) : baseHullFast
+hullPeriodSignal = isMNQ ? math.round(baseHullSignal * 0.8) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : isMES ? math.round(baseHullSignal * 0.85) : isMYM ? math.round(baseHullSignal * 0.9) : isM2K ? math.round(baseHullSignal * 0.8) : baseHullSignal
+
+// ==================== ENVELOPE SETTINGS ====================
+baseEnvLength = input.int(12, "Base Envelope Period", minval=8, maxval=20, group="Envelope")
+baseEnvDev = input.float(0.8, "Base Envelope Deviation %", minval=0.5, maxval=1.5, group="Envelope")
+
+envLength = isMNQ ? math.round(baseEnvLength * 0.9) : isMCL ? baseEnvLength : isMGC ? math.round(baseEnvLength * 1.1) : isMES ? math.round(baseEnvLength * 0.85) : isMYM ? math.round(baseEnvLength * 0.95) : isM2K ? math.round(baseEnvLength * 0.9) : baseEnvLength
+envDev = isMNQ ? baseEnvDev * 0.85 : isMCL ? baseEnvDev * 1.0 : isMGC ? baseEnvDev * 0.95 : isMES ? baseEnvDev * 0.9 : isMYM ? baseEnvDev * 0.95 : isM2K ? baseEnvDev * 0.9 : baseEnvDev
+
+// ==================== SUPERTREND SETTINGS ====================
+basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4, group="SuperTrend")
+baseAtrFactor = input.float(2.2, "Base ATR Factor", minval=1.8, maxval=3.0, group="SuperTrend")
+baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12, group="SuperTrend")
+
+pivotPeriod = basePivotPeriod
+atrFactor = isMNQ ? baseAtrFactor * 0.95 : isMCL ? baseAtrFactor * 1.05 : isMGC ? baseAtrFactor : isMES ? baseAtrFactor * 0.9 : isMYM ? baseAtrFactor * 1.0 : isM2K ? baseAtrFactor * 0.95 : baseAtrFactor
+atrPeriod = isMNQ ? math.round(baseAtrPeriod * 0.9) : isMCL ? baseAtrPeriod : isMGC ? math.round(baseAtrPeriod * 1.1) : isMES ? math.round(baseAtrPeriod * 0.9) : isMYM ? baseAtrPeriod : isM2K ? math.round(baseAtrPeriod * 0.95) : baseAtrPeriod
+
+// ==================== RISK PARAMETERS ====================
+baseRiskPercent = input.float(0.6, "Base Risk per Trade (%)", minval=0.2, maxval=2.0, group="Risk Management")
+instrumentRiskMultiplier = isMNQ ? 1.3 : isMCL ? 1.1 : isMGC ? 1.0 : isMES ? 1.2 : isMYM ? 0.9 : isM2K ? 1.1 : 1.0
+adjustedRiskPercent = baseRiskPercent * instrumentRiskMultiplier
+
+useTP = input.bool(true, "Use Take Profit Levels", group="Risk Management")
+useSL = input.bool(true, "Use Stop Loss", group="Risk Management")
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0, group="Risk Management")
+maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5.0, maxval=25.0, group="Risk Management")
+
+// ==================== TRADING MODE ====================
+ultraMode = input.bool(true, "Enable Ultra Trading Mode", group="Trading Mode")
+microScalping = input.bool(true, "Enable Micro Scalping", group="Trading Mode")
+instantSignals = input.bool(true, "Enable Instant Signals", group="Trading Mode")
+
+baseTradeFrequency = input.float(1.3, "Base Trade Frequency", minval=1.0, maxval=2.5, group="Trading Mode")
+tradeFrequencyBoost = isMNQ ? baseTradeFrequency * mnqMultiplier : isMCL ? baseTradeFrequency * mclMultiplier : isMGC ? baseTradeFrequency * mgcMultiplier : isMES ? baseTradeFrequency * mesMultiplier : isMYM ? baseTradeFrequency * mymMultiplier : isM2K ? baseTradeFrequency * m2kMultiplier : baseTradeFrequency
+
+// ==================== SCALPING SETTINGS ====================
+enableScalping = input.bool(true, "Enable Scalping Mode", group="Scalping")
+mnqScalpMultiplier = input.float(2.2, "MNQ Scalp Multiplier", minval=1.5, maxval=3.5, group="Scalping")
+mclScalpMultiplier = input.float(1.8, "MCL Scalp Multiplier", minval=1.2, maxval=3.0, group="Scalping")
+mgcScalpMultiplier = input.float(1.6, "MGC Scalp Multiplier", minval=1.2, maxval=2.8, group="Scalping")
+mesScalpMultiplier = input.float(2.0, "MES Scalp Multiplier", minval=1.5, maxval=3.0, group="Scalping")
+mymScalpMultiplier = input.float(1.7, "MYM Scalp Multiplier", minval=1.2, maxval=2.5, group="Scalping")
+m2kScalpMultiplier = input.float(1.8, "M2K Scalp Multiplier", minval=1.2, maxval=2.8, group="Scalping")
+
+scalpingMultiplier = isMNQ ? mnqScalpMultiplier : isMCL ? mclScalpMultiplier : isMGC ? mgcScalpMultiplier : isMES ? mesScalpMultiplier : isMYM ? mymScalpMultiplier : isM2K ? m2kScalpMultiplier : 1.8
+
+// ==================== EXIT SETTINGS ====================
+quickExitMode = input.bool(true, "Quick Exit Mode", group="Exit Settings")
+baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50, group="Exit Settings")
+maxHoldingBars = isMNQ ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : isMES ? baseMaxHolding : isMYM ? math.round(baseMaxHolding * 1.1) : isM2K ? math.round(baseMaxHolding * 1.3) : baseMaxHolding
+
+useEnhancedTP = input.bool(true, "Use Enhanced Take Profit", group="Exit Settings")
+baseTpMultiplier = input.float(1.0, "Base TP Multiplier", minval=0.6, maxval=2.0, group="Exit Settings")
+tpMultiplier = isMNQ ? baseTpMultiplier * 0.9 : isMCL ? baseTpMultiplier * 1.1 : isMGC ? baseTpMultiplier : isMES ? baseTpMultiplier * 0.95 : isMYM ? baseTpMultiplier * 1.05 : isM2K ? baseTpMultiplier * 0.95 : baseTpMultiplier
+
+useSmartTrailing = input.bool(true, "Use Smart Trailing Stop", group="Exit Settings")
+baseTrailActivation = input.float(0.7, "Base Trail Activation", minval=0.4, maxval=1.2, group="Exit Settings")
+trailActivationRatio = isMNQ ? baseTrailActivation : isMCL ? baseTrailActivation * 1.1 : isMGC ? baseTrailActivation * 1.2 : isMES ? baseTrailActivation * 0.95 : isMYM ? baseTrailActivation * 1.05 : isM2K ? baseTrailActivation * 1.0 : baseTrailActivation
+
+// ==================== MARKET HOURS ====================
+enableSessionFilters = input.bool(true, "Enable Session Filters", group="Market Hours")
+timezoneOffset = input.int(-5, "Timezone Offset from UTC", minval=-12, maxval=14, group="Market Hours")
+preMarketStart = input.int(600, "Pre-Market Start (ET)", minval=0, maxval=2359, group="Market Hours")
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359, group="Market Hours")
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359, group="Market Hours")
+afterHoursEnd = input.int(1700, "After Hours End (ET)", minval=0, maxval=2359, group="Market Hours")
+
+currentTime = math.round((hour + timezoneOffset) * 100 + minute)
+isPreMarket = enableSessionFilters and (currentTime >= preMarketStart) and (currentTime < regularSessionStart)
+isRegularSession = enableSessionFilters and (currentTime >= regularSessionStart) and (currentTime <= regularSessionEnd)
+isAfterHours = enableSessionFilters and (currentTime > regularSessionEnd) and (currentTime <= afterHoursEnd)
+
+sessionMultiplier = if not enableSessionFilters
+    1.0
+else if isRegularSession
+    1.1
+else if isPreMarket or isAfterHours
+    0.7
+else
+    0.5
+
+// ==================== SIGNAL DETECTION ====================
+enableMicroSignals = input.bool(true, "Enable Micro Signals", group="Signal Detection")
+mnqNoiseThreshold = input.float(0.015, "MNQ Noise Threshold %", minval=0.005, maxval=0.05, group="Signal Detection")
+mclNoiseThreshold = input.float(0.025, "MCL Noise Threshold %", minval=0.01, maxval=0.08, group="Signal Detection")
+mgcNoiseThreshold = input.float(0.02, "MGC Noise Threshold %", minval=0.008, maxval=0.06, group="Signal Detection")
+mesNoiseThreshold = input.float(0.012, "MES Noise Threshold %", minval=0.005, maxval=0.04, group="Signal Detection")
+mymNoiseThreshold = input.float(0.018, "MYM Noise Threshold %", minval=0.008, maxval=0.05, group="Signal Detection")
+m2kNoiseThreshold = input.float(0.016, "M2K Noise Threshold %", minval=0.007, maxval=0.05, group="Signal Detection")
+
+priceNoiseThreshold = isMNQ ? mnqNoiseThreshold : isMCL ? mclNoiseThreshold : isMGC ? mgcNoiseThreshold : isMES ? mesNoiseThreshold : isMYM ? mymNoiseThreshold : isM2K ? m2kNoiseThreshold : 0.02
+
+// ==================== FILTERS ====================
+baseVolumeThreshold = input.float(0.6, "Base Volume Threshold", minval=0.3, maxval=1.2, group="Filters")
+volumeThreshold = isMNQ ? baseVolumeThreshold * 0.8 : isMCL ? baseVolumeThreshold * 1.1 : isMGC ? baseVolumeThreshold : isMES ? baseVolumeThreshold * 0.85 : isMYM ? baseVolumeThreshold * 0.95 : isM2K ? baseVolumeThreshold * 0.9 : baseVolumeThreshold
+
+baseMomentumSensitivity = input.float(1.8, "Base Momentum Sensitivity", minval=1.0, maxval=3.5, group="Filters")
+momentumSensitivity = isMNQ ? baseMomentumSensitivity * 1.3 : isMCL ? baseMomentumSensitivity * 1.1 : isMGC ? baseMomentumSensitivity : isMES ? baseMomentumSensitivity * 1.2 : isMYM ? baseMomentumSensitivity * 1.0 : isM2K ? baseMomentumSensitivity * 1.1 : baseMomentumSensitivity
+
+// ==================== TIMEFRAME OPTIMIZATION ====================
+autoTimeframeOptimization = input.bool(true, "Auto Timeframe Optimization", group="Timeframe")
+
+baseTfMultiplier1m = input.float(1.8, "Base 1m TF Multiplier", minval=1.2, maxval=3.0, group="Timeframe")
+baseTfMultiplier2m = input.float(1.6, "Base 2m TF Multiplier", minval=1.0, maxval=2.5, group="Timeframe")
+baseTfMultiplier3m = input.float(1.4, "Base 3m TF Multiplier", minval=1.0, maxval=2.2, group="Timeframe")
+baseTfMultiplier5m = input.float(1.2, "Base 5m TF Multiplier", minval=1.0, maxval=2.0, group="Timeframe")
+
+tfMultiplier1m = isMNQ ? baseTfMultiplier1m * 1.1 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.9 : isMES ? baseTfMultiplier1m * 1.05 : isMYM ? baseTfMultiplier1m * 0.95 : isM2K ? baseTfMultiplier1m * 1.0 : baseTfMultiplier1m
+tfMultiplier2m = isMNQ ? baseTfMultiplier2m * 1.05 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.95 : isMES ? baseTfMultiplier2m * 1.0 : isMYM ? baseTfMultiplier2m * 0.9 : isM2K ? baseTfMultiplier2m * 0.95 : baseTfMultiplier2m
+tfMultiplier3m = isMNQ ? baseTfMultiplier3m : isMCL ? baseTfMultiplier3m * 0.95 : isMGC ? baseTfMultiplier3m * 0.9 : isMES ? baseTfMultiplier3m * 0.95 : isMYM ? baseTfMultiplier3m * 0.85 : isM2K ? baseTfMultiplier3m * 0.9 : baseTfMultiplier3m
+tfMultiplier5m = isMNQ ? baseTfMultiplier5m : isMCL ? baseTfMultiplier5m * 0.95 : isMGC ? baseTfMultiplier5m * 0.9 : isMES ? baseTfMultiplier5m * 0.9 : isMYM ? baseTfMultiplier5m * 0.8 : isM2K ? baseTfMultiplier5m * 0.85 : baseTfMultiplier5m
+
+fourHourTradeBoost = input.float(2.5, "4H Trade Frequency Boost", minval=1.5, maxval=4.0, group="Timeframe")
+
+// ==================== VOLATILITY ====================
+baseVolatilityMultiplier = input.float(2.2, "Base Volatility Multiplier", minval=1.5, maxval=4.0, group="Volatility")
+volatilityMultiplier = isMNQ ? baseVolatilityMultiplier * 1.2 : isMCL ? baseVolatilityMultiplier * 1.1 : isMGC ? baseVolatilityMultiplier : isMES ? baseVolatilityMultiplier * 1.15 : isMYM ? baseVolatilityMultiplier * 1.05 : isM2K ? baseVolatilityMultiplier * 1.1 : baseVolatilityMultiplier
+
+// ==================== PERFORMANCE ====================
+baseWinRateBoost = input.float(1.8, "Base Win Rate Boost", minval=1.2, maxval=3.0, group="Performance")
+winRateBoost = isMNQ ? baseWinRateBoost * 1.1 : isMCL ? baseWinRateBoost : isMGC ? baseWinRateBoost * 0.95 : isMES ? baseWinRateBoost * 1.05 : isMYM ? baseWinRateBoost * 0.9 : isM2K ? baseWinRateBoost * 1.0 : baseWinRateBoost
+
+// ==================== MARKET REGIME ====================
+useMarketRegime = input.bool(true, "Use Market Regime Detection", group="Market Regime")
+baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12, group="Market Regime")
+baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12, group="Market Regime")
+
+trendStrengthPeriod = isMNQ ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isMES ? baseTrendPeriod : isMYM ? math.round(baseTrendPeriod * 1.1) : isM2K ? math.round(baseTrendPeriod * 1.15) : baseTrendPeriod
+volatilityPeriod = isMNQ ? baseVolPeriod : isMCL ? math.round(baseVolPeriod * 1.1) : isMGC ? math.round(baseVolPeriod * 1.2) : isMES ? baseVolPeriod : isMYM ? math.round(baseVolPeriod * 1.05) : isM2K ? math.round(baseVolPeriod * 1.1) : baseVolPeriod
+
+// ==================== VOLATILITY FILTERS ====================
+useVolatilityFilter = input.bool(true, "Use Volatility Filter", group="Volatility")
+maxVolatilityATR = input.float(3.0, "Max Volatility (ATR Multiple)", minval=1.5, maxval=5.0, group="Volatility")
+minVolatilityATR = input.float(0.3, "Min Volatility (ATR Multiple)", minval=0.1, maxval=1.0, group="Volatility")
+
+// ==================== ADVANCED RISK ====================
+useMAE = input.bool(false, "Use MAE Exits", group="Advanced Risk")
+maeMultiplier = input.float(1.5, "MAE Multiplier", minval=1.0, maxval=3.0, group="Advanced Risk")
+maeThreshold = input.float(0.8, "MAE Threshold (ATR)", minval=0.5, maxval=2.0, group="Advanced Risk")
+
+useReversalExit = input.bool(false, "Use Reversal Exits", group="Advanced Risk")
+reversalStrength = input.string("Medium", "Reversal Strength", options=["Low", "Medium", "High"], group="Advanced Risk")
+
+useHardStopFlag = input.bool(false, "Use Hard Stop Hit Flag", group="Advanced Risk")
+hardStopMultiplier = input.float(2.5, "Hard Stop ATR Multiple", minval=2.0, maxval=4.0, group="Advanced Risk")
+
+useBackupStop = input.bool(false, "Use Backup Stop Loss", group="Advanced Risk")
+backupStopBuffer = input.float(1.1, "Backup Stop Buffer", minval=1.05, maxval=1.2, group="Advanced Risk")
+
+useGapProtection = input.bool(false, "Use Gap Loss Protection", group="Advanced Risk")
+gapAtrMultiple = input.float(2.0, "Gap Detection (ATR Multiple)", minval=1.5, maxval=3.0, group="Advanced Risk")
+maxGapLoss = input.float(150, "Max Gap Loss Per Day ($)", minval=50, maxval=300, group="Advanced Risk")
+
+// ==================== HULL MOVING AVERAGES ====================
+hma(src, len) =>
+    len_safe = math.max(len, 2)
+    ta.wma(2 * ta.wma(src, math.round(len_safe / 2)) - ta.wma(src, len_safe), math.round(math.sqrt(len_safe)))
+
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+is2h = currentTF == "120" or currentTF == "2h"
+is3h = currentTF == "180" or currentTF == "3h"
+is4h = currentTF == "240" or currentTF == "4h"
+isHigherTF = is2h or is3h or is4h
+
+adaptiveHullMain = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodMain * 0.7)
+    else if is2min
+        math.round(hullPeriodMain * 0.8)
+    else if is3min
+        math.round(hullPeriodMain * 0.85)
+    else if is5min
+        math.round(hullPeriodMain * 0.9)
+    else if is2h
+        math.round(hullPeriodMain * 0.65)
+    else if is3h
+        math.round(hullPeriodMain * 0.60)
+    else if is4h
+        math.round(hullPeriodMain * 0.55)
+    else
+        hullPeriodMain
+else
+    hullPeriodMain
+
+adaptiveHullFast = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodFast * 0.8)
+    else if is2min
+        math.round(hullPeriodFast * 0.85)
+    else if is3min
+        math.round(hullPeriodFast * 0.9)
+    else if is2h
+        math.round(hullPeriodFast * 0.65)
+    else if is3h
+        math.round(hullPeriodFast * 0.60)
+    else if is4h
+        math.round(hullPeriodFast * 0.50)
+    else
+        hullPeriodFast
+else
+    hullPeriodFast
+
+adaptiveHullSignal = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodSignal * 0.8)
+    else if is2min
+        math.round(hullPeriodSignal * 0.85)
+    else if is3min
+        math.round(hullPeriodSignal * 0.9)
+    else if is2h
+        math.round(hullPeriodSignal * 0.65)
+    else if is3h
+        math.round(hullPeriodSignal * 0.60)
+    else if is4h
+        math.round(hullPeriodSignal * 0.55)
+    else
+        hullPeriodSignal
+else
+    hullPeriodSignal
+
+hullMain = hma(hullSrc, adaptiveHullMain)
+hullFast = hma(hullSrc, adaptiveHullFast)
+hullSignal = hma(hullSrc, adaptiveHullSignal)
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+slopeSignal = hullSignal > hullSignal[1] ? 1 : hullSignal < hullSignal[1] ? -1 : 0
+
+hullAnyBullish = (slopeMain == 1) or (slopeFast == 1)
+hullAnyBearish = (slopeMain == -1) or (slopeFast == -1)
+hullMicroTurn = slopeFast != slopeFast[1]
+hullAcceleration = (slopeMain == slopeFast) and (slopeFast == slopeSignal)
+
+// ==================== ENVELOPE ====================
+adaptiveEnvLength = if autoTimeframeOptimization
+    if is1min
+        math.round(envLength * 0.8)
+    else if is2min
+        math.round(envLength * 0.85)
+    else if is3min
+        math.round(envLength * 0.9)
+    else if is2h
+        math.round(envLength * 0.70)
+    else if is3h
+        math.round(envLength * 0.65)
+    else if is4h
+        math.round(envLength * 0.60)
+    else
+        envLength
+else
+    envLength
+
+adaptiveEnvDev = if autoTimeframeOptimization
+    if is1min
+        envDev * 0.9
+    else if is2min
+        envDev * 0.95
+    else if is3min
+        envDev * 0.98
+    else if is2h
+        envDev * 0.75
+    else if is3h
+        envDev * 0.70
+    else if is4h
+        envDev * 0.65
+    else
+        envDev
+else
+    envDev
+
+smaBasis = ta.sma(close, adaptiveEnvLength)
+upperEnv = smaBasis * (1 + adaptiveEnvDev / 100)
+lowerEnv = smaBasis * (1 - adaptiveEnvDev / 100)
+
+microBreakoutUp = close > (upperEnv * 1.001)
+microBreakoutDn = close < (lowerEnv * 0.999)
+envelopeTouch = (close >= upperEnv * 1.0005) or (close <= lowerEnv * 0.9995)
+
+// ==================== SUPERTREND (FIXED) ====================
+ph = ta.pivothigh(pivotPeriod, pivotPeriod)
+pl = ta.pivotlow(pivotPeriod, pivotPeriod)
+
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrSuperTrend = ta.atr(atrPeriod)
+upBand = na(center) ? close - atrFactor * atrSuperTrend : center - atrFactor * atrSuperTrend
+dnBand = na(center) ? close + atrFactor * atrSuperTrend : center + atrFactor * atrSuperTrend
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+
+trendChange = trend != trend[1]
+
+// ==================== MARKET REGIME DETECTION ====================
+priceRange = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
+trendStrength = priceRange > 0 ? math.abs(close - close[trendStrengthPeriod]) / priceRange : 0
+
+strongTrendThreshold = is4h ? 0.10 : is3h ? 0.12 : 0.15
+rangingThreshold = is4h ? 0.05 : is3h ? 0.06 : 0.08
+
+strongTrend = trendStrength > strongTrendThreshold
+rangingMarket = trendStrength < rangingThreshold
+moderateTrend = (not strongTrend) and (not rangingMarket)
+
+currentVol = ta.atr(volatilityPeriod)
+avgVol = ta.sma(ta.atr(volatilityPeriod), volatilityPeriod)
+highVolatility = avgVol > 0 ? currentVol > avgVol * 1.1 : false
+normalVolatility = not highVolatility
+
+// ==================== VOLATILITY FILTER CHECKS ====================
+atrCurrent = ta.atr(14)
+atrAverage = ta.sma(atrCurrent, 20)
+atrRatio = atrAverage > 0 ? atrCurrent / atrAverage : 1.0
+
+extremeVolatility = useVolatilityFilter and (atrRatio > maxVolatilityATR)
+tooLowVolatility = useVolatilityFilter and (atrRatio < minVolatilityATR)
+volatilityOK = not extremeVolatility and not tooLowVolatility
+
+// ==================== INDICATORS ====================
+rsi = ta.rsi(close, 6)
+momentumBullish = rsi > 30
+momentumBearish = rsi < 70
+
+microMomentumBull = (rsi > rsi[1])
+microMomentumBear = (rsi < rsi[1])
+
+priceUp = close > close[1]
+priceDown = close < close[1]
+
+// ==================== SIGNAL LOGIC ====================
+microBuySignal = (priceUp and slopeFast == 1 and slopeMain == 1) or (close > smaBasis and trend == 1 and hullAnyBullish) or microBreakoutUp
+microSellSignal = (priceDown and slopeFast == -1 and slopeMain == -1) or (close < smaBasis and trend == -1 and hullAnyBearish) or microBreakoutDn
+
+instantBuySignal = instantSignals and ((hullMicroTurn and slopeFast == 1 and trend == 1) or (trendChange and trend == 1 and hullAnyBullish) or (envelopeTouch and slopeMain == 1))
+instantSellSignal = instantSignals and ((hullMicroTurn and slopeFast == -1 and trend == -1) or (trendChange and trend == -1 and hullAnyBearish) or (envelopeTouch and slopeMain == -1))
+
+scalpBuySignal = enableScalping and ((microMomentumBull and priceUp and slopeMain == 1) or (close > upperEnv and trend == 1) or (hullAcceleration and trend == 1))
+scalpSellSignal = enableScalping and ((microMomentumBear and priceDown and slopeMain == -1) or (close < lowerEnv and trend == -1) or (hullAcceleration and trend == -1))
+
+strongBuySignal = (hullAnyBullish and trend == 1 and momentumBullish and slopeMain == 1)
+strongSellSignal = (hullAnyBearish and trend == -1 and momentumBearish and slopeMain == -1)
+
+signal4HMultiplier = is4h ? 1.5 : is3h ? 1.3 : is2h ? 1.2 : 1.0
+
+ultraBuySignal = (strongBuySignal or (microBuySignal and momentumBullish) or (instantBuySignal and slopeMain == 1) or (scalpBuySignal and strongTrend)) or (is4h and (microBuySignal or instantBuySignal))
+ultraSellSignal = (strongSellSignal or (microSellSignal and momentumBearish) or (instantSellSignal and slopeMain == -1) or (scalpSellSignal and strongTrend)) or (is4h and (microSellSignal or instantSellSignal))
+
+// ==================== REVERSAL DETECTION ====================
+trendTurnedDown = trendChange and (trend == -1)
+trendTurnedUp = trendChange and (trend == 1)
+
+lowReversalLong = (ultraSellSignal or microSellSignal) and (close < lowerEnv)
+mediumReversalLong = (strongSellSignal or trendTurnedDown) and (close < lowerEnv)
+highReversalLong = strongSellSignal and trendTurnedDown and (close < lowerEnv)
+
+longReversalSignal = (reversalStrength == "Low" and lowReversalLong) or (reversalStrength == "Medium" and mediumReversalLong) or (reversalStrength == "High" and highReversalLong)
+
+lowReversalShort = (ultraBuySignal or microBuySignal) and (close > upperEnv)
+mediumReversalShort = (strongBuySignal or trendTurnedUp) and (close > upperEnv)
+highReversalShort = strongBuySignal and trendTurnedUp and (close > upperEnv)
+
+shortReversalSignal = (reversalStrength == "Low" and lowReversalShort) or (reversalStrength == "Medium" and mediumReversalShort) or (reversalStrength == "High" and highReversalShort)
+
+// ==================== POSITION SIZING ====================
+atr = ta.atr(10)
+futuresStopDistance = atr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6)
+futuresTPDistance = atr * tpMultiplier
+ultraQuickTP = atr * (tpMultiplier * 0.5)
+
+safeEquity = math.max(strategy.equity, strategy.initial_capital * 0.1)
+
+timeframeMultiplier = if autoTimeframeOptimization
+    if is1min
+        tfMultiplier1m * scalpingMultiplier * sessionMultiplier
+    else if is2min
+        tfMultiplier2m * sessionMultiplier
+    else if is3min
+        tfMultiplier3m * sessionMultiplier
+    else if is5min
+        tfMultiplier5m * sessionMultiplier
+    else
+        1.0 * sessionMultiplier
+else
+    1.0 * sessionMultiplier
+
+var float riskMultiplier = 1.0
+if strongTrend and normalVolatility
+    riskMultiplier := math.min(volatilityMultiplier * winRateBoost * timeframeMultiplier, 3.5)
+else if moderateTrend and ultraMode
+    riskMultiplier := 1.4 * timeframeMultiplier
+else if rangingMarket
+    riskMultiplier := 1.8 * timeframeMultiplier
+else
+    riskMultiplier := 1.2 * timeframeMultiplier
+
+if (is4h or is3h or is2h)
+    riskMultiplier := riskMultiplier * fourHourTradeBoost
+
+effectiveRiskPercent = math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5)
+
+riskAmountDollars = safeEquity * effectiveRiskPercent / 100
+stopDistanceDollars = math.max(futuresStopDistance * syminfo.pointvalue, 0.01)
+maxPositionValue = safeEquity * maxPositionSize / 100
+
+minPositionSize = math.max(strategy.initial_capital * 0.003, 75)
+basePositionSizeRaw = stopDistanceDollars > 0 ? math.max(riskAmountDollars / stopDistanceDollars, minPositionSize) : minPositionSize
+basePositionSize = math.min(basePositionSizeRaw, maxPositionValue)
+
+finalPositionSize = math.max(math.min(basePositionSize, safeEquity * 0.18), minPositionSize)
+
+contractValue = isMNQ ? 2.0 : isMCL ? 1000.0 : isMGC ? 10.0 : isMES ? 1.25 : isMYM ? 0.5 : isM2K ? 0.1 : 1.0
+contractsFromCash = finalPositionSize / contractValue
+contractsRounded = math.max(math.round(contractsFromCash), 1)
+
+actualPositionSize = useManualPositionSize ? currentManualContracts : contractsRounded
+
+equityTooLow = strategy.equity < strategy.initial_capital * 0.05
+
+// ==================== GAP DETECTION ====================
+var float dailyGapLoss = 0.0
+var float prevDayClose = na
+
+if dayofweek(time) != dayofweek(time[1])
+    dailyGapLoss := 0.0
+    prevDayClose := close[1]
+    dailyPnL := 0.0
+    hardStopHit := false
+    runningPnL := strategy.netprofit
+
+pointValue = isMNQ ? 2.0 : isMCL ? 100.0 : isMGC ? 10.0 : isMES ? 1.25 : isMYM ? 0.5 : isM2K ? 0.1 : 1.0
+
+gapSize = math.abs(open - prevDayClose)
+gapThreshold = atr * gapAtrMultiple
+isGapDetected = (not na(prevDayClose)) and (gapSize > gapThreshold)
+gapDetected = useGapProtection and isGapDetected
+
+gapLoss = gapDetected ? gapSize * pointValue : 0.0
+dailyGapLoss += gapLoss
+
+gapLossLimitReached = useGapProtection and (dailyGapLoss >= maxGapLoss)
+
+// ==================== ENTRY CONDITIONS ====================
+dailyPnL := strategy.netprofit - runningPnL
+maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
+
+sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPreMarket or isAfterHours)
+ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal and volatilityOK
+ultraSellCondition = ultraSellSignal and sessionAdjustedSignal and volatilityOK
+
+longCondition = isInitialized and ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and (strategy.position_size == 0)
+
+shortCondition = isInitialized and ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and (strategy.position_size == 0)
+
+entryId = str.tostring(bar_index) + (isMNQ ? "_MNQ" : isMCL ? "_MCL" : isMGC ? "_MGC" : isMES ? "_MES" : isMYM ? "_MYM" : isM2K ? "_M2K" : "")
+
+// ==================== LIVE TRADING ENTRY ALERTS ====================
+if longCondition
+    strategy.entry("Long_" + entryId, strategy.long, qty=finalPositionSize)
+
+    stopLossPrice = close - futuresStopDistance
+    tp1Price = close + (ultraQuickTP * 0.4)
+    tp2Price = close + (futuresTPDistance * 0.3)
+    tp3Price = close + (futuresTPDistance * 0.6)
+    tp4Price = close + (futuresTPDistance * 1.0)
+    
+    if enableLiveAlerts and enableEntryAlerts
+        alertSymbol = getAlertSymbol()
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        entryAlert = '{"ticker":"' + alertSymbol + '"' + 
+         ',"action":"buy"' + 
+         ',"order_type":"' + orderType + '"' + 
+         ',"quantity":' + str.tostring(actualPositionSize) + 
+         ',"price":' + str.tostring(close) + 
+         ',"stop_loss":' + str.tostring(stopLossPrice) + 
+         ',"take_profit_1":' + str.tostring(tp1Price) + 
+         ',"take_profit_2":' + str.tostring(tp2Price) + 
+         ',"take_profit_3":' + str.tostring(tp3Price) + 
+         ',"take_profit_4":' + str.tostring(tp4Price) + 
+         ',"tp1_qty_percent":60' + 
+         ',"tp2_qty_percent":25' + 
+         ',"tp3_qty_percent":10' + 
+         ',"tp4_qty_percent":5' + 
+         ',"strategy":"MGC_MASTER_FIXED"' + 
+         ',"timeframe":"' + timeframe.period + '"' + 
+         ',"timestamp":"' + str.tostring(time) + '"' + 
+         accountField + 
+         ',"signal_type":"' + (strongBuySignal ? "STRONG" : scalpBuySignal ? "SCALP" : instantBuySignal ? "INSTANT" : "MICRO") + '"' + 
+         '}'
+        
+        alert(entryAlert, alert.freq_once_per_bar)
+if shortCondition
+    strategy.entry("Short_" + entryId, strategy.short, qty=finalPositionSize)
+
+    stopLossPrice = close + futuresStopDistance
+    tp1Price = close - (ultraQuickTP * 0.5)
+    tp2Price = close - (futuresTPDistance * 0.4)
+    tp3Price = close - (futuresTPDistance * 0.7)
+    tp4Price = close - (futuresTPDistance * 1.1)
+    
+    if enableLiveAlerts and enableEntryAlerts
+        alertSymbol = getAlertSymbol()
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        entryAlert = '{"ticker":"' + alertSymbol + '"' + 
+         ',"action":"sell"' + 
+         ',"order_type":"' + orderType + '"' + 
+         ',"quantity":' + str.tostring(actualPositionSize) + 
+         ',"price":' + str.tostring(close) + 
+         ',"stop_loss":' + str.tostring(stopLossPrice) + 
+         ',"take_profit_1":' + str.tostring(tp1Price) + 
+         ',"take_profit_2":' + str.tostring(tp2Price) + 
+         ',"take_profit_3":' + str.tostring(tp3Price) + 
+         ',"take_profit_4":' + str.tostring(tp4Price) + 
+         ',"tp1_qty_percent":60' + 
+         ',"tp2_qty_percent":25' + 
+         ',"tp3_qty_percent":10' + 
+         ',"tp4_qty_percent":5' + 
+         ',"strategy":"MGC_MASTER_FIXED"' + 
+         ',"timeframe":"' + timeframe.period + '"' + 
+         ',"timestamp":"' + str.tostring(time) + '"' + 
+         accountField + 
+         ',"signal_type":"' + (strongSellSignal ? "STRONG" : scalpSellSignal ? "SCALP" : instantSellSignal ? "INSTANT" : "MICRO") + '"' + 
+         '}'
+        
+        alert(entryAlert, alert.freq_once_per_bar)
+// ==================== EXIT MANAGEMENT ====================
+var int entryBar = na
+var float entryPrice = na
+var bool stopModificationSent = false
+var bool trailingActivated = false
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+    entryPrice := strategy.position_avg_price
+    protectionActive := false
+    protectionStop := na
+    stopModificationSent := false
+    trailingActivated := false
+
+holdingPeriod = bar_index - entryBar
+maxHoldingReached = quickExitMode and not na(entryBar) and (holdingPeriod >= maxHoldingBars)
+
+profitTicks = 0.0
+breakevenTicks = 0.0
+if strategy.position_size != 0 and not na(entryPrice)
+    profitTicks := strategy.position_size > 0 ? (close - entryPrice) / syminfo.mintick : (entryPrice - close) / syminfo.mintick
+    breakevenTicks := currentCommission / syminfo.pointvalue / syminfo.mintick + currentSlippage
+
+if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
+    if profitTicks >= profitProtectionTrigger and not protectionActive
+        protectionActive := true
+    
+        if enableLiveAlerts and enableStopModificationAlerts and not stopModificationSent
+            alertSymbol = getAlertSymbol()
+            
+            protectAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"modify_stop"' + 
+             ',"stop_type":"protection"' + 
+             ',"new_stop_price":' + str.tostring(entryPrice) + 
+             ',"reason":"profit_protection_triggered"' + 
+             ',"profit_ticks":' + str.tostring(profitTicks) + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(protectAlert, alert.freq_once_per_bar)
+            stopModificationSent := true
+        
+    if protectionActive
+        var float dynamicBuffer = profitProtectionBuffer
+        if tightenNearTP1
+            tp1DistanceCalc = futuresStopDistance * 1.5 / syminfo.mintick
+            progressToTP1 = profitTicks / tp1DistanceCalc
+            dynamicBuffer := math.max(profitProtectionBuffer * (1 - progressToTP1 * 0.5), 2.0)
+        else
+            dynamicBuffer := profitProtectionBuffer
+        
+        if strategy.position_size > 0
+            protectionStop := entryPrice + ((breakevenTicks + dynamicBuffer) * syminfo.mintick)
+        else
+            protectionStop := entryPrice - ((breakevenTicks + dynamicBuffer) * syminfo.mintick)
+if strategy.position_size > 0
+    entryPrice := strategy.position_avg_price
+    stopLoss = entryPrice - futuresStopDistance
+
+    if useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points, comment="TP1")
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points, comment="TP2")
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points, comment="TP3")
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points, comment="TP4")
+    
+    if maxHoldingReached
+        strategy.close("Long_" + str.tostring(entryBar), comment="Max Time")
+        
+        if enableLiveAlerts and enableExitAlerts
+            alertSymbol = getAlertSymbol()
+            
+            exitAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"exit"' + 
+             ',"reason":"max_holding_time"' + 
+             ',"side":"long"' + 
+             ',"holding_bars":' + str.tostring(holdingPeriod) + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(exitAlert, alert.freq_once_per_bar)
+    
+    if enableProfitProtection and protectionActive and not na(protectionStop)
+        strategy.exit("ProtectSL", stop=protectionStop, comment="Protect")
+    else if useSmartTrailing and close > entryPrice + (futuresTPDistance * trailActivationRatio)
+        trailDistance = atr * 0.6
+        strategy.exit("TrailSL", stop=close - trailDistance, comment="Trail")
+        
+        if enableLiveAlerts and enableStopModificationAlerts and not trailingActivated
+            alertSymbol = getAlertSymbol()
+            
+            trailAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"modify_stop"' + 
+             ',"stop_type":"trailing"' + 
+             ',"trail_distance":' + str.tostring(trailDistance) + 
+             ',"new_stop_price":' + str.tostring(close - trailDistance) + 
+             ',"reason":"trailing_activated"' + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(trailAlert, alert.freq_once_per_bar)
+            trailingActivated := true
+    else
+        strategy.exit("SL", stop=stopLoss, comment="SL")
+if strategy.position_size < 0
+    entryPrice := strategy.position_avg_price
+    stopLoss = entryPrice + futuresStopDistance
+
+    if useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points, comment="TP1")
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points, comment="TP2")
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points, comment="TP3")
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points, comment="TP4")
+    
+    if maxHoldingReached
+        strategy.close("Short_" + str.tostring(entryBar), comment="Max Time")
+        
+        if enableLiveAlerts and enableExitAlerts
+            alertSymbol = getAlertSymbol()
+            
+            exitAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"exit"' + 
+             ',"reason":"max_holding_time"' + 
+             ',"side":"short"' + 
+             ',"holding_bars":' + str.tostring(holdingPeriod) + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(exitAlert, alert.freq_once_per_bar)
+    
+    if enableProfitProtection and protectionActive and not na(protectionStop)
+        strategy.exit("ProtectSL", stop=protectionStop, comment="Protect")
+    else if useSmartTrailing and close < entryPrice - (futuresTPDistance * trailActivationRatio)
+        trailDistance = atr * 0.6
+        strategy.exit("TrailSL", stop=close + trailDistance, comment="Trail")
+        
+        if enableLiveAlerts and enableStopModificationAlerts and not trailingActivated
+            alertSymbol = getAlertSymbol()
+            
+            trailAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"modify_stop"' + 
+             ',"stop_type":"trailing"' + 
+             ',"trail_distance":' + str.tostring(trailDistance) + 
+             ',"new_stop_price":' + str.tostring(close + trailDistance) + 
+             ',"reason":"trailing_activated"' + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(trailAlert, alert.freq_once_per_bar)
+            trailingActivated := true
+    else
+        strategy.exit("SL", stop=stopLoss, comment="SL")
+// ==================== ADVANCED RISK MANAGEMENT ====================
+
+if useMAE and strategy.position_size != 0 and not na(entryPrice)
+    maeDistance = atr * maeThreshold * maeMultiplier
+    
+    if strategy.position_size > 0
+        currentDrawdown = entryPrice - low
+        if currentDrawdown > maeDistance
+            strategy.close("Long_" + str.tostring(entryBar), comment="MAE Exit")
+            
+            if enableLiveAlerts and enableExitAlerts
+                alertSymbol = getAlertSymbol()
+                
+                maeAlert = '{"ticker":"' + alertSymbol + '"' + 
+                 ',"action":"exit"' + 
+                 ',"reason":"mae_exceeded"' + 
+                 ',"side":"long"' + 
+                 ',"mae_distance":' + str.tostring(currentDrawdown) + 
+                 ',"timestamp":"' + str.tostring(time) + '"' + 
+                 '}'
+                
+                alert(maeAlert, alert.freq_once_per_bar)
+    
+    if strategy.position_size < 0
+        currentDrawdown = high - entryPrice
+        if currentDrawdown > maeDistance
+            strategy.close("Short_" + str.tostring(entryBar), comment="MAE Exit")
+            
+            if enableLiveAlerts and enableExitAlerts
+                alertSymbol = getAlertSymbol()
+                
+                maeAlert = '{"ticker":"' + alertSymbol + '"' + 
+                 ',"action":"exit"' + 
+                 ',"reason":"mae_exceeded"' + 
+                 ',"side":"short"' + 
+                 ',"mae_distance":' + str.tostring(currentDrawdown) + 
+                 ',"timestamp":"' + str.tostring(time) + '"' + 
+                 '}'
+                
+                alert(maeAlert, alert.freq_once_per_bar)
+if useReversalExit
+    if strategy.position_size > 0 and longReversalSignal
+        strategy.close("Long_" + str.tostring(entryBar), comment="Reversal Exit")
+        
+        if enableLiveAlerts and enableExitAlerts
+            alertSymbol = getAlertSymbol()
+            
+            revAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"exit"' + 
+             ',"reason":"reversal_signal"' + 
+             ',"side":"long"' + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(revAlert, alert.freq_once_per_bar)
+
+    if strategy.position_size < 0 and shortReversalSignal
+        strategy.close("Short_" + str.tostring(entryBar), comment="Reversal Exit")
+        
+        if enableLiveAlerts and enableExitAlerts
+            alertSymbol = getAlertSymbol()
+            
+            revAlert = '{"ticker":"' + alertSymbol + '"' + 
+             ',"action":"exit"' + 
+             ',"reason":"reversal_signal"' + 
+             ',"side":"short"' + 
+             ',"timestamp":"' + str.tostring(time) + '"' + 
+             '}'
+            
+            alert(revAlert, alert.freq_once_per_bar)
+if useHardStopFlag and strategy.position_size != 0 and not na(entryPrice)
+    hardStopDistance = atr * hardStopMultiplier
+    
+    if strategy.position_size > 0
+        hardStopLevel = entryPrice - hardStopDistance
+        if low <= hardStopLevel
+            hardStopHit := true
+            strategy.close("Long_" + str.tostring(entryBar), comment="Hard Stop Hit")
+            
+            if enableLiveAlerts and enableEmergencyAlerts
+                alertSymbol = getAlertSymbol()
+                
+                hardStopAlert = '{"ticker":"' + alertSymbol + '"' + 
+                 ',"action":"emergency_exit"' + 
+                 ',"reason":"hard_stop_hit"' + 
+                 ',"side":"long"' + 
+                 ',"stop_level":' + str.tostring(hardStopLevel) + 
+                 ',"timestamp":"' + str.tostring(time) + '"' + 
+                 '}'
+                
+                alert(hardStopAlert, alert.freq_once_per_bar)
+    
+    if strategy.position_size < 0
+        hardStopLevel = entryPrice + hardStopDistance
+        if high >= hardStopLevel
+            hardStopHit := true
+            strategy.close("Short_" + str.tostring(entryBar), comment="Hard Stop Hit")
+            
+            if enableLiveAlerts and enableEmergencyAlerts
+                alertSymbol = getAlertSymbol()
+                
+                hardStopAlert = '{"ticker":"' + alertSymbol + '"' + 
+                 ',"action":"emergency_exit"' + 
+                 ',"reason":"hard_stop_hit"' + 
+                 ',"side":"short"' + 
+                 ',"stop_level":' + str.tostring(hardStopLevel) + 
+                 ',"timestamp":"' + str.tostring(time) + '"' + 
+                 '}'
+                
+                alert(hardStopAlert, alert.freq_once_per_bar)
+if useBackupStop and strategy.position_size != 0 and not na(entryPrice)
+    primaryStopDistance = futuresStopDistance
+    backupStopDistance = primaryStopDistance * backupStopBuffer
+    
+    if strategy.position_size > 0
+        backupStopLevel = entryPrice - backupStopDistance
+        strategy.exit("BackupSL_Long", stop=backupStopLevel)
+    
+    if strategy.position_size < 0
+        backupStopLevel = entryPrice + backupStopDistance
+        strategy.exit("BackupSL_Short", stop=backupStopLevel)
+if maxLossReached and enableLiveAlerts and enableEmergencyAlerts
+    alertSymbol = getAlertSymbol()
+    
+    maxLossAlert = '{"ticker":"' + alertSymbol + '"' + 
+     ',"action":"emergency"' + 
+     ',"reason":"max_daily_loss_reached"' + 
+     ',"daily_pnl":' + str.tostring(dailyPnL) + 
+     ',"max_loss_percent":' + str.tostring(maxDailyLoss) + 
+     ',"timestamp":"' + str.tostring(time) + '"' + 
+     '}'
+    
+    alert(maxLossAlert, alert.freq_once_per_bar)
+if gapLossLimitReached and enableLiveAlerts and enableEmergencyAlerts
+    alertSymbol = getAlertSymbol()
+    
+    gapAlert = '{"ticker":"' + alertSymbol + '"' + 
+     ',"action":"emergency"' + 
+     ',"reason":"gap_loss_limit_reached"' + 
+     ',"daily_gap_loss":' + str.tostring(dailyGapLoss) + 
+     ',"max_gap_loss":' + str.tostring(maxGapLoss) + 
+     ',"timestamp":"' + str.tostring(time) + '"' + 
+     '}'
+    
+    alert(gapAlert, alert.freq_once_per_bar)
+// ==================== 🔥 COMPLETE PROFIT TRACKING (FIXED) ====================
+if (strategy.position_size == 0) and (strategy.position_size[1] != 0)
+    wasLong = strategy.position_size[1] > 0
+    exitSide = wasLong ? "long" : "short"
+    
+    exitPrice = close
+    positionPnL = wasLong ? (exitPrice - entryPrice) * pointValue : (entryPrice - exitPrice) * pointValue
+    pnlPercent = entryPrice != 0 ? (positionPnL / entryPrice) * 100 : 0
+    pnlTicks = syminfo.mintick > 0 ? (wasLong ? (exitPrice - entryPrice) : (entryPrice - exitPrice)) / syminfo.mintick : 0
+    
+    totalTrades += 1
+    if positionPnL > 0
+        winningTrades += 1
+        totalProfit += positionPnL
+        largestWin := math.max(largestWin, positionPnL)
+        consecutiveWins += 1
+        consecutiveLosses := 0
+    else
+        losingTrades += 1
+        totalLoss += math.abs(positionPnL)
+        largestLoss := math.max(largestLoss, math.abs(positionPnL))
+        consecutiveLosses += 1
+        consecutiveWins := 0
+    
+    runningPnL := strategy.netprofit
+
+    peakEquity := math.max(peakEquity, strategy.equity)
+    currentDrawdown = peakEquity - strategy.equity
+    maxDrawdown := math.max(maxDrawdown, currentDrawdown)
+    
+    exitReason = maxHoldingReached ? "max_holding" : protectionActive ? "protection_stop" : "tp_or_sl"
+    
+    if enableLiveAlerts and enableExitAlerts
+        alertSymbol = getAlertSymbol()
+        
+        exitMsg = '{"ticker":"' + alertSymbol + '"' + 
+         ',"action":"exit_complete"' + 
+         ',"side":"' + exitSide + '"' + 
+         ',"exit_price":' + str.tostring(exitPrice) + 
+         ',"entry_price":' + str.tostring(entryPrice) + 
+         ',"pnl":' + str.tostring(positionPnL) + 
+         ',"pnl_percent":' + str.tostring(pnlPercent) + 
+         ',"pnl_ticks":' + str.tostring(pnlTicks) + 
+         ',"exit_reason":"' + exitReason + '"' + 
+         ',"holding_bars":' + str.tostring(holdingPeriod) + 
+         ',"total_trades":' + str.tostring(totalTrades) + 
+         ',"winning_trades":' + str.tostring(winningTrades) + 
+         ',"losing_trades":' + str.tostring(losingTrades) + 
+         ',"win_rate":' + str.tostring(totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0) + 
+         ',"consecutive_wins":' + str.tostring(consecutiveWins) + 
+         ',"consecutive_losses":' + str.tostring(consecutiveLosses) + 
+         ',"timestamp":"' + str.tostring(time) + '"' + 
+         '}'
+        
+        alert(exitMsg, alert.freq_once_per_bar)
+// ==================== 🔥 CALCULATE METRICS FOR PLOTS (FIXED) ====================
+currentWinRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0
+avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0
+avgLoss = losingTrades > 0 ? totalLoss / losingTrades : 0
+profitFactor = totalLoss > 0 ? totalProfit / totalLoss : 0
+currentNetProfit = totalProfit - totalLoss
+
+// ==================== PLOTS ====================
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull MA Main")
+plot(hullFast, color=color.gray, title="Hull MA Fast")
+plot(upperEnv, color=color.orange, title="Envelope Upper")
+plot(lowerEnv, color=color.orange, title="Envelope Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+
+var float displayStop = na
+var color stopColor = color.red
+
+if strategy.position_size > 0
+    if enableProfitProtection and protectionActive and not na(protectionStop)
+        displayStop := protectionStop
+        stopColor := color.orange
+    else if useSmartTrailing and close > entryPrice + (futuresTPDistance * trailActivationRatio)
+        displayStop := close - (atr * 0.6)
+        stopColor := color.blue
+    else
+        displayStop := entryPrice - futuresStopDistance
+        stopColor := color.red
+
+if strategy.position_size < 0
+    if enableProfitProtection and protectionActive and not na(protectionStop)
+        displayStop := protectionStop
+        stopColor := color.orange
+    else if useSmartTrailing and close < entryPrice - (futuresTPDistance * trailActivationRatio)
+        displayStop := close + (atr * 0.6)
+        stopColor := color.blue
+    else
+        displayStop := entryPrice + futuresStopDistance
+        stopColor := color.red
+
+plot(strategy.position_size != 0 and not na(displayStop) ? displayStop : na, "Active Stop Level", color=stopColor, linewidth=2, style=plot.style_cross)
+plot(protectionActive and (not na(protectionStop)) ? protectionStop : na, "Protection Stop", color=color.orange, linewidth=2, style=plot.style_cross)
+bgcolor(protectionActive ? color.new(color.orange, 95) : na, title="Profit Protection Active")
+
+bgcolor(enableLiveAlerts ? color.new(color.lime, 97) : na, title="Live Alerts Enabled")
+bgcolor(ultraMode ? color.new(color.red, 98) : na, title="Ultra Mode")
+bgcolor(microScalping ? color.new(color.yellow, 98) : na, title="Micro Scalping")
+bgcolor(useManualPositionSize ? color.new(color.blue, 95) : na, title="Manual Position Size Active")
+bgcolor(isMNQ ? color.new(color.blue, 98) : isMCL ? color.new(color.orange, 98) : isMGC ? color.new(color.yellow, 98) : isMES ? color.new(color.purple, 98) : isMYM ? color.new(color.teal, 98) : isM2K ? color.new(color.fuchsia, 98) : na, title="Futures Type")
+bgcolor(isRegularSession ? color.new(color.green, 98) : isPreMarket ? color.new(color.purple, 98) : isAfterHours ? color.new(color.gray, 98) : na, title="Session")
+bgcolor(is4h ? color.new(color.purple, 98) : na, title="4H Timeframe")
+bgcolor(useHardStopFlag and hardStopHit ? color.new(color.red, 90) : na, title="Hard Stop Hit")
+
+plotshape(longCondition and scalpBuySignal, location=location.belowbar, color=color.lime, style=shape.triangleup, text="SCALP", size=size.small)
+plotshape(longCondition and instantBuySignal, location=location.belowbar, color=color.yellow, style=shape.labelup, text="INSTANT", size=size.small)
+plotshape(longCondition and microBuySignal, location=location.belowbar, color=color.aqua, style=shape.arrowup, text="MICRO", size=size.tiny)
+
+plotshape(shortCondition and scalpSellSignal, location=location.abovebar, color=color.red, style=shape.triangledown, text="SCALP", size=size.small)
+plotshape(shortCondition and instantSellSignal, location=location.abovebar, color=color.orange, style=shape.labeldown, text="INSTANT", size=size.small)
+plotshape(shortCondition and microSellSignal, location=location.abovebar, color=color.fuchsia, style=shape.arrowdown, text="MICRO", size=size.tiny)
+
+// ==================== LIVE ALERTS STATUS TABLE ====================
+var table alertTable = table.new(position=position.top_right, columns=2, rows=6, bgcolor=color.new(color.black, 15), border_width=2, border_color=color.lime)
+
+if bar_index == last_bar_index - 1 or barstate.islast
+    table.cell(alertTable, 0, 0, "🔴 LIVE ALERTS", text_color=color.white, text_size=size.small, bgcolor=enableLiveAlerts ? color.new(color.lime, 70) : color.new(color.gray, 70))
+    table.cell(alertTable, 1, 0, enableLiveAlerts ? "ACTIVE" : "OFF", text_color=color.white, text_size=size.small, bgcolor=enableLiveAlerts ? color.new(color.lime, 70) : color.new(color.gray, 70))
+    
+    table.cell(alertTable, 0, 1, "Entry Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 1, enableEntryAlerts ? "✓" : "✗", text_color=enableEntryAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 2, "Exit Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 2, enableExitAlerts ? "✓" : "✗", text_color=enableExitAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 3, "Stop Mod Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 3, enableStopModificationAlerts ? "✓" : "✗", text_color=enableStopModificationAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 4, "Emergency Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 4, enableEmergencyAlerts ? "✓" : "✗", text_color=enableEmergencyAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 5, "Broker", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 5, brokerType, text_color=color.white, text_size=size.tiny)
+// ==================== 🔥 FIXED PERFORMANCE METRICS TABLE ====================
+var table perfTable = table.new(position=position.bottom_right, columns=2, rows=10, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+if bar_index == last_bar_index - 1 or barstate.islast
+    table.cell(perfTable, 0, 0, "🏆 PROFIT LOGIC", text_color=color.white, text_size=size.small, bgcolor=color.new(color.lime, 70))
+    table.cell(perfTable, 1, 0, "FIXED ✓", text_color=color.white, text_size=size.small, bgcolor=color.new(color.lime, 70))
+    
+    table.cell(perfTable, 0, 1, "Total Trades", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 1, str.tostring(totalTrades), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 2, "Wins/Losses", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 2, str.tostring(winningTrades) + "/" + str.tostring(losingTrades), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 3, "Win Rate", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 3, str.tostring(math.round(currentWinRate, 1)) + "%", text_color=currentWinRate >= 50 ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 4, "Avg Win", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 4, "$" + str.tostring(math.round(avgWin, 2)), text_color=color.lime, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 5, "Avg Loss", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 5, "$" + str.tostring(math.round(avgLoss, 2)), text_color=color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 6, "Profit Factor", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 6, str.tostring(math.round(profitFactor, 2)), text_color=profitFactor >= 1.5 ? color.lime : profitFactor >= 1.0 ? color.yellow : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 7, "Net Profit", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 7, "$" + str.tostring(math.round(currentNetProfit, 2)), text_color=currentNetProfit > 0 ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 8, "Max Drawdown", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 8, "$" + str.tostring(math.round(maxDrawdown, 2)), text_color=color.orange, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 9, "Streak W/L", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 9, str.tostring(consecutiveWins) + "/" + str.tostring(consecutiveLosses), text_color=color.white, text_size=size.tiny)
+// ==================== DATA WINDOW PLOTS ====================
+plot(effectiveRiskPercent, "Effective Risk %", color=color.new(color.orange, 80), display=display.data_window)
+plot(timeframeMultiplier, "TF Multiplier", color=color.new(color.aqua, 80), display=display.data_window)
+plot(holdingPeriod, "Holding Period", color=color.new(color.purple, 80), display=display.data_window)
+plot(actualPositionSize, "Position Size (Contracts)", color=color.new(color.yellow, 80), display=display.data_window)
+plot(tradeFrequencyBoost, "Trade Frequency", color=color.new(color.lime, 80), display=display.data_window)
+plot(sessionMultiplier, "Session Multiplier", color=color.new(color.maroon, 80), display=display.data_window)
+plot(profitTicks, "Profit (ticks)", color=color.new(color.green, 80), display=display.data_window)
+plot(breakevenTicks, "Breakeven (ticks)", color=color.new(color.gray, 80), display=display.data_window)
+plot(protectionActive ? 1 : 0, "Protection Active", color=color.new(color.orange, 80), display=display.data_window)
+plot(enableLiveAlerts ? 1 : 0, "Live Alerts ON", color=color.new(color.lime, 80), display=display.data_window)
+plot(isInitialized ? 1 : 0, "Initialized", color=color.new(color.blue, 80), display=display.data_window)
+plot(currentWinRate, "Win Rate %", color=color.new(color.lime, 80), display=display.data_window)
+plot(currentNetProfit, "Net Profit $", color=color.new(color.green, 80), display=display.data_window)
