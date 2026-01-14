@@ -349,8 +349,11 @@ volMA = ta.sma(volume, 20)
 rangeTR = ta.tr(true)
 impulseCandle = (rangeTR >= (ta.atr(14) * impulseAtrMult)) and (volume >= (volMA * impulseVolMult))
 
-consecutiveGreen = close > open ? nz(consecutiveGreen[1]) + 1 : 0
-consecutiveRed = close < open ? nz(consecutiveRed[1]) + 1 : 0
+// Declare then update to avoid forward-reference issues in some editors/compilers
+var int consecutiveGreen = 0
+var int consecutiveRed = 0
+consecutiveGreen := close > open ? (consecutiveGreen[1] + 1) : 0
+consecutiveRed := close < open ? (consecutiveRed[1] + 1) : 0
 
 continuationLong = useContinuationEntries and (consecutiveGreen >= minConsecutiveForContinuation) and (trend == 1) and (slopeMain == 1) and (close > hullMain) and momentumBullish
 continuationShort = useContinuationEntries and (consecutiveRed >= minConsecutiveForContinuation) and (trend == -1) and (slopeMain == -1) and (close < hullMain) and momentumBearish
@@ -405,7 +408,8 @@ bbLen = input.int(20, "BB Length", minval=10, maxval=50, group=group_chop)
 bbWidthFloor = input.float(0.015, "BB Width Floor", minval=0.005, maxval=0.05, group=group_chop)
 volContractionMult = input.float(0.7, "Volume Contraction (< avg * x)", minval=0.4, maxval=0.9, group=group_chop)
 
-adx = ta.adx(adxLen)
+// Pine v5 compatibility: ADX via DMI tuple
+[pdi, mdi, adx] = ta.dmi(adxLen, adxLen)
 adxChop = adx < adxFloor
 atrCompression = atrAverage > 0 ? atrCurrent < (atrAverage * atrCompressionMult) : false
 bbBasis = ta.sma(close, bbLen)
@@ -437,12 +441,12 @@ candleOkShort = (not useCandleDirectionControl) or ((close < open) and bodyAtrOk
 // Tier 3: Hammer / Shooting Star, Inverted Hammer / Hanging Man, Bullish/Bearish Harami
 // Tier 4: Marubozu (bull/bear), Doji, Spinning Top
 body = math.abs(close - open)
-range = math.max(high - low, syminfo.mintick)
+candleRange = math.max(high - low, syminfo.mintick)
 upperWick = high - math.max(open, close)
 lowerWick = math.min(open, close) - low
-bodyPct = body / range
-upperPct = upperWick / range
-lowerPct = lowerWick / range
+bodyPct = body / candleRange
+upperPct = upperWick / candleRange
+lowerPct = lowerWick / candleRange
 
 isBull = close > open
 isBear = close < open
