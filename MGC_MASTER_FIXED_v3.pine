@@ -151,7 +151,12 @@ adjustedRiskPercent = baseRiskPercent * instrumentRiskMultiplier
 
 useTP = input.bool(true, "Use Take Profit Levels", group="Risk Management")
 useSL = input.bool(true, "Use Stop Loss", group="Risk Management")
-maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0, group="Risk Management")
+
+// Conservative live risk defaults (50% of conservative caps):
+// - Daily max loss: 1.0–1.5% of account
+// - Hard drawdown kill-switch: ~5–6% from equity peak
+maxDailyLoss = input.float(1.5, "Max Daily Loss (%)", minval=0.5, maxval=8.0, group="Risk Management")
+maxAccountDrawdownPct = input.float(6.0, "Max Account Drawdown from Peak (%)", minval=2.0, maxval=25.0, group="Risk Management")
 maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5.0, maxval=25.0, group="Risk Management")
 
 // ==================== TRADING MODE ====================
@@ -700,6 +705,14 @@ gapLossLimitReached = useGapProtection and (dailyGapLoss >= maxGapLoss)
 dailyPnL := strategy.netprofit - runningPnL
 maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
 
+// Hard drawdown kill-switch from equity peak (conservative live protection)
+peakEquity := peakEquity == 0.0 ? strategy.initial_capital : math.max(peakEquity, strategy.equity)
+currentDrawdownFromPeakPct = peakEquity > 0 ? ((peakEquity - strategy.equity) / peakEquity) * 100.0 : 0.0
+maxAccountDrawdownReached = currentDrawdownFromPeakPct >= maxAccountDrawdownPct
+
+if maxAccountDrawdownReached and strategy.position_size != 0
+    strategy.close_all(comment="Max DD")
+
 sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPreMarket or isAfterHours)
 
 chopOkLong = (not grayZone) or impulseOverrideLong or extremeOverrideLong
@@ -736,8 +749,8 @@ reversalRequiresTrendChange = input.bool(true, "Reversal requires SuperTrend cha
 canReverseLong = allowReversalEntries and (strategy.position_size < 0) and (not reversalRequiresTrendChange or trendChange) and (useImpulseOverride ? (impulseCandle or continuationLong or strongBuySignal) : (continuationLong or strongBuySignal))
 canReverseShort = allowReversalEntries and (strategy.position_size > 0) and (not reversalRequiresTrendChange or trendChange) and (useImpulseOverride ? (impulseCandle or continuationShort or strongSellSignal) : (continuationShort or strongSellSignal))
 
-longCondition = ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useGapProtection) or (not gapLossLimitReached)) and ((strategy.position_size == 0) or canReverseLong)
-shortCondition = ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useGapProtection) or (not gapLossLimitReached)) and ((strategy.position_size == 0) or canReverseShort)
+longCondition = ultraBuyCondition and (not maxLossReached) and (not maxAccountDrawdownReached) and (not equityTooLow) and ((not useGapProtection) or (not gapLossLimitReached)) and ((strategy.position_size == 0) or canReverseLong)
+shortCondition = ultraSellCondition and (not maxLossReached) and (not maxAccountDrawdownReached) and (not equityTooLow) and ((not useGapProtection) or (not gapLossLimitReached)) and ((strategy.position_size == 0) or canReverseShort)
 
 entryId = str.tostring(bar_index) + (isMNQ ? "_MNQ" : isMCL ? "_MCL" : isMGC ? "_MGC" : isMES ? "_MES" : isMYM ? "_MYM" : isM2K ? "_M2K" : "")
 
@@ -980,6 +993,17 @@ if maxLossReached and enableLiveAlerts and enableEmergencyAlerts
      ',"timestamp":"' + str.tostring(time) + '"' +
      '}'
     alert(maxLossAlert, alert.freq_once_per_bar)
+
+if maxAccountDrawdownReached and enableLiveAlerts and enableEmergencyAlerts
+    alertSymbol = getAlertSymbol()
+    ddAlert = '{"ticker":"' + alertSymbol + '"' +
+     ',"action":"emergency"' +
+     ',"reason":"max_account_drawdown_reached"' +
+     ',"drawdown_percent":' + str.tostring(currentDrawdownFromPeakPct) +
+     ',"max_drawdown_percent":' + str.tostring(maxAccountDrawdownPct) +
+     ',"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+    alert(ddAlert, alert.freq_once_per_bar)
 
 if gapLossLimitReached and enableLiveAlerts and enableEmergencyAlerts
     alertSymbol = getAlertSymbol()
