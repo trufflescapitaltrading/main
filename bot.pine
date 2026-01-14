@@ -214,6 +214,7 @@ mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=perInstGroup
 mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
 
 //FOR 3-MINUTE CHART (OPTIMIZED)
+mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
 mnq_useCustom3m = input.bool(false, "MNQ 3m: Use 3m Settings", group=perInstGroup)
 mnq_customSL_3m = input.float(30.0, "MNQ 3m: Stop Loss (points)", group=perInstGroup)
 mnq_customTP1_3m = input.float(35.0, "MNQ 3m: TP1 (points) - 60%", group=perInstGroup)
