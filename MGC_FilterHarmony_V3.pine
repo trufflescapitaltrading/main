@@ -1,0 +1,1267 @@
+//@version=5
+strategy("🏆 MGC Filter Harmony V3 - Enhanced Trend Capture",
+    overlay=true,
+    initial_capital=25000,
+    default_qty_type=strategy.cash,
+    default_qty_value=1000,
+    commission_type=strategy.commission.cash_per_contract,
+    commission_value=1.60,
+    slippage=2,
+    calc_on_every_tick=true,
+    pyramiding=2,
+    process_orders_on_close=false,
+    max_bars_back=5000)
+
+// ============================================================================
+// 🔥 FILTER HARMONY SYSTEM V3 - REVOLUTIONARY QUALITY SCORING
+// ============================================================================
+// Core Innovation: Filters contribute to Quality Score (0-100%) instead of blocking
+// Minimum threshold: 70% (configurable 50-90%)
+// Smart Overrides for extreme trends, impulses, and consecutive candles
+// ============================================================================
+
+// ==================== LIVE TRADING CONFIGURATION ====================
+group_live = "🔴 Live Trading Setup"
+enableLiveAlerts = input.bool(true, "Enable Live Trading Alerts", group=group_live)
+brokerType = input.string("TradersPost", "Broker Type", options=["TradersPost", "Tradovate Direct", "Custom Webhook"], group=group_live)
+accountId = input.string("", "Account ID (Optional)", group=group_live, tooltip="Leave blank for default account")
+enableEntryAlerts = input.bool(true, "Send Entry Alerts", group=group_live)
+enableExitAlerts = input.bool(true, "Send Exit Alerts", group=group_live)
+enableStopModificationAlerts = input.bool(true, "Send Stop Modification Alerts", group=group_live)
+enableEmergencyAlerts = input.bool(true, "Send Emergency Alerts", group=group_live)
+tradersPostSymbol = input.string("", "TradersPost Symbol Override", group=group_live, tooltip="Leave blank to use chart symbol")
+orderType = input.string("market", "Order Type", options=["market", "limit"], group=group_live)
+
+getAlertSymbol() =>
+    tradersPostSymbol != "" ? tradersPostSymbol : syminfo.ticker
+
+hasAccountId() =>
+    str.length(accountId) > 0
+
+// ==================== 🔥 FILTER HARMONY QUALITY SCORING ====================
+group_quality = "🎯 Quality Score Settings"
+minQualityThreshold = input.float(70, "Minimum Quality Threshold (%)", minval=50, maxval=90, step=5, group=group_quality, tooltip="Trades require this quality score. 70% = high probability, 60% = more trades")
+enableQualityOverrides = input.bool(true, "Enable Smart Overrides", group=group_quality, tooltip="Allow extreme conditions to bypass some filters")
+overrideMinQuality = input.float(56, "Override Minimum Quality (%)", minval=40, maxval=80, step=2, group=group_quality, tooltip="80% of main threshold for overrides")
+
+// Quality Score Weights (total = 100+ with bonus)
+trendRegimeWeight = input.float(30, "Trend Regime Weight", minval=10, maxval=40, group=group_quality)
+confluenceWeight = input.float(20, "Confluence Weight", minval=10, maxval=30, group=group_quality)
+signalLineWeight = input.float(15, "Signal Line Weight", minval=5, maxval=25, group=group_quality)
+patternWeight = input.float(10, "Pattern Quality Weight", minval=5, maxval=20, group=group_quality)
+starScoreWeight = input.float(15, "Star Score Weight", minval=5, maxval=25, group=group_quality)
+mtfWeight = input.float(10, "MTF Alignment Weight", minval=5, maxval=20, group=group_quality)
+
+// ==================== 🚀 CONSECUTIVE CANDLE DETECTION (KEY FIX) ====================
+group_consecutive = "🔥 Consecutive Candle Detection"
+enableConsecutiveDetection = input.bool(true, "Enable Consecutive Candle Detection", group=group_consecutive, tooltip="Detects 3+ same-direction candles for trend entry")
+minConsecutiveCandles = input.int(3, "Min Consecutive Candles", minval=2, maxval=7, group=group_consecutive)
+extremeTrendCandles = input.int(7, "Extreme Trend Candles", minval=5, maxval=13, group=group_consecutive, tooltip="13+ for extreme trend override")
+consecutiveAtrMultiple = input.float(1.5, "Consecutive ATR Range Multiple", minval=1.0, maxval=3.0, group=group_consecutive)
+
+// ==================== 💥 IMPULSE OVERRIDE DETECTION ====================
+group_impulse = "💥 Impulse Override Settings"
+enableImpulseOverride = input.bool(true, "Enable Impulse Override", group=group_impulse)
+impulseAtrMultiple = input.float(1.1, "Impulse ATR Multiple", minval=0.8, maxval=2.0, group=group_impulse)
+impulseVolumeMultiple = input.float(1.8, "Impulse Volume Multiple", minval=1.2, maxval=3.0, group=group_impulse)
+extremePriceMultiple = input.float(2.0, "Extreme Price Move Multiple", minval=1.5, maxval=4.0, group=group_impulse)
+
+// ==================== INSTRUMENT DETECTION ====================
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroFutures = isMNQ or isMCL or isMGC or isMES or isMYM or isM2K
+
+// Instrument-specific tick values
+pointValue = isMNQ ? 2.0 : isMCL ? 100.0 : isMGC ? 10.0 : isMES ? 1.25 : isMYM ? 0.5 : isM2K ? 0.1 : 1.0
+
+// ==================== MANUAL POSITION SIZE ====================
+group_position = "📊 Position Sizing"
+useManualPositionSize = input.bool(true, "Use Manual Position Sizes (CONTRACTS)", group=group_position)
+mnqManualContracts = input.int(1, "MNQ Manual Contracts", minval=1, maxval=50, group=group_position)
+mclManualContracts = input.int(1, "MCL Manual Contracts", minval=1, maxval=50, group=group_position)
+mgcManualContracts = input.int(1, "MGC Manual Contracts", minval=1, maxval=50, group=group_position)
+mesManualContracts = input.int(1, "MES Manual Contracts", minval=1, maxval=50, group=group_position)
+mymManualContracts = input.int(1, "MYM Manual Contracts", minval=1, maxval=50, group=group_position)
+m2kManualContracts = input.int(1, "M2K Manual Contracts", minval=1, maxval=50, group=group_position)
+
+currentManualContracts = isMNQ ? mnqManualContracts : isMCL ? mclManualContracts : isMGC ? mgcManualContracts : isMES ? mesManualContracts : isMYM ? mymManualContracts : isM2K ? m2kManualContracts : 1
+
+// ==================== COMMISSION & COSTS ====================
+group_costs = "💰 Costs"
+mnqCommission = input.float(0.52, "MNQ Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+mclCommission = input.float(1.60, "MCL Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+mgcCommission = input.float(1.60, "MGC Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+mesCommission = input.float(0.52, "MES Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+mymCommission = input.float(0.85, "MYM Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+m2kCommission = input.float(0.65, "M2K Commission (RT)", minval=0.1, maxval=5.0, group=group_costs)
+
+currentCommission = isMNQ ? mnqCommission : isMCL ? mclCommission : isMGC ? mgcCommission : isMES ? mesCommission : isMYM ? mymCommission : isM2K ? m2kCommission : 1.60
+
+// ==================== RISK PARAMETERS ====================
+group_risk = "⚠️ Risk Management"
+baseRiskPercent = input.float(0.6, "Base Risk per Trade (%)", minval=0.2, maxval=2.0, group=group_risk)
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0, group=group_risk)
+maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5.0, maxval=25.0, group=group_risk)
+dailyRiskAllocation = input.float(25.0, "Daily Risk Allocation (%)", minval=10, maxval=50, group=group_risk, tooltip="% of daily risk pool per instrument")
+riskPerTrade = input.float(28.13, "Risk Per Trade ($)", minval=10, maxval=100, group=group_risk, tooltip="MGC default $28.13")
+
+// ==================== 📈 SIGNAL LINE SYSTEM ====================
+group_signal = "📈 Signal Line System"
+enableSignalLines = input.bool(true, "Enable Signal Line System", group=group_signal)
+sma9Period = input.int(9, "SMA 9 (RED - Fast)", minval=5, maxval=15, group=group_signal)
+sma50Period = input.int(50, "SMA 50 (BLUE - Medium)", minval=30, maxval=70, group=group_signal)
+sma180Period = input.int(180, "SMA 180 (WHITE - Slow)", minval=100, maxval=250, group=group_signal)
+ema20Period = input.int(20, "EMA 20 (YELLOW - Signal)", minval=10, maxval=30, group=group_signal)
+
+// ==================== 🌊 GRAY ZONE DETECTION ====================
+group_grayzone = "🌊 Gray Zone Detection"
+enableGrayZone = input.bool(true, "Enable Gray Zone Detection", group=group_grayzone)
+adxThreshold = input.float(20, "ADX Threshold (Below = Choppy)", minval=15, maxval=30, group=group_grayzone)
+atrCompressionThreshold = input.float(0.7, "ATR Compression Threshold", minval=0.4, maxval=0.9, group=group_grayzone)
+bbWidthThreshold = input.float(0.015, "BB Width Threshold", minval=0.01, maxval=0.03, group=group_grayzone)
+grayZoneFactorsRequired = input.int(4, "Gray Zone Factors Required", minval=2, maxval=5, group=group_grayzone)
+
+// ==================== HULL MA SETTINGS ====================
+group_hull = "📊 Hull MA Settings"
+hullSrc = input.source(close, "Hull Source", group=group_hull)
+baseHullMain = input.int(25, "Base Hull MA (Main)", minval=15, maxval=40, group=group_hull)
+baseHullFast = input.int(9, "Base Hull MA (Fast)", minval=6, maxval=15, group=group_hull)
+baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22, group=group_hull)
+
+// ==================== SUPERTREND SETTINGS ====================
+group_supertrend = "📈 SuperTrend Settings"
+basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4, group=group_supertrend)
+baseAtrFactor = input.float(2.2, "Base ATR Factor", minval=1.8, maxval=3.0, group=group_supertrend)
+baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12, group=group_supertrend)
+
+// ==================== RSI & STOCHASTIC ====================
+group_momentum = "📊 Momentum Indicators"
+rsiPeriod = input.int(6, "RSI Period (Adaptive)", minval=4, maxval=14, group=group_momentum)
+rsiOverbought = input.int(75, "RSI Overbought", minval=65, maxval=85, group=group_momentum)
+rsiOversold = input.int(25, "RSI Oversold", minval=15, maxval=35, group=group_momentum)
+stochPeriod = input.int(6, "Stochastic Period", minval=4, maxval=14, group=group_momentum)
+
+// High Win Rate Mode thresholds
+enableHighWRMode = input.bool(true, "Enable High Win Rate Mode", group=group_momentum)
+hwrLongRsiMin = input.int(40, "HWR Long RSI Min", minval=30, maxval=50, group=group_momentum)
+hwrLongRsiMax = input.int(65, "HWR Long RSI Max", minval=55, maxval=75, group=group_momentum)
+hwrShortRsiMin = input.int(35, "HWR Short RSI Min", minval=25, maxval=45, group=group_momentum)
+hwrShortRsiMax = input.int(60, "HWR Short RSI Max", minval=50, maxval=70, group=group_momentum)
+
+// ==================== MULTI-TIMEFRAME SETTINGS ====================
+group_mtf = "🔄 Multi-Timeframe Confirmation"
+enableMTF = input.bool(true, "Enable MTF Confirmation", group=group_mtf)
+mtfMode = input.string("Confirmation", "MTF Mode", options=["Confirmation", "Filter", "Advisory"], group=group_mtf, tooltip="Confirmation=Advisory, Filter=Strict blocking, Advisory=Log only")
+mtfAlignmentThreshold = input.float(33, "MTF Alignment Threshold (%)", minval=25, maxval=75, group=group_mtf, tooltip="33% = 1 of 3 timeframes must align")
+htf1 = input.timeframe("15", "Higher TF 1", group=group_mtf)
+htf2 = input.timeframe("60", "Higher TF 2", group=group_mtf)
+htf3 = input.timeframe("240", "Higher TF 3", group=group_mtf)
+
+// ==================== SESSION SETTINGS ====================
+group_session = "🌍 Session Settings"
+enableSessionFilters = input.bool(true, "Enable Session Filters", group=group_session)
+timezoneOffset = input.int(-5, "Timezone Offset from UTC", minval=-12, maxval=14, group=group_session)
+asianSessionStart = input.int(1900, "Asian Session Start (ET)", group=group_session)
+asianSessionEnd = input.int(300, "Asian Session End (ET)", group=group_session)
+londonSessionStart = input.int(300, "London Session Start (ET)", group=group_session)
+londonSessionEnd = input.int(1200, "London Session End (ET)", group=group_session)
+nySessionStart = input.int(930, "NY Session Start (ET)", group=group_session)
+nySessionEnd = input.int(1600, "NY Session End (ET)", group=group_session)
+noTradeZoneStart = input.int(0, "No Trade Zone Start (ET)", group=group_session)
+noTradeZoneEnd = input.int(600, "No Trade Zone End (ET)", group=group_session)
+enableNoTradeZone = input.bool(false, "Enable No Trade Zone", group=group_session)
+
+// Session multipliers
+asianMultiplier = input.float(1.2, "Asian Session Multiplier", minval=0.8, maxval=1.5, group=group_session)
+londonMultiplier = input.float(1.3, "London Session Multiplier", minval=1.0, maxval=1.6, group=group_session)
+nyMultiplier = input.float(1.5, "NY Session Multiplier", minval=1.2, maxval=2.0, group=group_session)
+
+// ==================== PROFIT PROTECTION ====================
+group_profit = "💰 Profit Protection"
+enableProfitProtection = input.bool(true, "Enable Profit Protection", group=group_profit)
+maeProtectionPct = input.float(25, "MAE Protection (% from peak)", minval=15, maxval=40, group=group_profit, tooltip="Exit if profit drops 25% from peak")
+breakevenTrigger = input.float(40, "Breakeven Trigger ($)", minval=20, maxval=100, group=group_profit)
+profitLock1Atr = input.float(2.0, "Profit Lock Level 1 (ATR)", minval=1.0, maxval=3.0, group=group_profit)
+profitLock1Pct = input.float(50, "Profit Lock 1 (%)", minval=30, maxval=70, group=group_profit)
+profitLock2Atr = input.float(3.5, "Profit Lock Level 2 (ATR)", minval=2.5, maxval=5.0, group=group_profit)
+profitLock2Pct = input.float(60, "Profit Lock 2 (%)", minval=40, maxval=80, group=group_profit)
+profitLock3Atr = input.float(5.0, "Profit Lock Level 3 (ATR)", minval=4.0, maxval=7.0, group=group_profit)
+profitLock3Pct = input.float(70, "Profit Lock 3 (%)", minval=50, maxval=90, group=group_profit)
+trailStopAtr = input.float(0.6, "Trailing Stop (ATR)", minval=0.3, maxval=1.0, group=group_profit)
+maxProfitDrawdown = input.float(30, "Max Profit Drawdown (%)", minval=20, maxval=50, group=group_profit)
+timeProtectionBars = input.int(35, "Time Protection Bars (MGC)", minval=15, maxval=50, group=group_profit)
+
+// High WR mode modifiers
+hwrMaeMultiplier = input.float(0.7, "HWR MAE Multiplier", minval=0.5, maxval=0.9, group=group_profit)
+hwrBreakevenMultiplier = input.float(0.5, "HWR Breakeven Multiplier", minval=0.3, maxval=0.8, group=group_profit)
+hwrTrailMultiplier = input.float(0.6, "HWR Trail Multiplier", minval=0.4, maxval=0.8, group=group_profit)
+
+// ==================== EXIT SETTINGS ====================
+group_exit = "🚪 Exit Settings"
+enableEnhancedTP = input.bool(true, "Enable Enhanced Take Profit", group=group_exit)
+quickTPMultiplier = input.float(0.6, "Quick TP Multiplier (HWR)", minval=0.4, maxval=0.9, group=group_exit)
+widerSLMultiplier = input.float(1.5, "Wider SL Multiplier (HWR)", minval=1.2, maxval=2.0, group=group_exit)
+maxHoldingBars = input.int(35, "Max Holding Bars", minval=15, maxval=60, group=group_exit)
+losingTradeThreshold = input.float(2.0, "Losing Trade Auto-Close (%)", minval=1.0, maxval=5.0, group=group_exit)
+endOfDayExit = input.int(1450, "End of Day Exit Time (ET)", minval=1400, maxval=1600, group=group_exit)
+enableSignalReversalExit = input.bool(false, "Enable Signal Reversal Exit", group=group_exit)
+reversalExitBars = input.int(3, "Reversal Exit After Bars", minval=2, maxval=5, group=group_exit)
+
+// ==================== ANTI-WHIPSAW PROTECTION ====================
+group_antiwhipsaw = "🛡️ Anti-Whipsaw Protection"
+enableADXFloor = input.bool(true, "Enable ADX Floor Protection", group=group_antiwhipsaw)
+adxFloorValue = input.float(20, "ADX Floor Value", minval=15, maxval=30, group=group_antiwhipsaw)
+enableCooldownAfterSL = input.bool(true, "Enable Cooldown After Stop Loss", group=group_antiwhipsaw)
+cooldownBars = input.int(10, "Cooldown Bars After SL", minval=5, maxval=20, group=group_antiwhipsaw)
+enableATRPercentileGate = input.bool(true, "Enable ATR Percentile Gate", group=group_antiwhipsaw)
+atrMinPercentile = input.float(15, "ATR Min Percentile", minval=5, maxval=30, group=group_antiwhipsaw)
+atrMaxPercentile = input.float(95, "ATR Max Percentile", minval=80, maxval=99, group=group_antiwhipsaw)
+enableTwoBarConfirmation = input.bool(false, "Enable Two-Bar Confirmation", group=group_antiwhipsaw, tooltip="Disabled by default to capture fast moves")
+enableDuplicatePrevention = input.bool(true, "Enable Duplicate Prevention", group=group_antiwhipsaw)
+dedupeWindow = input.int(3, "Dedupe Window (bars)", minval=1, maxval=5, group=group_antiwhipsaw)
+
+// ==================== CANDLE DIRECTION CONTROL ====================
+group_candle = "🕯️ Candle Direction Control"
+enableStrictCandleDirection = input.bool(false, "Enable Strict Candle Direction", group=group_candle, tooltip="LONG=GREEN only, SHORT=RED only. Disabled to allow more entries")
+minBodyPctOfATR = input.float(20, "Min Body % of ATR", minval=10, maxval=50, group=group_candle)
+enableImpulseCandleOverride = input.bool(true, "Enable Impulse Candle Override", group=group_candle)
+
+// ==================== CONFLUENCE SYSTEM ====================
+group_confluence = "🔗 Confluence System"
+confluenceLevel = input.int(10, "Confluence Level (1-15)", minval=1, maxval=15, group=group_confluence, tooltip="10-11 for minimum quality")
+volumeConfirmationThreshold = input.float(0.6, "Volume Confirmation Threshold", minval=0.3, maxval=1.0, group=group_confluence)
+strongVolumeThreshold = input.float(1.2, "Strong Volume Threshold", minval=1.0, maxval=2.0, group=group_confluence)
+
+// ==================== INITIALIZATION ====================
+var bool isInitialized = false
+var int initBarsRequired = 50
+var int initCounter = 0
+
+if not isInitialized
+    initCounter += 1
+    if initCounter >= initBarsRequired
+        isInitialized := true
+
+// ==================== PERFORMANCE TRACKING ====================
+var int totalTrades = 0
+var int winningTrades = 0
+var int losingTrades = 0
+var float totalProfit = 0.0
+var float totalLoss = 0.0
+var float largestWin = 0.0
+var float largestLoss = 0.0
+var float dailyPnL = 0.0
+var float runningPnL = 0.0
+var int consecutiveLosses = 0
+var int consecutiveWins = 0
+var float maxDrawdown = 0.0
+var float peakEquity = 0.0
+var float maxProfitReached = 0.0
+
+// Cooldown tracking
+var int lastLongEntry = 0
+var int lastShortEntry = 0
+var int lastSLBarLong = 0
+var int lastSLBarShort = 0
+
+// ==================== TIMEFRAME DETECTION ====================
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is4min = currentTF == "4" or currentTF == "4m"
+is5min = currentTF == "5" or currentTF == "5m"
+is10min = currentTF == "10" or currentTF == "10m"
+is15min = currentTF == "15" or currentTF == "15m"
+
+// ==================== CORE INDICATORS ====================
+// ATR
+atr = ta.atr(14)
+atrAverage = ta.sma(atr, 20)
+atrRatio = atrAverage > 0 ? atr / atrAverage : 1.0
+
+// Volume
+volumeMA = ta.sma(volume, 20)
+volumeRatio = volumeMA > 0 ? volume / volumeMA : 1.0
+volumeConfirmed = volumeRatio >= volumeConfirmationThreshold
+strongVolume = volumeRatio >= strongVolumeThreshold
+normalVolume = volumeRatio >= 0.7
+
+// RSI
+rsi = ta.rsi(close, rsiPeriod)
+
+// Stochastic
+stochK = ta.stoch(close, high, low, stochPeriod)
+stochD = ta.sma(stochK, 3)
+
+// ADX
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+
+// Bollinger Bands for Gray Zone
+bbBasis = ta.sma(close, 20)
+bbDev = ta.stdev(close, 20)
+bbUpper = bbBasis + 2 * bbDev
+bbLower = bbBasis - 2 * bbDev
+bbWidth = bbBasis > 0 ? (bbUpper - bbLower) / bbBasis : 0
+
+// ==================== SIGNAL LINE SYSTEM ====================
+sma9 = ta.sma(close, sma9Period)
+sma50 = ta.sma(close, sma50Period)
+sma180 = ta.sma(close, sma180Period)
+ema20 = ta.ema(close, ema20Period)
+
+// Swing Line (crossover signals)
+swingLineBullish = ta.crossover(sma9, sma50)
+swingLineBearish = ta.crossunder(sma9, sma50)
+
+// Signal Line Permission
+signalLineLongPermission = close > ema20 and sma9 > sma50
+signalLineShortPermission = close < ema20 and sma9 < sma50
+
+// ==================== GRAY ZONE DETECTION ====================
+grayZoneFactors = 0
+
+// Factor 1: ADX below threshold
+if adx < adxThreshold
+    grayZoneFactors += 1
+
+// Factor 2: ATR compression
+if atrRatio < atrCompressionThreshold
+    grayZoneFactors += 1
+
+// Factor 3: BB width narrow
+if bbWidth < bbWidthThreshold
+    grayZoneFactors += 1
+
+// Factor 4: Volume contraction
+if volumeRatio < 0.6
+    grayZoneFactors += 1
+
+// Factor 5: Price in middle of range (no clear direction)
+priceRange20 = ta.highest(high, 20) - ta.lowest(low, 20)
+pricePosition = priceRange20 > 0 ? (close - ta.lowest(low, 20)) / priceRange20 : 0.5
+if pricePosition > 0.35 and pricePosition < 0.65
+    grayZoneFactors += 1
+
+isGrayZone = enableGrayZone and grayZoneFactors >= grayZoneFactorsRequired
+
+// ==================== HULL MOVING AVERAGES ====================
+hma(src, len) =>
+    len_safe = math.max(len, 2)
+    ta.wma(2 * ta.wma(src, math.round(len_safe / 2)) - ta.wma(src, len_safe), math.round(math.sqrt(len_safe)))
+
+// Adaptive periods based on instrument and timeframe
+hullPeriodMain = isMNQ ? math.round(baseHullMain * 0.7) : isMCL ? math.round(baseHullMain * 0.9) : isMGC ? baseHullMain : isMES ? math.round(baseHullMain * 0.8) : baseHullMain
+hullPeriodFast = isMNQ ? math.round(baseHullFast * 0.8) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : isMES ? math.round(baseHullFast * 0.85) : baseHullFast
+hullPeriodSignal = isMNQ ? math.round(baseHullSignal * 0.8) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : isMES ? math.round(baseHullSignal * 0.85) : baseHullSignal
+
+// Timeframe optimization
+adaptiveHullMain = if is1min
+    math.round(hullPeriodMain * 0.7)
+else if is2min
+    math.round(hullPeriodMain * 0.8)
+else if is3min
+    math.round(hullPeriodMain * 0.85)
+else if is4min
+    math.round(hullPeriodMain * 0.9)
+else if is5min
+    math.round(hullPeriodMain * 0.95)
+else
+    hullPeriodMain
+
+adaptiveHullFast = if is1min
+    math.round(hullPeriodFast * 0.8)
+else if is2min
+    math.round(hullPeriodFast * 0.85)
+else if is3min
+    math.round(hullPeriodFast * 0.9)
+else
+    hullPeriodFast
+
+hullMain = hma(hullSrc, adaptiveHullMain)
+hullFast = hma(hullSrc, adaptiveHullFast)
+hullSignal = hma(hullSrc, hullPeriodSignal)
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+slopeSignal = hullSignal > hullSignal[1] ? 1 : hullSignal < hullSignal[1] ? -1 : 0
+
+hullBullish = slopeMain == 1 or slopeFast == 1
+hullBearish = slopeMain == -1 or slopeFast == -1
+hullAcceleration = (slopeMain == slopeFast) and (slopeFast == slopeSignal)
+
+// ==================== SUPERTREND ====================
+ph = ta.pivothigh(basePivotPeriod, basePivotPeriod)
+pl = ta.pivotlow(basePivotPeriod, basePivotPeriod)
+
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrFactor = isMNQ ? baseAtrFactor * 0.95 : isMCL ? baseAtrFactor * 1.05 : isMGC ? baseAtrFactor : isMES ? baseAtrFactor * 0.9 : baseAtrFactor
+atrPeriod = isMNQ ? math.round(baseAtrPeriod * 0.9) : isMCL ? baseAtrPeriod : isMGC ? math.round(baseAtrPeriod * 1.1) : isMES ? math.round(baseAtrPeriod * 0.9) : baseAtrPeriod
+atrSuperTrend = ta.atr(atrPeriod)
+
+upBand = na(center) ? close - atrFactor * atrSuperTrend : center - atrFactor * atrSuperTrend
+dnBand = na(center) ? close + atrFactor * atrSuperTrend : center + atrFactor * atrSuperTrend
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+
+trendChange = trend != trend[1]
+
+// ==================== ENVELOPE ====================
+envLength = isMNQ ? 11 : isMCL ? 12 : isMGC ? 13 : isMES ? 10 : 12
+envDev = isMNQ ? 0.68 : isMCL ? 0.80 : isMGC ? 0.76 : isMES ? 0.72 : 0.8
+
+smaBasis = ta.sma(close, envLength)
+upperEnv = smaBasis * (1 + envDev / 100)
+lowerEnv = smaBasis * (1 - envDev / 100)
+
+// ==================== 🔥 CONSECUTIVE CANDLE DETECTION (KEY FIX FOR MISSED TRADES) ====================
+// This is the critical feature to capture trending moves like 5-7 consecutive candles
+
+// Track consecutive green candles
+greenCandle = close > open
+redCandle = close < open
+
+var int consecutiveGreen = 0
+var int consecutiveRed = 0
+var float consecutiveMoveSize = 0.0
+
+if greenCandle
+    consecutiveGreen += 1
+    consecutiveRed := 0
+    consecutiveMoveSize := consecutiveGreen == 1 ? (close - open) : consecutiveMoveSize + (close - open)
+else if redCandle
+    consecutiveRed += 1
+    consecutiveGreen := 0
+    consecutiveMoveSize := consecutiveRed == 1 ? (open - close) : consecutiveMoveSize + (open - close)
+else
+    consecutiveGreen := 0
+    consecutiveRed := 0
+    consecutiveMoveSize := 0
+
+// Calculate move size in ATR terms
+consecutiveMoveATR = atr > 0 ? consecutiveMoveSize / atr : 0
+
+// Consecutive trend signals
+consecutiveBullSignal = enableConsecutiveDetection and consecutiveGreen >= minConsecutiveCandles and consecutiveMoveATR >= consecutiveAtrMultiple
+consecutiveBearSignal = enableConsecutiveDetection and consecutiveRed >= minConsecutiveCandles and consecutiveMoveATR >= consecutiveAtrMultiple
+
+// Extreme trend (7+ candles for user's example of 7 red candles)
+extremeTrendBull = consecutiveGreen >= extremeTrendCandles
+extremeTrendBear = consecutiveRed >= extremeTrendCandles
+
+// ==================== 💥 IMPULSE DETECTION ====================
+// Big candle detection (1.1× ATR)
+candleBody = math.abs(close - open)
+candleRange = high - low
+isImpulseCandle = candleRange >= atr * impulseAtrMultiple
+isVolumeImpulse = volumeRatio >= impulseVolumeMultiple
+
+// Impulse signals
+impulseBullSignal = enableImpulseOverride and greenCandle and isImpulseCandle and isVolumeImpulse
+impulseBearSignal = enableImpulseOverride and redCandle and isImpulseCandle and isVolumeImpulse
+
+// Extreme price move detection
+priceMove = math.abs(close - close[1])
+extremePriceMove = priceMove >= atr * extremePriceMultiple
+
+// ==================== MARKET REGIME DETECTION ====================
+priceRangeLookback = ta.highest(high, 14) - ta.lowest(low, 14)
+trendStrength = priceRangeLookback > 0 ? math.abs(close - close[14]) / priceRangeLookback : 0
+
+strongTrend = trendStrength > 0.15
+moderateTrend = trendStrength > 0.08 and trendStrength <= 0.15
+rangingMarket = trendStrength <= 0.08
+
+// ==================== MULTI-TIMEFRAME CONFIRMATION ====================
+// Higher timeframe trend data
+htf1Trend = request.security(syminfo.tickerid, htf1, trend)
+htf2Trend = request.security(syminfo.tickerid, htf2, trend)
+htf3Trend = request.security(syminfo.tickerid, htf3, trend)
+
+htf1Hull = request.security(syminfo.tickerid, htf1, slopeMain)
+htf2Hull = request.security(syminfo.tickerid, htf2, slopeMain)
+htf3Hull = request.security(syminfo.tickerid, htf3, slopeMain)
+
+htf1RSI = request.security(syminfo.tickerid, htf1, rsi)
+htf2RSI = request.security(syminfo.tickerid, htf2, rsi)
+htf3RSI = request.security(syminfo.tickerid, htf3, rsi)
+
+// MTF alignment calculation
+mtfBullCount = 0
+mtfBearCount = 0
+
+if htf1Trend == 1 or htf1Hull == 1
+    mtfBullCount += 1
+if htf2Trend == 1 or htf2Hull == 1
+    mtfBullCount += 1
+if htf3Trend == 1 or htf3Hull == 1
+    mtfBullCount += 1
+
+if htf1Trend == -1 or htf1Hull == -1
+    mtfBearCount += 1
+if htf2Trend == -1 or htf2Hull == -1
+    mtfBearCount += 1
+if htf3Trend == -1 or htf3Hull == -1
+    mtfBearCount += 1
+
+mtfBullAlignment = mtfBullCount / 3.0 * 100
+mtfBearAlignment = mtfBearCount / 3.0 * 100
+
+// MTF passes threshold
+mtfBullConfirmed = not enableMTF or mtfBullAlignment >= mtfAlignmentThreshold
+mtfBearConfirmed = not enableMTF or mtfBearAlignment >= mtfAlignmentThreshold
+
+// ==================== SESSION DETECTION ====================
+currentTime = math.round((hour + timezoneOffset) * 100 + minute)
+
+// Handle sessions that cross midnight
+isAsianSession = enableSessionFilters and ((currentTime >= asianSessionStart) or (currentTime < asianSessionEnd))
+isLondonSession = enableSessionFilters and (currentTime >= londonSessionStart) and (currentTime < londonSessionEnd)
+isNYSession = enableSessionFilters and (currentTime >= nySessionStart) and (currentTime <= nySessionEnd)
+isNoTradeZone = enableNoTradeZone and (currentTime >= noTradeZoneStart) and (currentTime < noTradeZoneEnd)
+
+sessionMultiplier = if not enableSessionFilters
+    1.0
+else if isNYSession
+    nyMultiplier
+else if isLondonSession
+    londonMultiplier
+else if isAsianSession
+    asianMultiplier
+else
+    0.8
+
+// ==================== ATR PERCENTILE GATE ====================
+atrPercentile = ta.percentile_nearest_rank(atr, 100, 50)
+atrInRange = not enableATRPercentileGate or (atrPercentile >= atrMinPercentile and atrPercentile <= atrMaxPercentile)
+
+// ==================== COOLDOWN CHECKS ====================
+longCooldownOK = not enableCooldownAfterSL or (bar_index - lastSLBarLong > cooldownBars)
+shortCooldownOK = not enableCooldownAfterSL or (bar_index - lastSLBarShort > cooldownBars)
+
+// Duplicate prevention
+longDedupeOK = not enableDuplicatePrevention or (bar_index - lastLongEntry > dedupeWindow)
+shortDedupeOK = not enableDuplicatePrevention or (bar_index - lastShortEntry > dedupeWindow)
+
+// ==================== CANDLE DIRECTION CHECK ====================
+candleDirectionLongOK = not enableStrictCandleDirection or greenCandle
+candleDirectionShortOK = not enableStrictCandleDirection or redCandle
+
+// Body strength check
+bodyStrengthOK = atr > 0 ? (candleBody / atr * 100) >= minBodyPctOfATR : true
+
+// ==================== 🎯 QUALITY SCORE CALCULATION (FILTER HARMONY V3 CORE) ====================
+// This replaces hard blocking with quality scoring
+
+// Calculate Long Quality Score
+longQualityScore = 0.0
+
+// 1. Trend Regime Score (0-30 points)
+longTrendScore = 0.0
+if trend == 1
+    longTrendScore += 10
+if slopeMain == 1
+    longTrendScore += 8
+if slopeFast == 1
+    longTrendScore += 6
+if hullAcceleration and trend == 1
+    longTrendScore += 6
+longQualityScore += math.min(longTrendScore, trendRegimeWeight)
+
+// 2. Confluence Score (0-20 points) - 7 factors
+longConfluenceCount = 0
+if volumeConfirmed
+    longConfluenceCount += 1
+if strongVolume
+    longConfluenceCount += 1
+if rsi > 40 and rsi < 70
+    longConfluenceCount += 1
+if stochK > 25 and stochK < 75
+    longConfluenceCount += 1
+if strongTrend or moderateTrend
+    longConfluenceCount += 1
+if close > close[1]
+    longConfluenceCount += 1
+if atrRatio > 0.8
+    longConfluenceCount += 1
+longConfluenceScore = (longConfluenceCount / 7.0) * confluenceWeight
+longQualityScore += longConfluenceScore
+
+// 3. Signal Line Permission (0-15 points)
+longSignalLineScore = 0.0
+if enableSignalLines
+    if close > ema20
+        longSignalLineScore += 5
+    if sma9 > sma50
+        longSignalLineScore += 5
+    if close > sma180
+        longSignalLineScore += 5
+longQualityScore += math.min(longSignalLineScore, signalLineWeight)
+
+// 4. Pattern Quality (0-10 points)
+// Simplified pattern detection - consecutive candles as pattern
+longPatternScore = 0.0
+if consecutiveGreen >= 3
+    longPatternScore += 10  // Tier 1 equivalent
+else if consecutiveGreen >= 2
+    longPatternScore += 7   // Tier 2 equivalent
+else if greenCandle and candleBody > atr * 0.5
+    longPatternScore += 5   // Strong bullish candle
+longQualityScore += math.min(longPatternScore, patternWeight)
+
+// 5. Star Score (0-15 points) - 5 stars × 3 points each
+longStarCount = 0
+if trend == 1
+    longStarCount += 1
+if slopeMain == 1
+    longStarCount += 1
+if rsi > 40
+    longStarCount += 1
+if volumeConfirmed
+    longStarCount += 1
+if close > smaBasis
+    longStarCount += 1
+longStarScore = (longStarCount / 5.0) * starScoreWeight
+longQualityScore += longStarScore
+
+// 6. MTF Alignment (0-10 points)
+longMTFScore = (mtfBullAlignment / 100.0) * mtfWeight
+longQualityScore += longMTFScore
+
+// 7. Extreme Trend Bonus (0-10 points)
+longExtremeTrendBonus = 0.0
+if consecutiveGreen >= 7
+    longExtremeTrendBonus += 10
+else if consecutiveGreen >= 5
+    longExtremeTrendBonus += 7
+else if consecutiveGreen >= 3
+    longExtremeTrendBonus += 4
+longQualityScore += longExtremeTrendBonus
+
+// Calculate Short Quality Score (mirror of long)
+shortQualityScore = 0.0
+
+// 1. Trend Regime Score
+shortTrendScore = 0.0
+if trend == -1
+    shortTrendScore += 10
+if slopeMain == -1
+    shortTrendScore += 8
+if slopeFast == -1
+    shortTrendScore += 6
+if hullAcceleration and trend == -1
+    shortTrendScore += 6
+shortQualityScore += math.min(shortTrendScore, trendRegimeWeight)
+
+// 2. Confluence Score
+shortConfluenceCount = 0
+if volumeConfirmed
+    shortConfluenceCount += 1
+if strongVolume
+    shortConfluenceCount += 1
+if rsi > 30 and rsi < 60
+    shortConfluenceCount += 1
+if stochK > 25 and stochK < 75
+    shortConfluenceCount += 1
+if strongTrend or moderateTrend
+    shortConfluenceCount += 1
+if close < close[1]
+    shortConfluenceCount += 1
+if atrRatio > 0.8
+    shortConfluenceCount += 1
+shortConfluenceScore = (shortConfluenceCount / 7.0) * confluenceWeight
+shortQualityScore += shortConfluenceScore
+
+// 3. Signal Line Permission
+shortSignalLineScore = 0.0
+if enableSignalLines
+    if close < ema20
+        shortSignalLineScore += 5
+    if sma9 < sma50
+        shortSignalLineScore += 5
+    if close < sma180
+        shortSignalLineScore += 5
+shortQualityScore += math.min(shortSignalLineScore, signalLineWeight)
+
+// 4. Pattern Quality
+shortPatternScore = 0.0
+if consecutiveRed >= 3
+    shortPatternScore += 10
+else if consecutiveRed >= 2
+    shortPatternScore += 7
+else if redCandle and candleBody > atr * 0.5
+    shortPatternScore += 5
+shortQualityScore += math.min(shortPatternScore, patternWeight)
+
+// 5. Star Score
+shortStarCount = 0
+if trend == -1
+    shortStarCount += 1
+if slopeMain == -1
+    shortStarCount += 1
+if rsi < 60
+    shortStarCount += 1
+if volumeConfirmed
+    shortStarCount += 1
+if close < smaBasis
+    shortStarCount += 1
+shortStarScore = (shortStarCount / 5.0) * starScoreWeight
+shortQualityScore += shortStarScore
+
+// 6. MTF Alignment
+shortMTFScore = (mtfBearAlignment / 100.0) * mtfWeight
+shortQualityScore += shortMTFScore
+
+// 7. Extreme Trend Bonus
+shortExtremeTrendBonus = 0.0
+if consecutiveRed >= 7
+    shortExtremeTrendBonus += 10
+else if consecutiveRed >= 5
+    shortExtremeTrendBonus += 7
+else if consecutiveRed >= 3
+    shortExtremeTrendBonus += 4
+shortQualityScore += shortExtremeTrendBonus
+
+// ==================== 🚀 SMART OVERRIDE SYSTEM ====================
+// Extremely strong conditions can bypass some filters
+
+// Extreme Trend Override: 7+ consecutive candles with significant move
+extremeTrendOverrideLong = enableQualityOverrides and consecutiveGreen >= 7 and consecutiveMoveATR >= 2.0 and longStarCount >= 4
+extremeTrendOverrideShort = enableQualityOverrides and consecutiveRed >= 7 and consecutiveMoveATR >= 2.0 and shortStarCount >= 4
+
+// Impulse Override: Big candle with volume surge
+impulseOverrideLong = enableQualityOverrides and impulseBullSignal and longQualityScore >= overrideMinQuality
+impulseOverrideShort = enableQualityOverrides and impulseBearSignal and shortQualityScore >= overrideMinQuality
+
+// Consecutive Trend Override: 3+ same direction with ATR range
+consecutiveOverrideLong = enableQualityOverrides and consecutiveBullSignal and longQualityScore >= overrideMinQuality
+consecutiveOverrideShort = enableQualityOverrides and consecutiveBearSignal and shortQualityScore >= overrideMinQuality
+
+// Any override active
+anyOverrideLong = extremeTrendOverrideLong or impulseOverrideLong or consecutiveOverrideLong
+anyOverrideShort = extremeTrendOverrideShort or impulseOverrideShort or consecutiveOverrideShort
+
+// ==================== FINAL QUALITY DETERMINATION ====================
+// Apply overrides - if override active, reduce minimum threshold requirement
+effectiveThresholdLong = anyOverrideLong ? overrideMinQuality : minQualityThreshold
+effectiveThresholdShort = anyOverrideShort ? overrideMinQuality : minQualityThreshold
+
+longQualityPasses = longQualityScore >= effectiveThresholdLong
+shortQualityPasses = shortQualityScore >= effectiveThresholdShort
+
+// Gray zone bypass for swing signals and impulses
+grayZoneBypassLong = swingLineBullish or impulseBullSignal or extremeTrendOverrideLong
+grayZoneBypassShort = swingLineBearish or impulseBearSignal or extremeTrendOverrideShort
+
+// Final gray zone check
+grayZoneBlocksLong = isGrayZone and not grayZoneBypassLong
+grayZoneBlocksShort = isGrayZone and not grayZoneBypassShort
+
+// ==================== ENTRY SIGNALS ====================
+// P1 Impulse Signal (highest priority)
+p1ImpulseLong = impulseBullSignal and trend == 1
+p1ImpulseShort = impulseBearSignal and trend == -1
+
+// P2 Trend Signal
+p2TrendLong = consecutiveBullSignal and hullBullish and trend == 1
+p2TrendShort = consecutiveBearSignal and hullBearish and trend == -1
+
+// P3 Standard Signal
+p3StandardLong = longQualityPasses and trend == 1 and slopeMain == 1
+p3StandardShort = shortQualityPasses and trend == -1 and slopeMain == -1
+
+// Combined signal
+anyLongSignal = p1ImpulseLong or p2TrendLong or p3StandardLong
+anyShortSignal = p1ImpulseShort or p2TrendShort or p3StandardShort
+
+// ==================== RISK MANAGEMENT CHECKS ====================
+dailyPnL := strategy.netprofit - runningPnL
+maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
+equityTooLow = strategy.equity < strategy.initial_capital * 0.05
+
+// ==================== FINAL ENTRY CONDITIONS ====================
+// Long Entry
+longCondition = isInitialized and
+     anyLongSignal and
+     longQualityPasses and
+     not grayZoneBlocksLong and
+     mtfBullConfirmed and
+     atrInRange and
+     longCooldownOK and
+     longDedupeOK and
+     candleDirectionLongOK and
+     not maxLossReached and
+     not equityTooLow and
+     not isNoTradeZone and
+     strategy.position_size == 0
+
+// Short Entry
+shortCondition = isInitialized and
+     anyShortSignal and
+     shortQualityPasses and
+     not grayZoneBlocksShort and
+     mtfBearConfirmed and
+     atrInRange and
+     shortCooldownOK and
+     shortDedupeOK and
+     candleDirectionShortOK and
+     not maxLossReached and
+     not equityTooLow and
+     not isNoTradeZone and
+     strategy.position_size == 0
+
+// ==================== POSITION SIZING ====================
+safeEquity = math.max(strategy.equity, strategy.initial_capital * 0.1)
+stopDistance = atr * (enableHighWRMode ? widerSLMultiplier : 1.5)
+tpDistance = atr * (enableHighWRMode ? quickTPMultiplier : 1.0)
+
+contractValue = isMNQ ? 2.0 : isMCL ? 1000.0 : isMGC ? 10.0 : isMES ? 1.25 : isMYM ? 0.5 : isM2K ? 0.1 : 1.0
+actualPositionSize = useManualPositionSize ? currentManualContracts : 1
+
+// ==================== ENTRY EXECUTION ====================
+var float entryPrice = na
+var int entryBar = na
+var bool protectionActive = false
+var float protectionStop = na
+var bool stopModificationSent = false
+var bool trailingActivated = false
+var float highestProfit = 0.0
+var float lowestProfit = 0.0
+
+entryId = str.tostring(bar_index) + (isMNQ ? "_MNQ" : isMCL ? "_MCL" : isMGC ? "_MGC" : isMES ? "_MES" : isMYM ? "_MYM" : isM2K ? "_M2K" : "")
+
+if longCondition
+    strategy.entry("Long_" + entryId, strategy.long, qty=actualPositionSize)
+    lastLongEntry := bar_index
+    
+    stopLossPrice = close - stopDistance
+    tp1Price = close + (tpDistance * 0.4)
+    tp2Price = close + (tpDistance * 0.7)
+    tp3Price = close + (tpDistance * 1.0)
+    tp4Price = close + (tpDistance * 1.5)
+    
+    signalType = p1ImpulseLong ? "P1_IMPULSE" : p2TrendLong ? "P2_TREND" : "P3_STANDARD"
+    
+    if enableLiveAlerts and enableEntryAlerts
+        alertSymbol = getAlertSymbol()
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        entryAlert = '{"ticker":"' + alertSymbol + '"' + 
+         ',"action":"buy"' + 
+         ',"order_type":"' + orderType + '"' + 
+         ',"quantity":' + str.tostring(actualPositionSize) + 
+         ',"price":' + str.tostring(close) + 
+         ',"stop_loss":' + str.tostring(stopLossPrice) + 
+         ',"take_profit_1":' + str.tostring(tp1Price) + 
+         ',"take_profit_2":' + str.tostring(tp2Price) + 
+         ',"take_profit_3":' + str.tostring(tp3Price) + 
+         ',"take_profit_4":' + str.tostring(tp4Price) + 
+         ',"tp1_qty_percent":60' + 
+         ',"tp2_qty_percent":25' + 
+         ',"tp3_qty_percent":10' + 
+         ',"tp4_qty_percent":5' + 
+         ',"strategy":"MGC_FILTER_HARMONY_V3"' + 
+         ',"signal_type":"' + signalType + '"' + 
+         ',"quality_score":' + str.tostring(math.round(longQualityScore, 1)) + 
+         ',"consecutive_candles":' + str.tostring(consecutiveGreen) + 
+         ',"timeframe":"' + timeframe.period + '"' + 
+         ',"timestamp":"' + str.tostring(time) + '"' + 
+         accountField + 
+         '}'
+        
+        alert(entryAlert, alert.freq_once_per_bar)
+
+if shortCondition
+    strategy.entry("Short_" + entryId, strategy.short, qty=actualPositionSize)
+    lastShortEntry := bar_index
+    
+    stopLossPrice = close + stopDistance
+    tp1Price = close - (tpDistance * 0.4)
+    tp2Price = close - (tpDistance * 0.7)
+    tp3Price = close - (tpDistance * 1.0)
+    tp4Price = close - (tpDistance * 1.5)
+    
+    signalType = p1ImpulseShort ? "P1_IMPULSE" : p2TrendShort ? "P2_TREND" : "P3_STANDARD"
+    
+    if enableLiveAlerts and enableEntryAlerts
+        alertSymbol = getAlertSymbol()
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        entryAlert = '{"ticker":"' + alertSymbol + '"' + 
+         ',"action":"sell"' + 
+         ',"order_type":"' + orderType + '"' + 
+         ',"quantity":' + str.tostring(actualPositionSize) + 
+         ',"price":' + str.tostring(close) + 
+         ',"stop_loss":' + str.tostring(stopLossPrice) + 
+         ',"take_profit_1":' + str.tostring(tp1Price) + 
+         ',"take_profit_2":' + str.tostring(tp2Price) + 
+         ',"take_profit_3":' + str.tostring(tp3Price) + 
+         ',"take_profit_4":' + str.tostring(tp4Price) + 
+         ',"tp1_qty_percent":60' + 
+         ',"tp2_qty_percent":25' + 
+         ',"tp3_qty_percent":10' + 
+         ',"tp4_qty_percent":5' + 
+         ',"strategy":"MGC_FILTER_HARMONY_V3"' + 
+         ',"signal_type":"' + signalType + '"' + 
+         ',"quality_score":' + str.tostring(math.round(shortQualityScore, 1)) + 
+         ',"consecutive_candles":' + str.tostring(consecutiveRed) + 
+         ',"timeframe":"' + timeframe.period + '"' + 
+         ',"timestamp":"' + str.tostring(time) + '"' + 
+         accountField + 
+         '}'
+        
+        alert(entryAlert, alert.freq_once_per_bar)
+
+// ==================== EXIT MANAGEMENT ====================
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+    entryPrice := strategy.position_avg_price
+    protectionActive := false
+    protectionStop := na
+    stopModificationSent := false
+    trailingActivated := false
+    highestProfit := 0.0
+    lowestProfit := 0.0
+
+holdingPeriod = bar_index - entryBar
+
+// Calculate current profit
+currentProfit = 0.0
+if strategy.position_size != 0 and not na(entryPrice)
+    if strategy.position_size > 0
+        currentProfit := (close - entryPrice) * pointValue * actualPositionSize
+    else
+        currentProfit := (entryPrice - close) * pointValue * actualPositionSize
+
+// Track max profit
+if currentProfit > highestProfit
+    highestProfit := currentProfit
+if currentProfit < lowestProfit
+    lowestProfit := currentProfit
+
+// Profit drop from peak (MAE Protection)
+profitDropPct = highestProfit > 0 ? ((highestProfit - currentProfit) / highestProfit) * 100 : 0
+maeThreshold = enableHighWRMode ? maeProtectionPct * hwrMaeMultiplier : maeProtectionPct
+
+// Breakeven trigger
+breakevenTriggerAmount = enableHighWRMode ? breakevenTrigger * hwrBreakevenMultiplier : breakevenTrigger
+shouldMoveToBreakeven = currentProfit >= breakevenTriggerAmount
+
+// Profit lock levels
+profitInATR = strategy.position_size > 0 ? (close - entryPrice) / atr : (entryPrice - close) / atr
+atProfitLock1 = profitInATR >= profitLock1Atr
+atProfitLock2 = profitInATR >= profitLock2Atr
+atProfitLock3 = profitInATR >= profitLock3Atr
+
+// Time-based protection
+timeProtectionTriggered = holdingPeriod >= timeProtectionBars and currentProfit > 0
+
+// Long position exits
+if strategy.position_size > 0
+    stopLoss = entryPrice - stopDistance
+    
+    // Enhanced TP system
+    if enableEnhancedTP
+        tp1Points = math.round((tpDistance * 0.4) / syminfo.mintick)
+        tp2Points = math.round((tpDistance * 0.7) / syminfo.mintick)
+        tp3Points = math.round((tpDistance * 1.0) / syminfo.mintick)
+        tp4Points = math.round((tpDistance * 1.5) / syminfo.mintick)
+        
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points, comment="TP1")
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points, comment="TP2")
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points, comment="TP3")
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points, comment="TP4")
+    
+    // Profit protection logic
+    if enableProfitProtection
+        // MAE Protection
+        if highestProfit > breakevenTriggerAmount and profitDropPct >= maeThreshold
+            strategy.close_all(comment="MAE_Protection")
+        
+        // Profit lock stops
+        if atProfitLock3
+            lockStop = entryPrice + (close - entryPrice) * (profitLock3Pct / 100)
+            strategy.exit("ProfitLock3", stop=lockStop, comment="Lock3")
+        else if atProfitLock2
+            lockStop = entryPrice + (close - entryPrice) * (profitLock2Pct / 100)
+            strategy.exit("ProfitLock2", stop=lockStop, comment="Lock2")
+        else if atProfitLock1
+            lockStop = entryPrice + (close - entryPrice) * (profitLock1Pct / 100)
+            strategy.exit("ProfitLock1", stop=lockStop, comment="Lock1")
+        else if shouldMoveToBreakeven
+            strategy.exit("Breakeven", stop=entryPrice + currentCommission / pointValue, comment="BE")
+        else
+            strategy.exit("SL", stop=stopLoss, comment="SL")
+    else
+        strategy.exit("SL", stop=stopLoss, comment="SL")
+    
+    // Time-based exit
+    if timeProtectionTriggered
+        strategy.close_all(comment="TimeProtection")
+    
+    // Max holding exit
+    if holdingPeriod >= maxHoldingBars
+        strategy.close_all(comment="MaxHolding")
+    
+    // Signal reversal exit
+    if enableSignalReversalExit and holdingPeriod >= reversalExitBars and p1ImpulseShort
+        strategy.close_all(comment="ReversalExit")
+
+// Short position exits
+if strategy.position_size < 0
+    stopLoss = entryPrice + stopDistance
+    
+    // Enhanced TP system
+    if enableEnhancedTP
+        tp1Points = math.round((tpDistance * 0.4) / syminfo.mintick)
+        tp2Points = math.round((tpDistance * 0.7) / syminfo.mintick)
+        tp3Points = math.round((tpDistance * 1.0) / syminfo.mintick)
+        tp4Points = math.round((tpDistance * 1.5) / syminfo.mintick)
+        
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points, comment="TP1")
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points, comment="TP2")
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points, comment="TP3")
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points, comment="TP4")
+    
+    // Profit protection logic
+    if enableProfitProtection
+        // MAE Protection
+        if highestProfit > breakevenTriggerAmount and profitDropPct >= maeThreshold
+            strategy.close_all(comment="MAE_Protection")
+        
+        // Profit lock stops
+        if atProfitLock3
+            lockStop = entryPrice - (entryPrice - close) * (profitLock3Pct / 100)
+            strategy.exit("ProfitLock3", stop=lockStop, comment="Lock3")
+        else if atProfitLock2
+            lockStop = entryPrice - (entryPrice - close) * (profitLock2Pct / 100)
+            strategy.exit("ProfitLock2", stop=lockStop, comment="Lock2")
+        else if atProfitLock1
+            lockStop = entryPrice - (entryPrice - close) * (profitLock1Pct / 100)
+            strategy.exit("ProfitLock1", stop=lockStop, comment="Lock1")
+        else if shouldMoveToBreakeven
+            strategy.exit("Breakeven", stop=entryPrice - currentCommission / pointValue, comment="BE")
+        else
+            strategy.exit("SL", stop=stopLoss, comment="SL")
+    else
+        strategy.exit("SL", stop=stopLoss, comment="SL")
+    
+    // Time-based exit
+    if timeProtectionTriggered
+        strategy.close_all(comment="TimeProtection")
+    
+    // Max holding exit
+    if holdingPeriod >= maxHoldingBars
+        strategy.close_all(comment="MaxHolding")
+    
+    // Signal reversal exit
+    if enableSignalReversalExit and holdingPeriod >= reversalExitBars and p1ImpulseLong
+        strategy.close_all(comment="ReversalExit")
+
+// ==================== PERFORMANCE TRACKING ====================
+if (strategy.position_size == 0) and (strategy.position_size[1] != 0)
+    wasLong = strategy.position_size[1] > 0
+    exitPrice = close
+    positionPnL = wasLong ? (exitPrice - entryPrice) * pointValue : (entryPrice - exitPrice) * pointValue
+    
+    totalTrades += 1
+    if positionPnL > 0
+        winningTrades += 1
+        totalProfit += positionPnL
+        largestWin := math.max(largestWin, positionPnL)
+        consecutiveWins += 1
+        consecutiveLosses := 0
+    else
+        losingTrades += 1
+        totalLoss += math.abs(positionPnL)
+        largestLoss := math.max(largestLoss, math.abs(positionPnL))
+        consecutiveLosses += 1
+        consecutiveWins := 0
+        
+        // Track SL bar for cooldown
+        if wasLong
+            lastSLBarLong := bar_index
+        else
+            lastSLBarShort := bar_index
+    
+    runningPnL := strategy.netprofit
+    peakEquity := math.max(peakEquity, strategy.equity)
+    currentDrawdown = peakEquity - strategy.equity
+    maxDrawdown := math.max(maxDrawdown, currentDrawdown)
+
+// Daily reset
+if dayofweek(time) != dayofweek(time[1])
+    dailyPnL := 0.0
+    runningPnL := strategy.netprofit
+
+// ==================== METRICS CALCULATION ====================
+currentWinRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0
+avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0
+avgLoss = losingTrades > 0 ? totalLoss / losingTrades : 0
+profitFactor = totalLoss > 0 ? totalProfit / totalLoss : 0
+currentNetProfit = totalProfit - totalLoss
+
+// ==================== VISUAL PLOTS ====================
+// Hull MA
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull MA Main")
+plot(hullFast, color=color.gray, title="Hull MA Fast")
+
+// Signal Lines
+plot(enableSignalLines ? sma9 : na, color=color.red, title="SMA 9 (RED)")
+plot(enableSignalLines ? sma50 : na, color=color.blue, title="SMA 50 (BLUE)")
+plot(enableSignalLines ? sma180 : na, color=color.white, title="SMA 180 (WHITE)")
+plot(enableSignalLines ? ema20 : na, color=color.yellow, title="EMA 20 (YELLOW)")
+
+// SuperTrend
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+
+// Entry signals with quality info
+plotshape(longCondition and p1ImpulseLong, location=location.belowbar, color=color.orange, style=shape.triangleup, text="P1🚀", size=size.normal, title="P1 Impulse Long")
+plotshape(longCondition and p2TrendLong and not p1ImpulseLong, location=location.belowbar, color=color.lime, style=shape.triangleup, text="P2📈", size=size.small, title="P2 Trend Long")
+plotshape(longCondition and p3StandardLong and not p1ImpulseLong and not p2TrendLong, location=location.belowbar, color=color.aqua, style=shape.arrowup, text="P3", size=size.tiny, title="P3 Standard Long")
+
+plotshape(shortCondition and p1ImpulseShort, location=location.abovebar, color=color.orange, style=shape.triangledown, text="P1🚀", size=size.normal, title="P1 Impulse Short")
+plotshape(shortCondition and p2TrendShort and not p1ImpulseShort, location=location.abovebar, color=color.red, style=shape.triangledown, text="P2📉", size=size.small, title="P2 Trend Short")
+plotshape(shortCondition and p3StandardShort and not p1ImpulseShort and not p2TrendShort, location=location.abovebar, color=color.fuchsia, style=shape.arrowdown, text="P3", size=size.tiny, title="P3 Standard Short")
+
+// Gray zone indicator
+bgcolor(isGrayZone ? color.new(color.gray, 90) : na, title="Gray Zone")
+
+// Session background
+bgcolor(isNYSession ? color.new(color.green, 95) : isLondonSession ? color.new(color.blue, 95) : isAsianSession ? color.new(color.purple, 95) : na, title="Session")
+
+// ==================== QUALITY SCORE TABLE ====================
+var table qualityTable = table.new(position=position.top_left, columns=3, rows=10, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(qualityTable, 0, 0, "🎯 QUALITY SCORES", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 70))
+    table.cell(qualityTable, 1, 0, "LONG", text_color=color.lime, text_size=size.small, bgcolor=color.new(color.blue, 70))
+    table.cell(qualityTable, 2, 0, "SHORT", text_color=color.red, text_size=size.small, bgcolor=color.new(color.blue, 70))
+    
+    table.cell(qualityTable, 0, 1, "Total Score", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 1, str.tostring(math.round(longQualityScore, 1)) + "%", text_color=longQualityScore >= minQualityThreshold ? color.lime : color.orange, text_size=size.tiny)
+    table.cell(qualityTable, 2, 1, str.tostring(math.round(shortQualityScore, 1)) + "%", text_color=shortQualityScore >= minQualityThreshold ? color.lime : color.orange, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 2, "Trend (0-30)", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 2, str.tostring(math.round(longTrendScore, 0)), text_color=color.white, text_size=size.tiny)
+    table.cell(qualityTable, 2, 2, str.tostring(math.round(shortTrendScore, 0)), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 3, "Confluence (0-7)", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 3, str.tostring(longConfluenceCount) + "/7", text_color=color.white, text_size=size.tiny)
+    table.cell(qualityTable, 2, 3, str.tostring(shortConfluenceCount) + "/7", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 4, "Stars (0-5)", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 4, str.tostring(longStarCount) + "⭐", text_color=color.white, text_size=size.tiny)
+    table.cell(qualityTable, 2, 4, str.tostring(shortStarCount) + "⭐", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 5, "MTF Align", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 5, str.tostring(math.round(mtfBullAlignment, 0)) + "%", text_color=mtfBullConfirmed ? color.lime : color.red, text_size=size.tiny)
+    table.cell(qualityTable, 2, 5, str.tostring(math.round(mtfBearAlignment, 0)) + "%", text_color=mtfBearConfirmed ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 6, "Consec Candles", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 6, str.tostring(consecutiveGreen), text_color=consecutiveGreen >= 3 ? color.lime : color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 2, 6, str.tostring(consecutiveRed), text_color=consecutiveRed >= 3 ? color.red : color.gray, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 7, "Override Active", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 7, anyOverrideLong ? "✓" : "✗", text_color=anyOverrideLong ? color.lime : color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 2, 7, anyOverrideShort ? "✓" : "✗", text_color=anyOverrideShort ? color.red : color.gray, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 8, "Gray Zone", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 8, isGrayZone ? "⚠️" : "✓", text_color=isGrayZone ? color.orange : color.lime, text_size=size.tiny)
+    table.cell(qualityTable, 2, 8, isGrayZone ? "⚠️" : "✓", text_color=isGrayZone ? color.orange : color.lime, text_size=size.tiny)
+    
+    table.cell(qualityTable, 0, 9, "Min Threshold", text_color=color.gray, text_size=size.tiny)
+    table.cell(qualityTable, 1, 9, str.tostring(minQualityThreshold) + "%", text_color=color.yellow, text_size=size.tiny)
+    table.cell(qualityTable, 2, 9, str.tostring(minQualityThreshold) + "%", text_color=color.yellow, text_size=size.tiny)
+
+// ==================== PERFORMANCE TABLE ====================
+var table perfTable = table.new(position=position.bottom_right, columns=2, rows=12, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(perfTable, 0, 0, "🏆 FILTER HARMONY V3", text_color=color.white, text_size=size.small, bgcolor=color.new(color.lime, 70))
+    table.cell(perfTable, 1, 0, "ACTIVE ✓", text_color=color.white, text_size=size.small, bgcolor=color.new(color.lime, 70))
+    
+    table.cell(perfTable, 0, 1, "Total Trades", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 1, str.tostring(totalTrades), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 2, "Wins/Losses", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 2, str.tostring(winningTrades) + "/" + str.tostring(losingTrades), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 3, "Win Rate", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 3, str.tostring(math.round(currentWinRate, 1)) + "%", text_color=currentWinRate >= 70 ? color.lime : currentWinRate >= 50 ? color.yellow : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 4, "Avg Win", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 4, "$" + str.tostring(math.round(avgWin, 2)), text_color=color.lime, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 5, "Avg Loss", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 5, "$" + str.tostring(math.round(avgLoss, 2)), text_color=color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 6, "Profit Factor", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 6, str.tostring(math.round(profitFactor, 2)), text_color=profitFactor >= 1.5 ? color.lime : profitFactor >= 1.0 ? color.yellow : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 7, "Net Profit", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 7, "$" + str.tostring(math.round(currentNetProfit, 2)), text_color=currentNetProfit > 0 ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 8, "Max Drawdown", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 8, "$" + str.tostring(math.round(maxDrawdown, 2)), text_color=color.orange, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 9, "Streak W/L", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 9, str.tostring(consecutiveWins) + "/" + str.tostring(consecutiveLosses), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 10, "Daily P&L", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 10, "$" + str.tostring(math.round(dailyPnL, 2)), text_color=dailyPnL > 0 ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 11, "Position", text_color=color.gray, text_size=size.tiny)
+    positionText = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    positionColor = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(perfTable, 1, 11, positionText, text_color=positionColor, text_size=size.tiny)
+
+// ==================== LIVE ALERTS TABLE ====================
+var table alertTable = table.new(position=position.top_right, columns=2, rows=6, bgcolor=color.new(color.black, 15), border_width=2, border_color=color.lime)
+
+if barstate.islast
+    table.cell(alertTable, 0, 0, "🔴 LIVE ALERTS", text_color=color.white, text_size=size.small, bgcolor=enableLiveAlerts ? color.new(color.lime, 70) : color.new(color.gray, 70))
+    table.cell(alertTable, 1, 0, enableLiveAlerts ? "ACTIVE" : "OFF", text_color=color.white, text_size=size.small, bgcolor=enableLiveAlerts ? color.new(color.lime, 70) : color.new(color.gray, 70))
+    
+    table.cell(alertTable, 0, 1, "Entry Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 1, enableEntryAlerts ? "✓" : "✗", text_color=enableEntryAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 2, "Exit Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 2, enableExitAlerts ? "✓" : "✗", text_color=enableExitAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 3, "Stop Mod Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 3, enableStopModificationAlerts ? "✓" : "✗", text_color=enableStopModificationAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 4, "Emergency Alerts", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 4, enableEmergencyAlerts ? "✓" : "✗", text_color=enableEmergencyAlerts ? color.lime : color.red, text_size=size.tiny)
+    
+    table.cell(alertTable, 0, 5, "Broker", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 5, brokerType, text_color=color.white, text_size=size.tiny)
+
+// ==================== DATA WINDOW PLOTS ====================
+plot(longQualityScore, "Long Quality Score", color=color.new(color.lime, 80), display=display.data_window)
+plot(shortQualityScore, "Short Quality Score", color=color.new(color.red, 80), display=display.data_window)
+plot(consecutiveGreen, "Consecutive Green", color=color.new(color.lime, 80), display=display.data_window)
+plot(consecutiveRed, "Consecutive Red", color=color.new(color.red, 80), display=display.data_window)
+plot(mtfBullAlignment, "MTF Bull Alignment %", color=color.new(color.green, 80), display=display.data_window)
+plot(mtfBearAlignment, "MTF Bear Alignment %", color=color.new(color.orange, 80), display=display.data_window)
+plot(grayZoneFactors, "Gray Zone Factors", color=color.new(color.gray, 80), display=display.data_window)
+plot(currentWinRate, "Win Rate %", color=color.new(color.lime, 80), display=display.data_window)
+plot(profitFactor, "Profit Factor", color=color.new(color.yellow, 80), display=display.data_window)
+plot(currentProfit, "Current Profit $", color=color.new(color.green, 80), display=display.data_window)
+plot(holdingPeriod, "Holding Period", color=color.new(color.purple, 80), display=display.data_window)
