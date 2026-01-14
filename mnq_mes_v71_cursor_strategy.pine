@@ -62,6 +62,13 @@ highWinRateMode = input.bool(true, "🎯 High Win Rate Mode (70%+)")
 quickTPMultiplier = input.float(0.6, "Quick TP Multiplier", minval=0.3, maxval=1.0)
 widerSLMultiplier = input.float(1.5, "Wider SL Multiplier", minval=1.0, maxval=2.5)
 
+// ==================== 🎯 MNQ 3m WIN-RATE BOOSTER (OPTIONAL) ====================
+mnq3mBoosterGroup = "🎯 MNQ 3m Win-Rate Booster"
+enableMnq3mWinRateBooster = input.bool(false, "Enable MNQ 3m Win-Rate Booster (single contract)", group=mnq3mBoosterGroup)
+mnq3mBoosterTargetPctOfTP1 = input.float(0.60, "Target = TP1 × pct (0.30–1.00)", minval=0.30, maxval=1.00, step=0.05, group=mnq3mBoosterGroup)
+mnq3mBoosterBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mnq3mBoosterGroup)
+mnq3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mnq3mBoosterGroup)
+
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
 enableAdaptiveTrailing = input.bool(true, "✅ Enable Adaptive Trailing Stop", group=winOptGroup)
@@ -215,7 +222,8 @@ mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=pe
 // FOR 3-MINUTE CHART (OPTIMIZED)
 mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
 mnq_useCustom3m = input.bool(true, "MNQ 3m: Use 3m Settings", group=perInstGroup)
-mnq_customSL_3m = input.float(40.0, "MNQ 3m: Stop Loss (points)", group=perInstGroup)
+// Align MNQ 3m defaults to the proven "Kenya" ladder expectancy (SL 50 / TP1 45 / TP2 70 / TP3 100 / TP4 150).
+mnq_customSL_3m = input.float(50.0, "MNQ 3m: Stop Loss (points)", group=perInstGroup)
 mnq_customTP1_3m = input.float(45.0, "MNQ 3m: TP1 (points) - 60%", group=perInstGroup)
 mnq_customTP2_3m = input.float(70.0, "MNQ 3m: TP2 (points) - 25%", group=perInstGroup)
 mnq_customTP3_3m = input.float(100.0, "MNQ 3m: TP3 (points) - 10%", group=perInstGroup)
@@ -1484,8 +1492,21 @@ if strategy.position_size > 0
     bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
 
     if math.abs(strategy.position_size) == 1
-        targetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and isMnqWinTF) ? tp1Ticks : tp2Ticks)
-        strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=activeStop)
+        // Optional MNQ 3m booster: smaller target + BE protection to lift WR, without touching the base 3m ladder levels.
+        bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+        float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
+        int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
+        float beOffsetPts = 0.0
+        if mnq3mBoosterUseFeesForBE
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPts := (roundTripFees / syminfo.pointvalue) + slipPts
+        float boosterBEStop = localEntryPrice + beOffsetPts
+        float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
+        float boosterStop = (currentProfitPts >= boosterBETriggerPts) ? math.max(activeStop, boosterBEStop) : activeStop
+        targetTicks = useMnq3mBooster ? boosterTargetTicks : (v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and isMnqWinTF) ? tp1Ticks : tp2Ticks))
+        strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=boosterStop)
     else
         strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
         strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
@@ -1568,8 +1589,21 @@ if strategy.position_size < 0
     bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
 
     if math.abs(strategy.position_size) == 1
-        targetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and isMnqWinTF) ? tp1Ticks : tp2Ticks)
-        strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=activeStop)
+        // Optional MNQ 3m booster: smaller target + BE protection to lift WR, without touching the base 3m ladder levels.
+        bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+        float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
+        int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
+        float beOffsetPts = 0.0
+        if mnq3mBoosterUseFeesForBE
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPts := (roundTripFees / syminfo.pointvalue) + slipPts
+        float boosterBEStop = localEntryPrice - beOffsetPts
+        float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
+        float boosterStop = (currentProfitPts >= boosterBETriggerPts) ? math.min(activeStop, boosterBEStop) : activeStop
+        targetTicks = useMnq3mBooster ? boosterTargetTicks : (v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and isMnqWinTF) ? tp1Ticks : tp2Ticks))
+        strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=boosterStop)
     else
         strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
         strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
