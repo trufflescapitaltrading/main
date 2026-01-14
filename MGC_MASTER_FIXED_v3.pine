@@ -5,7 +5,8 @@ strategy("DRAFT TESTING 🏆 +V.MGC1!.01 COMPLETE FIXED PROFIT LOGIC - LIVE READ
      default_qty_type=strategy.fixed,
      default_qty_value=1,
      commission_type=strategy.commission.cash_per_contract,
-     commission_value=1.60,
+     // MGC typical round-turn ~ $4.76 => ~$2.38 per side
+     commission_value=2.38,
      slippage=2,
      calc_on_every_tick=true,
      pyramiding=2,
@@ -64,7 +65,7 @@ currentManualContracts = isMNQ ? mnqManualContracts : isMCL ? mclManualContracts
 // ==================== COMMISSION & SLIPPAGE ====================
 mnqCommission = input.float(0.52, "MNQ Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
 mclCommission = input.float(1.60, "MCL Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
-mgcCommission = input.float(1.60, "MGC Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
+mgcCommission = input.float(4.76, "MGC Commission (RT)", minval=0.1, maxval=10.0, group="Costs")
 mesCommission = input.float(0.52, "MES Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
 mymCommission = input.float(0.85, "MYM Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
 m2kCommission = input.float(0.65, "M2K Commission (RT)", minval=0.1, maxval=5.0, group="Costs")
@@ -78,6 +79,11 @@ m2kSlippage = input.int(2, "M2K Slippage (ticks)", minval=0, maxval=10, group="C
 
 currentCommission = isMNQ ? mnqCommission : isMCL ? mclCommission : isMGC ? mgcCommission : isMES ? mesCommission : isMYM ? mymCommission : isM2K ? m2kCommission : 1.60
 currentSlippage = isMNQ ? mnqSlippage : isMCL ? mclSlippage : isMGC ? mgcSlippage : isMES ? mesSlippage : isMYM ? mymSlippage : isM2K ? m2kSlippage : 2
+
+// ==================== INSTRUMENT LOCK (MGC DEFAULT) ====================
+group_instr = "Instrument"
+restrictToMGC = input.bool(true, "Restrict trading to MGC only", group=group_instr, tooltip="Recommended ON for live deployment.")
+instrumentOk = (not restrictToMGC) or isMGC
 
 // ==================== PERFORMANCE TRACKING ====================
 var int totalTrades = 0
@@ -326,6 +332,155 @@ microMomentumBear = (rsi < rsi[1])
 priceUp = close > close[1]
 priceDown = close < close[1]
 
+// ==================== SIGNAL LINE SYSTEM (MGC) ====================
+group_signal = "Signal Line System"
+sma9 = ta.sma(close, 9)
+sma50 = ta.sma(close, 50)
+sma180 = ta.sma(close, 180)
+ema20 = ta.ema(close, 20)
+
+signalLineLongStrong = close > ema20 and sma9 > ema20 and ema20 > sma50 and sma50 > sma180
+signalLineShortStrong = close < ema20 and sma9 < ema20 and ema20 < sma50 and sma50 < sma180
+signalLineLongSoft = close > ema20 and ema20 > sma50
+signalLineShortSoft = close < ema20 and ema20 < sma50
+
+// ==================== GRAY ZONE (CHOP) DETECTION ====================
+group_chop = "Chop Avoidance"
+useGrayZone = input.bool(true, "Enable Gray Zone chop block", group=group_chop)
+adxLen = input.int(14, "ADX Length", minval=7, maxval=30, group=group_chop)
+adxFloor = input.float(20.0, "ADX Floor", minval=10.0, maxval=35.0, group=group_chop)
+atrCompressionMult = input.float(0.7, "ATR Compression (< avg * x)", minval=0.4, maxval=0.9, group=group_chop)
+bbLen = input.int(20, "BB Length", minval=10, maxval=50, group=group_chop)
+bbWidthFloor = input.float(0.015, "BB Width Floor", minval=0.005, maxval=0.05, group=group_chop)
+volContractionMult = input.float(0.7, "Volume Contraction (< avg * x)", minval=0.4, maxval=0.9, group=group_chop)
+
+adx = ta.adx(adxLen)
+adxChop = adx < adxFloor
+atrCompression = atrAverage > 0 ? atrCurrent < (atrAverage * atrCompressionMult) : false
+bbBasis = ta.sma(close, bbLen)
+bbDev = ta.stdev(close, bbLen) * 2.0
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bbWidth = bbBasis != 0 ? (bbUpper - bbLower) / bbBasis : 0.0
+bbChop = bbWidth < bbWidthFloor
+volChop = volume < (volMA * volContractionMult)
+
+grayZoneFactors = (adxChop ? 1 : 0) + (atrCompression ? 1 : 0) + (bbChop ? 1 : 0) + (volChop ? 1 : 0)
+grayZone = useGrayZone and (grayZoneFactors >= 4)
+
+// ==================== CANDLESTICK PATTERN QUALITY (LIGHTWEIGHT) ====================
+// Tier 1: Engulfing, Three Soldiers/Crows
+// Tier 3: Hammer/Shooting Star
+// Tier 4: Doji/Spinning Top
+body = math.abs(close - open)
+range = math.max(high - low, syminfo.mintick)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+isDoji = (body / range) <= 0.2
+isHammer = (lowerWick / range) >= 0.55 and (upperWick / range) <= 0.2 and close > open
+isShootingStar = (upperWick / range) >= 0.55 and (lowerWick / range) <= 0.2 and close < open
+
+bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+
+threeWhiteSoldiers = close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
+threeBlackCrows = close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+
+patternTierLong = threeWhiteSoldiers or bullEngulf ? 1 : isHammer ? 3 : isDoji ? 4 : 0
+patternTierShort = threeBlackCrows or bearEngulf ? 1 : isShootingStar ? 3 : isDoji ? 4 : 0
+
+patternPointsFromTier(tier) =>
+    tier == 1 ? 10.0 : tier == 2 ? 7.0 : tier == 3 ? 4.0 : tier == 4 ? 2.0 : 0.0
+
+patternPointsLong = patternPointsFromTier(patternTierLong)
+patternPointsShort = patternPointsFromTier(patternTierShort)
+
+// ==================== QUALITY SCORE (0-100) + THRESHOLD (70% DEFAULT) ====================
+group_quality = "Filter Harmony v3 (Quality Score)"
+useQualityGate = input.bool(true, "Enable Quality Score gating", group=group_quality)
+qualityThreshold = input.int(70, "Minimum Quality Threshold (%)", minval=50, maxval=90, group=group_quality)
+qualityOverrideFloorPct = input.int(80, "Override requires ≥ % of threshold", minval=50, maxval=100, group=group_quality, tooltip="80 means: must be ≥ 0.8 * threshold to allow overrides.")
+
+// Trend regime (0-4 -> 0-30)
+trendScore4 = strongTrend ? 4 : moderateTrend ? 3 : 0
+trendPoints = (trendScore4 / 4.0) * 30.0
+
+// Confluence (0-7 -> 0-20), computed per direction
+confluenceCountLong =
+     (volume >= (volMA * 0.6) ? 1 : 0) +
+     (volume >= (volMA * 1.2) ? 1 : 0) +
+     (rsi > 50 ? 1 : 0) +
+     (rsi > 60 ? 1 : 0) +
+     ((trend == 1 and slopeMain == 1) ? 1 : 0) +
+     ((priceUp and close > hullMain) ? 1 : 0) +
+     (atrCurrent > atrAverage ? 1 : 0)
+
+confluenceCountShort =
+     (volume >= (volMA * 0.6) ? 1 : 0) +
+     (volume >= (volMA * 1.2) ? 1 : 0) +
+     (rsi < 50 ? 1 : 0) +
+     (rsi < 40 ? 1 : 0) +
+     ((trend == -1 and slopeMain == -1) ? 1 : 0) +
+     ((priceDown and close < hullMain) ? 1 : 0) +
+     (atrCurrent > atrAverage ? 1 : 0)
+
+confluencePointsLong = (confluenceCountLong / 7.0) * 20.0
+confluencePointsShort = (confluenceCountShort / 7.0) * 20.0
+
+// Signal line permission (0/7/15)
+signalPointsLong = signalLineLongStrong ? 15.0 : signalLineLongSoft ? 7.0 : 0.0
+signalPointsShort = signalLineShortStrong ? 15.0 : signalLineShortSoft ? 7.0 : 0.0
+
+// Stars (0-5 -> 0-15), per direction
+starsLong =
+     (strongTrend ? 1 : 0) +
+     (mtfAlignedUpCount >= math.max(minAlignedTimeframes, 1) ? 1 : 0) +
+     (confluenceCountLong >= 5 ? 1 : 0) +
+     (signalLineLongSoft ? 1 : 0) +
+     ((continuationLong or (useImpulseOverride and impulseCandle and microBreakoutUp)) ? 1 : 0)
+starsShort =
+     (strongTrend ? 1 : 0) +
+     (mtfAlignedDnCount >= math.max(minAlignedTimeframes, 1) ? 1 : 0) +
+     (confluenceCountShort >= 5 ? 1 : 0) +
+     (signalLineShortSoft ? 1 : 0) +
+     ((continuationShort or (useImpulseOverride and impulseCandle and microBreakoutDn)) ? 1 : 0)
+
+starsLongClamped = math.min(starsLong, 5)
+starsShortClamped = math.min(starsShort, 5)
+starPointsLong = starsLongClamped * 3.0
+starPointsShort = starsShortClamped * 3.0
+
+// MTF (0-3 -> 0-10)
+mtfPointsLong = (mtfAlignedUpCount / 3.0) * 10.0
+mtfPointsShort = (mtfAlignedDnCount / 3.0) * 10.0
+
+// Extreme trend bonus (0 or 10)
+extremeLong = (consecutiveGreen >= 13) and (math.abs(close - close[13]) >= (ta.atr(14) * 2.0)) and (starsLongClamped >= 4)
+extremeShort = (consecutiveRed >= 13) and (math.abs(close - close[13]) >= (ta.atr(14) * 2.0)) and (starsShortClamped >= 4)
+extremeBonusLong = extremeLong ? 10.0 : 0.0
+extremeBonusShort = extremeShort ? 10.0 : 0.0
+
+qualityRawLong = trendPoints + confluencePointsLong + signalPointsLong + patternPointsLong + starPointsLong + mtfPointsLong + extremeBonusLong
+qualityRawShort = trendPoints + confluencePointsShort + signalPointsShort + patternPointsShort + starPointsShort + mtfPointsShort + extremeBonusShort
+
+qualityLong = math.min(qualityRawLong, 100.0)
+qualityShort = math.min(qualityRawShort, 100.0)
+
+overrideFloor = qualityThreshold * (qualityOverrideFloorPct / 100.0)
+overrideAllowedLong = qualityLong >= overrideFloor
+overrideAllowedShort = qualityShort >= overrideFloor
+
+// Override types (still trend-focused; intended for catching missed multi-candle runs)
+consecutiveTrendOverrideLong = (consecutiveGreen >= 3) and (ta.tr(true) >= ta.atr(14) * 1.0)
+consecutiveTrendOverrideShort = (consecutiveRed >= 3) and (ta.tr(true) >= ta.atr(14) * 1.0)
+impulseOverrideLong = useImpulseOverride and impulseCandle and microBreakoutUp
+impulseOverrideShort = useImpulseOverride and impulseCandle and microBreakoutDn
+extremeOverrideLong = extremeLong
+extremeOverrideShort = extremeShort
+
+qualityPassLong = (not useQualityGate) or (qualityLong >= qualityThreshold) or (overrideAllowedLong and (impulseOverrideLong or consecutiveTrendOverrideLong or extremeOverrideLong))
+qualityPassShort = (not useQualityGate) or (qualityShort >= qualityThreshold) or (overrideAllowedShort and (impulseOverrideShort or consecutiveTrendOverrideShort or extremeOverrideShort))
+
 // ==================== IMPULSE / CONTINUATION (NEW) ====================
 group_entryfix = "Entry Fixes (Continuation + Impulse)"
 useContinuationEntries = input.bool(true, "Enable Continuation Entries", group=group_entryfix)
@@ -453,8 +608,11 @@ maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
 
 sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPreMarket or isAfterHours)
 
-ultraBuyCondition = isInitialized and sessionAdjustedSignal and volatilityOK and ultraBuySignal and regimeOkLong and mtfOkLong
-ultraSellCondition = isInitialized and sessionAdjustedSignal and volatilityOK and ultraSellSignal and regimeOkShort and mtfOkShort
+chopOkLong = (not grayZone) or impulseOverrideLong or extremeOverrideLong
+chopOkShort = (not grayZone) or impulseOverrideShort or extremeOverrideShort
+
+ultraBuyCondition = isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and ultraBuySignal and regimeOkLong and mtfOkLong and chopOkLong and qualityPassLong
+ultraSellCondition = isInitialized and instrumentOk and sessionAdjustedSignal and volatilityOK and ultraSellSignal and regimeOkShort and mtfOkShort and chopOkShort and qualityPassShort
 
 // ==================== REVERSALS (FIX FOR MISSED TURNS) ====================
 group_rev = "Reversal Handling"
@@ -861,6 +1019,42 @@ if barstate.islast
     table.cell(perfTable, 1, 8, "$" + str.tostring(math.round(maxDrawdown, 2)), text_color=color.orange, text_size=size.tiny)
     table.cell(perfTable, 0, 9, "MTF up/dn", text_color=color.gray, text_size=size.tiny)
     table.cell(perfTable, 1, 9, str.tostring(mtfAlignedUpCount) + "/" + str.tostring(mtfAlignedDnCount), text_color=color.white, text_size=size.tiny)
+
+// ==================== QUALITY TABLE (70% THRESHOLD) ====================
+var table qualityTable = table.new(position=position.top_right, columns=2, rows=9, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.aqua, 20))
+if barstate.islast
+    dirTxt = trend == 1 ? "BULL" : trend == -1 ? "BEAR" : "NEUTRAL"
+    qLongTxt = str.tostring(math.round(qualityLong, 1)) + "%"
+    qShortTxt = str.tostring(math.round(qualityShort, 1)) + "%"
+    passLong = qualityPassLong and chopOkLong and regimeOkLong and mtfOkLong
+    passShort = qualityPassShort and chopOkShort and regimeOkShort and mtfOkShort
+
+    table.cell(qualityTable, 0, 0, "QUALITY (thr " + str.tostring(qualityThreshold) + "%)", text_color=color.white, bgcolor=color.new(color.aqua, 70))
+    table.cell(qualityTable, 1, 0, instrumentOk ? "MGC" : "WRONG SYMBOL", text_color=instrumentOk ? color.lime : color.red, bgcolor=color.new(color.black, 0))
+
+    table.cell(qualityTable, 0, 1, "Regime", text_color=color.gray)
+    table.cell(qualityTable, 1, 1, dirTxt + (grayZone ? " (GRAY)" : ""), text_color=grayZone ? color.orange : color.white)
+
+    table.cell(qualityTable, 0, 2, "Long Quality", text_color=color.gray)
+    table.cell(qualityTable, 1, 2, qLongTxt + (passLong ? " ✅" : " ❌"), text_color=passLong ? color.lime : color.red)
+
+    table.cell(qualityTable, 0, 3, "Short Quality", text_color=color.gray)
+    table.cell(qualityTable, 1, 3, qShortTxt + (passShort ? " ✅" : " ❌"), text_color=passShort ? color.lime : color.red)
+
+    table.cell(qualityTable, 0, 4, "Trend /30", text_color=color.gray)
+    table.cell(qualityTable, 1, 4, str.tostring(math.round(trendPoints, 1)), text_color=color.white)
+
+    table.cell(qualityTable, 0, 5, "Confl /20 (L/S)", text_color=color.gray)
+    table.cell(qualityTable, 1, 5, str.tostring(confluenceCountLong) + "/" + str.tostring(confluenceCountShort), text_color=color.white)
+
+    table.cell(qualityTable, 0, 6, "Signal /15 (L/S)", text_color=color.gray)
+    table.cell(qualityTable, 1, 6, str.tostring(math.round(signalPointsLong, 0)) + "/" + str.tostring(math.round(signalPointsShort, 0)), text_color=color.white)
+
+    table.cell(qualityTable, 0, 7, "Stars /15 (L/S)", text_color=color.gray)
+    table.cell(qualityTable, 1, 7, str.tostring(starsLongClamped) + "/" + str.tostring(starsShortClamped), text_color=color.white)
+
+    table.cell(qualityTable, 0, 8, "MTF /10 (L/S)", text_color=color.gray)
+    table.cell(qualityTable, 1, 8, str.tostring(mtfAlignedUpCount) + "/" + str.tostring(mtfAlignedDnCount), text_color=color.white)
 
 // ==================== DATA WINDOW PLOTS ====================
 plot(effectiveRiskPercent, "Effective Risk %", color=color.new(color.orange, 80), display=display.data_window)
