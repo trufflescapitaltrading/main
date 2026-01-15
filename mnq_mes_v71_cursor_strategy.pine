@@ -76,6 +76,13 @@ mes3mBoosterTargetPctOfTP1 = input.float(0.60, "Target = TP1 × pct (0.30–1.00
 mes3mBoosterBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
 mes3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes3mBoosterGroup)
 
+// ==================== 🎯 MES 5m WIN-RATE BOOSTER (DEFAULT ON) ====================
+mes5mBoosterGroup = "🎯 MES 5m Win-Rate Booster"
+enableMes5mWinRateBooster = input.bool(true, "Enable MES 5m Win-Rate Booster (single contract)", group=mes5mBoosterGroup)
+mes5mTargetSLMult = input.float(0.90, "Target = SL × mult", minval=0.30, maxval=2.00, step=0.05, group=mes5mBoosterGroup)
+mes5mBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes5mBoosterGroup)
+mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes5mBoosterGroup)
+
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
@@ -1457,6 +1464,7 @@ if strategy.position_size > 0
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
     bool isMes3m = isMES and is3m_chart
+    bool isMes5m = isMES and is5min
 
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
@@ -1557,6 +1565,10 @@ if strategy.position_size > 0
             bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
             float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
             int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
+            // Optional MES 5m booster: target based on SL (handles intentional tight stops).
+            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
+            int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
 
             float boosterBEStop = localEntryPrice + beOffsetPts
             float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
@@ -1572,13 +1584,23 @@ if strategy.position_size > 0
             float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
             float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.max(activeStop, mesBEStop) : activeStop
 
+            float mes5mBEOffsetPts = 0.0
+            if mes5mUseFeesForBE
+                oneWayFees3 = commissionPerContract + extraFeesPerContract
+                roundTripFees3 = oneWayFees3 * 2
+                slipPts3 = slippageTicksOneWay * syminfo.mintick
+                mes5mBEOffsetPts := (roundTripFees3 / syminfo.pointvalue) + slipPts3
+            float mes5mBEStop = localEntryPrice + mes5mBEOffsetPts
+            float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
+            float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.max(activeStop, mes5mBEStop) : activeStop
+
             // Base behavior:
             // - MNQ 3m/5m in HighWinRateMode uses TP1 (83% logic)
             // - MES 3m in HighWinRateMode also uses TP1 (instead of TP2) to lift WR
             // MES 5m restore: in HighWinRateMode, MES 1-contract should also target TP1 (not TP2)
             int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
-            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : baseSingleTargetTicks
-            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : activeStop
+            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
+            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
             strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
         else
             strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
@@ -1595,6 +1617,7 @@ if strategy.position_size < 0
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
     bool isMes3m = isMES and is3m_chart
+    bool isMes5m = isMES and is5min
     float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
@@ -1693,6 +1716,10 @@ if strategy.position_size < 0
             bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
             float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
             int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
+            // Optional MES 5m booster: target based on SL (handles intentional tight stops).
+            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
+            int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
 
             float boosterBEStop = localEntryPrice - beOffsetPts
             float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
@@ -1708,10 +1735,20 @@ if strategy.position_size < 0
             float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
             float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.min(activeStop, mesBEStop) : activeStop
 
+            float mes5mBEOffsetPts = 0.0
+            if mes5mUseFeesForBE
+                oneWayFees3 = commissionPerContract + extraFeesPerContract
+                roundTripFees3 = oneWayFees3 * 2
+                slipPts3 = slippageTicksOneWay * syminfo.mintick
+                mes5mBEOffsetPts := (roundTripFees3 / syminfo.pointvalue) + slipPts3
+            float mes5mBEStop = localEntryPrice - mes5mBEOffsetPts
+            float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
+            float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.min(activeStop, mes5mBEStop) : activeStop
+
             // MES 5m restore: in HighWinRateMode, MES 1-contract should also target TP1 (not TP2)
             int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
-            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : baseSingleTargetTicks
-            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : activeStop
+            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
+            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
             strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
         else
             strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
