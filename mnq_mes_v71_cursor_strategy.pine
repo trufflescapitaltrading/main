@@ -102,6 +102,17 @@ minADXForEntry = input.float(18.0, "Min ADX for Entry", minval=10, maxval=30, gr
 minRSIRangeLow = input.float(35.0, "RSI Range Low", minval=20, maxval=45, group=winOptGroup)
 minRSIRangeHigh = input.float(65.0, "RSI Range High", minval=55, maxval=80, group=winOptGroup)
 
+// ==================== ✅ ENTRY EXECUTION ====================
+entryGroup = "✅ Entry Execution"
+enterOnBarClose = input.bool(true, "Enter ONLY on bar close (no intrabar entries)", group=entryGroup)
+
+// ==================== 🛡️ MES ANTI-CHOP GUARD ====================
+mesGuardGroup = "🛡️ MES Anti-Chop Guard"
+enableMesAntiChop = input.bool(true, "Enable MES stricter filters (reduces chop entries)", group=mesGuardGroup)
+mesMinADXForEntry = input.float(22.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
+mesConfluenceBoost = input.int(1, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
+mesMinHTFAligned = input.int(2, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
+
 // ==================== ⭐ PRIORITY HIERARCHY SYSTEM ====================
 priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
 enablePrioritySystem = input.bool(true, "✅ Enable Priority Hierarchy", group=priorityGroup)
@@ -812,8 +823,8 @@ mtfScore() =>
         alignPairs == 3 ? 100 : alignPairs == 2 ? 66 : alignPairs == 1 ? 33 : 0
 
 mtf_alignment_pct = mtfScore()
-htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= minHTFAligned) or hasStrongTrendOverrideBull or hasMomentumOverrideLong
-htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= minHTFAligned) or hasStrongTrendOverrideBear or hasMomentumOverrideShort
+htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasStrongTrendOverrideBull or hasMomentumOverrideLong
+htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasStrongTrendOverrideBear or hasMomentumOverrideShort
 
 // Sideways detection
 priceHigh = ta.highest(high, 20)
@@ -843,8 +854,12 @@ emaTrendOK_Long = trendAlignedLong or hasStrongTrendOverrideBull or impulseLong 
 emaTrendOK_Short = trendAlignedShort or hasStrongTrendOverrideBear or impulseShort or hasMomentumOverrideShort
 adxValue = adx(14, 14)
 
+// MES anti-chop "effective" thresholds
+effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
+effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
+
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
-v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= minADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
+v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
 
 // Choppy detection
 isLowADX = adxValue < choppyADXThreshold
@@ -1002,13 +1017,14 @@ conf_trend = (strongTrend or moderateTrend) ? 1 : 0
 conf_priceAction = (priceUp or priceDown) ? 1 : 0
 conf_atrExpanding = star_atrExpanding ? 1 : 0
 totalConfluenceScore = conf_volume + conf_strongVolume + conf_momentum + conf_strongMom + conf_trend + conf_priceAction + conf_atrExpanding
+effConfluenceLevel = (isMES and enableMesAntiChop) ? math.min(confluenceLevel + mesConfluenceBoost, 15) : confluenceLevel
 requiredConfluence =
-     confluenceLevel <= 2 ? 1 :
-     confluenceLevel <= 4 ? 2 :
-     confluenceLevel <= 6 ? 3 :
-     confluenceLevel <= 8 ? 4 :
-     confluenceLevel <= 10 ? 5 :
-     confluenceLevel <= 12 ? 6 : 7
+     effConfluenceLevel <= 2 ? 1 :
+     effConfluenceLevel <= 4 ? 2 :
+     effConfluenceLevel <= 6 ? 3 :
+     effConfluenceLevel <= 8 ? 4 :
+     effConfluenceLevel <= 10 ? 5 :
+     effConfluenceLevel <= 12 ? 6 : 7
 finalConfluenceOK = totalConfluenceScore >= requiredConfluence
 
 bodyStrong = not requireBodyStrength or (atr10 > 0 and bodySize >= atr10 * minBodyPctOfATR)
@@ -1362,8 +1378,9 @@ dedupeShortOK = not enableDedupe or (barsSinceShortSignal > dedupeBars)
 sameBarOK = not (enableDedupe and dedupeSameBar and tookTradeThisBar)
 shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
-bool longCondition = shouldEnterLong and not tookTradeThisBar
-bool shortCondition = shouldEnterShort and not tookTradeThisBar
+entryOK = not enterOnBarClose or barstate.isconfirmed
+bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
+bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
 if longCondition and strategy.position_size == 0
     activeSignalType := hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasStrongTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
@@ -1747,7 +1764,7 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
     strategy.close_all(comment="MAX_HOLD")
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
-if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
+if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -1773,7 +1790,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
          '}'
     alert(longEntryMessage, alert.freq_once_per_bar)
 
-if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
+if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
