@@ -115,13 +115,6 @@ mesMinADXForEntry = input.float(22.0, "MES Min ADX", minval=10, maxval=40, group
 mesConfluenceBoost = input.int(1, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
 mesMinHTFAligned = input.int(2, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
 
-// ==================== 🛡️ MNQ ANTI-CHOP GUARD ====================
-mnqGuardGroup = "🛡️ MNQ Anti-Chop Guard"
-enableMnqAntiChop = input.bool(true, "Enable MNQ stricter filters (reduces chop entries)", group=mnqGuardGroup)
-mnqMinADXForEntry = input.float(20.0, "MNQ Min ADX", minval=10, maxval=40, group=mnqGuardGroup)
-mnqConfluenceBoost = input.int(1, "MNQ Confluence +", minval=0, maxval=5, group=mnqGuardGroup)
-mnqMinHTFAligned = input.int(2, "MNQ Min HTF Align (1-3)", minval=1, maxval=3, group=mnqGuardGroup)
-
 // ==================== ⭐ PRIORITY HIERARCHY SYSTEM ====================
 priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
 enablePrioritySystem = input.bool(true, "✅ Enable Priority Hierarchy", group=priorityGroup)
@@ -832,10 +825,7 @@ mtfScore() =>
         alignPairs == 3 ? 100 : alignPairs == 2 ? 66 : alignPairs == 1 ? 33 : 0
 
 mtf_alignment_pct = mtfScore()
-effMinHTFAligned =
-     (isMES and enableMesAntiChop) ? mesMinHTFAligned :
-     (isMNQ and enableMnqAntiChop) ? mnqMinHTFAligned :
-     minHTFAligned
+effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasStrongTrendOverrideBull or hasMomentumOverrideLong
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasStrongTrendOverrideBear or hasMomentumOverrideShort
 
@@ -868,10 +858,7 @@ emaTrendOK_Short = trendAlignedShort or hasStrongTrendOverrideBear or impulseSho
 adxValue = adx(14, 14)
 
 // MES anti-chop "effective" thresholds
-effMinADXForEntry =
-     (isMES and enableMesAntiChop) ? mesMinADXForEntry :
-     (isMNQ and enableMnqAntiChop) ? mnqMinADXForEntry :
-     minADXForEntry
+effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
 
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
 v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
@@ -1032,10 +1019,7 @@ conf_trend = (strongTrend or moderateTrend) ? 1 : 0
 conf_priceAction = (priceUp or priceDown) ? 1 : 0
 conf_atrExpanding = star_atrExpanding ? 1 : 0
 totalConfluenceScore = conf_volume + conf_strongVolume + conf_momentum + conf_strongMom + conf_trend + conf_priceAction + conf_atrExpanding
-effConfluenceLevel =
-     (isMES and enableMesAntiChop) ? math.min(confluenceLevel + mesConfluenceBoost, 15) :
-     (isMNQ and enableMnqAntiChop) ? math.min(confluenceLevel + mnqConfluenceBoost, 15) :
-     confluenceLevel
+effConfluenceLevel = (isMES and enableMesAntiChop) ? math.min(confluenceLevel + mesConfluenceBoost, 15) : confluenceLevel
 requiredConfluence =
      effConfluenceLevel <= 2 ? 1 :
      effConfluenceLevel <= 4 ? 2 :
