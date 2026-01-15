@@ -79,6 +79,8 @@ mes3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", gr
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
+kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
+kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
@@ -1378,7 +1380,9 @@ dedupeShortOK = not enableDedupe or (barsSinceShortSignal > dedupeBars)
 sameBarOK = not (enableDedupe and dedupeSameBar and tookTradeThisBar)
 shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
-entryOK = not enterOnBarClose or barstate.isconfirmed
+// Default: gate entries to bar close when enabled.
+// Exception: allow intrabar entries for Kenya MNQ 3m if enabled (to match the proven Kenya behavior).
+entryOK = (not enterOnBarClose or barstate.isconfirmed) or (kenyaAllowIntrabarEntries and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3")
 bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
 bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
@@ -1571,7 +1575,8 @@ if strategy.position_size > 0
             // Base behavior:
             // - MNQ 3m/5m in HighWinRateMode uses TP1 (83% logic)
             // - MES 3m in HighWinRateMode also uses TP1 (instead of TP2) to lift WR
-            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMes3m)) ? tp1Ticks : tp2Ticks)
+            // MES 5m restore: in HighWinRateMode, MES 1-contract should also target TP1 (not TP2)
+            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
             targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : baseSingleTargetTicks
             float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : activeStop
             strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
@@ -1703,7 +1708,8 @@ if strategy.position_size < 0
             float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
             float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.min(activeStop, mesBEStop) : activeStop
 
-            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMes3m)) ? tp1Ticks : tp2Ticks)
+            // MES 5m restore: in HighWinRateMode, MES 1-contract should also target TP1 (not TP2)
+            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
             targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : baseSingleTargetTicks
             float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : activeStop
             strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
@@ -1746,7 +1752,8 @@ if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and h
 
 strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull
 strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear
-if useSignalReversalExits and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
+kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
+if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
     if strategy.position_size > 0 and strongOpposingSell
         strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
     else if strategy.position_size < 0 and strongOpposingBuy
