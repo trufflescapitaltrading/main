@@ -88,6 +88,7 @@ kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
 kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
+useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
@@ -288,7 +289,7 @@ m2k_customSL = input.float(9.0, "M2K: Stop Loss (points)", group=perInstGroup)
 m2k_customTP = input.float(14.0, "M2K: Take Profit (points)", group=perInstGroup)
 m2k_customQty = input.int(1, "M2K: Position Size", minval=1, maxval=50, group=perInstGroup)
 
-slExecutionMode = input.string("Instrument", "SL Execution Mode", options=["ATR","Instrument","Max(ATR,Instrument)"], group=perInstGroup)
+slExecutionMode = input.string("ATR", "SL Execution Mode", options=["ATR","Instrument","Max(ATR,Instrument)"], group=perInstGroup)
 
 // ==================== 🕐 OPTIMAL TRADING SESSIONS (FIXED) ====================
 optimalSessionGroup = "🕐 Optimal Liquidity Sessions"
@@ -431,7 +432,7 @@ endOfDayTime = input.int(1550, "End of Day Time (ET)", minval=1500, maxval=1700,
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 losingTradeThreshold = input.float(2.0, "Losing Trade Threshold (%)", minval=1.0, maxval=5.0, group=exitControlsGroup)
 
-useBreakevenProtection = input.bool(false, "Breakeven Stop Protection - DISABLED")
+useBreakevenProtection = input.bool(true, "Breakeven Stop Protection")
 breakevenTrigger = input.float(1.5, "Breakeven Trigger (ATR)", minval=0.5, maxval=3.0)
 useATRDynamicStops = input.bool(false, "ATR-Based Dynamic Stops - DISABLED")
 atrStopMultiplier = input.float(1.8, "ATR Stop Multiplier", minval=1.0, maxval=3.0)
@@ -456,10 +457,10 @@ commissionPerContract = input.float(1.60, "Commission per Contract", minval=0, m
 extraFeesPerContract = input.float(0.00, "Extra Fees per Contract", minval=0, maxval=20, step=0.01, group=prodGroup)
 slippageTicksOneWay = input.int(2, "Slippage Ticks", minval=0, maxval=20, group=prodGroup)
 
-enablePreTP1ProfitLock = input.bool(false, "Protect Profit BEFORE TP1 - DISABLED", group=prodGroup)
+enablePreTP1ProfitLock = input.bool(true, "✅ Protect Profit BEFORE TP1 (window lock)", group=prodGroup)
 preTP1TriggerDollars = input.float(10.0, "Trigger Profit ($)", minval=1, maxval=500, step=1, group=prodGroup)
 preTP1KeepDollars = input.float(4.0, "Keep Profit ($)", minval=0, maxval=500, step=1, group=prodGroup)
-enableGapStopProtection = input.bool(false, "Gap Stop Protection - DISABLED", group=prodGroup)
+enableGapStopProtection = input.bool(true, "✅ Gap Stop Protection", group=prodGroup)
 
 distToDollarPerContract(dist) =>
     dist * syminfo.pointvalue
@@ -547,7 +548,7 @@ useEnhancedTP = input.bool(true, "Use Enhanced Take Profit")
 baseTpMultiplier = input.float(1.0, "Base TP Multiplier", minval=0.6, maxval=2.0)
 tpMultiplier = isM2K ? baseTpMultiplier * 0.9 : isMYM ? baseTpMultiplier * 1.1 : isMES ? baseTpMultiplier : baseTpMultiplier
 
-useSmartTrailing = input.bool(false, "Use Smart Trailing Stop - DISABLED")
+useSmartTrailing = input.bool(true, "Use Smart Trailing Stop")
 baseTrailActivation = input.float(0.7, "Base Trail Activation", minval=0.4, maxval=1.2)
 trailActivationRatio = isM2K ? baseTrailActivation : isMYM ? baseTrailActivation * 1.1 : isMES ? baseTrailActivation * 1.2 : baseTrailActivation
 
@@ -1456,7 +1457,121 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
 v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 
-if strategy.position_size > 0
+// ==================== 🔥 V20 KENYA PERFECT PROFIT MODULE (as provided) ====================
+// When enabled, this module runs the profit ladder + protections and disables the legacy V71/Kenya-ladder exits below.
+canExitNow = strategy.position_size != 0 and not na(entryBar) and (bar_index - entryBar) >= minBarsBeforeExit
+
+// Fees/slippage model (round-trip, using original entry size)
+tickValue = syminfo.mintick * syminfo.pointvalue
+slipDolRT_perContract = slippageTicksOneWay * tickValue * 2.0
+commDolRT_perContract = commissionPerContract * 2.0
+feesRT_perContract = commDolRT_perContract + slipDolRT_perContract + extraFeesPerContract
+feesRT_total = (enableFeeModel ? feesRT_perContract : 0.0) * math.max(originalQty, 1)
+feesPoints = (syminfo.pointvalue > 0 ? (feesRT_total / syminfo.pointvalue) : 0.0)
+
+beTriggerDol = (atrMain * breakevenTrigger) * syminfo.pointvalue
+beTriggerHit = useBreakevenProtection and (currentProfitDollars >= beTriggerDol)
+profitTriggerHit = enablePreTP1ProfitLock and (currentProfitDollars >= preTP1TriggerDollars)
+lockKeepPoints = (syminfo.pointvalue > 0 ? (preTP1KeepDollars / syminfo.pointvalue) : 0.0)
+
+// Resolve stop distance for exits (ATR vs instrument vs max)
+getExitSLPoints() =>
+    float sl = atrMain
+    if isMES
+        sl := mes_customSL
+    else if isMNQ
+        sl := (timeframe.period == "3" and mnq_useCustom3m) ? mnq_customSL_3m : mnq_customSL
+    else if isMYM
+        sl := mym_customSL
+    else if isM2K
+        sl := m2k_customSL
+    else if isMGC
+        sl := mgc_customSL
+    else if isMCL
+        sl := mcl_customSL
+    sl
+
+exitSL_inst = getExitSLPoints()
+exitSL = slExecutionMode == "ATR" ? futuresStopDistance : slExecutionMode == "Instrument" ? exitSL_inst : math.max(futuresStopDistance, exitSL_inst)
+futuresTPDistance = atrMain * tpMultiplier
+ultraQuickTP = atrMain * (tpMultiplier * 0.5)
+
+if useV20KenyaPerfectProfit and strategy.position_size > 0
+    float avgPrice = strategy.position_avg_price
+    float localStopLoss = avgPrice - exitSL
+    float trueBE = avgPrice + feesPoints
+    float lockStop = avgPrice + lockKeepPoints
+
+    if enableFeeModel and beTriggerHit and canExitNow
+        strategy.exit("BE_FEES_LONG", stop=trueBE)
+
+    if profitTriggerHit and canExitNow
+        float protectStop = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
+        strategy.exit("PRETP1_LOCK_LONG", stop=protectStop)
+
+    if enableGapStopProtection and profitTriggerHit and canExitNow
+        float protectStopGap = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
+        if open <= protectStopGap
+            strategy.close_all(comment="GAP_STOP_LONG")
+
+    if useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+        strategy.close("LONG")
+
+    if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
+        trailDistance = atrMain * 0.6
+        strategy.exit("TrailSL_LONG", stop=close - trailDistance)
+    else
+        strategy.exit("SL_LONG", stop=localStopLoss)
+
+if useV20KenyaPerfectProfit and strategy.position_size < 0
+    float avgPrice = strategy.position_avg_price
+    float localStopLoss = avgPrice + exitSL
+    float trueBE_S = avgPrice - feesPoints
+    float lockStopS = avgPrice - lockKeepPoints
+
+    if enableFeeModel and beTriggerHit and canExitNow
+        strategy.exit("BE_FEES_SHORT", stop=trueBE_S)
+
+    if profitTriggerHit and canExitNow
+        float protectStopS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
+        strategy.exit("PRETP1_LOCK_SHORT", stop=protectStopS)
+
+    if enableGapStopProtection and profitTriggerHit and canExitNow
+        float protectStopGapS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
+        if open >= protectStopGapS
+            strategy.close_all(comment="GAP_STOP_SHORT")
+
+    if useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+        strategy.close("SHORT")
+
+    if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
+        trailDistance = atrMain * 0.6
+        strategy.exit("TrailSL_SHORT", stop=close + trailDistance)
+    else
+        strategy.exit("SL_SHORT", stop=localStopLoss)
+
+// ==================== LEGACY PROFIT SYSTEM (disabled when V20 module is on) ====================
+if not useV20KenyaPerfectProfit and strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
@@ -1609,7 +1724,7 @@ if strategy.position_size > 0
             strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
             strategy.exit("SL", stop=activeStop)
 
-if strategy.position_size < 0
+if not useV20KenyaPerfectProfit and strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
