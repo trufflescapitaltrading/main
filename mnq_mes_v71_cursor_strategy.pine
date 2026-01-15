@@ -1979,7 +1979,6 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTrad
     exitMessage = '{' + '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
          '"orderType":"market",' +
-         '"sentiment":"flat",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(exitMessage, alert.freq_once_per_bar)
