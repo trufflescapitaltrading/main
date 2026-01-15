@@ -823,6 +823,7 @@ mtfScore() =>
         alignPairs == 3 ? 100 : alignPairs == 2 ? 66 : alignPairs == 1 ? 33 : 0
 
 mtf_alignment_pct = mtfScore()
+effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasStrongTrendOverrideBull or hasMomentumOverrideLong
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasStrongTrendOverrideBear or hasMomentumOverrideShort
 
@@ -856,7 +857,6 @@ adxValue = adx(14, 14)
 
 // MES anti-chop "effective" thresholds
 effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
-effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
 v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
