@@ -162,7 +162,7 @@ atrOk = atr > atrSma * atrExpMult
 star_atrExpanding = atr > atrSma
 
 // VWAP Cross Count (choppiness indicator)
-crossCount = ta.sum(ta.cross(close, vwap) ? 1 : 0, vwapCrossBars)
+crossCount = math.sum(ta.cross(close, vwap) ? 1 : 0, vwapCrossBars)
 chopOk = crossCount <= vwapCrossMax
 
 // ───────────────────────────────────────────────────────────────────────────────
