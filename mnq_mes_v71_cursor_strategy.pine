@@ -115,6 +115,7 @@ minRSIRangeHigh = input.float(65.0, "RSI Range High", minval=55, maxval=80, grou
 // ==================== ✅ ENTRY EXECUTION ====================
 entryGroup = "✅ Entry Execution"
 enterOnBarClose = input.bool(true, "Enter ONLY on bar close (no intrabar entries)", group=entryGroup)
+allowIntrabarForP1P2 = input.bool(true, "Allow intrabar entries for P1/P2 (earlier impulse/trend)", group=entryGroup)
 
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
 mesGuardGroup = "🛡️ MES Anti-Chop Guard"
@@ -122,6 +123,16 @@ enableMesAntiChop = input.bool(true, "Enable MES stricter filters (reduces chop 
 mesMinADXForEntry = input.float(22.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
 mesConfluenceBoost = input.int(1, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
 mesMinHTFAligned = input.int(2, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
+
+// ==================== ✅ MANDATORY TREND-ONLY FILTER (NON-NEGOTIABLE) ====================
+trendOnlyGroup = "✅ Mandatory Trend-Only Filter"
+enableMandatoryTrendOnly = input.bool(false, "Enable Mandatory Trend-Only Filter (hard block)", group=trendOnlyGroup)
+trendHTFTF = input.timeframe("60", "HTF Structure TF (60m+)", group=trendOnlyGroup)
+htfPivotLen = input.int(3, "HTF Pivot Len (structure)", minval=1, maxval=10, group=trendOnlyGroup)
+maxVwapCrosses = input.int(2, "Max VWAP crosses (last 2-3h)", minval=0, maxval=10, group=trendOnlyGroup)
+atrExpLen = input.int(20, "ATR baseline length", minval=5, maxval=200, group=trendOnlyGroup)
+atrExpMult = input.float(1.10, "ATR expanding mult", minval=1.00, maxval=2.00, step=0.05, group=trendOnlyGroup)
+vwapSlopeLen = input.int(10, "VWAP slope lookback", minval=2, maxval=50, group=trendOnlyGroup)
 
 // ==================== ⭐ PRIORITY HIERARCHY SYSTEM ====================
 priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
@@ -791,10 +802,39 @@ strongMomentumShort = momentumROC < -0.5 and momentumRSI < 45 and momentumRSI > 
 emaShort = ta.ema(close, 9)
 emaMedium = ta.ema(close, 21)
 emaLong = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
 emaAlignedLong = (emaShort > emaMedium ? 1 : 0) + (emaMedium > emaLong ? 1 : 0) + (close > emaLong ? 1 : 0)
 emaAlignedShort = (emaShort < emaMedium ? 1 : 0) + (emaMedium < emaLong ? 1 : 0) + (close < emaLong ? 1 : 0)
 trendAlignedLong = emaAlignedLong >= 3
 trendAlignedShort = emaAlignedShort >= 3
+
+// ==================== ✅ Mandatory Trend-Only Filter signals ====================
+vwapVal = ta.vwap(hlc3)
+vwapSlope = vwapVal - vwapVal[vwapSlopeLen]
+
+// Approx 3 hours of bars on 3m/5m (fallback 36).
+vwapCrossLookbackBars = is3min ? 60 : is5min ? 36 : 36
+vwapCrossCount = ta.sum(ta.cross(close, vwapVal) ? 1 : 0, vwapCrossLookbackBars)
+
+atrBase = ta.sma(atrMain, atrExpLen)
+atrExpandingNow = atrBase > 0 ? (atrMain > atrBase * atrExpMult) : true
+
+emaStackBull = ema20 > emaLong and emaLong > ema200
+emaStackBear = ema20 < emaLong and emaLong < ema200
+vwapSlopeUp = vwapSlope > 0
+vwapSlopeDown = vwapSlope < 0
+
+// HTF structure (HH/HL vs LL/LH) via pivots
+htfPH = request.security(syminfo.tickerid, trendHTFTF, ta.pivothigh(high, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfPL = request.security(syminfo.tickerid, trendHTFTF, ta.pivotlow(low, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfLastHigh = ta.valuewhen(not na(htfPH), htfPH, 0)
+htfPrevHigh = ta.valuewhen(not na(htfPH), htfPH, 1)
+htfLastLow = ta.valuewhen(not na(htfPL), htfPL, 0)
+htfPrevLow = ta.valuewhen(not na(htfPL), htfPL, 1)
+htfBullStructure = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLastLow) and not na(htfPrevLow) and htfLastHigh > htfPrevHigh and htfLastLow > htfPrevLow
+htfBearStructure = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLastLow) and not na(htfPrevLow) and htfLastHigh < htfPrevHigh and htfLastLow < htfPrevLow
+
+compressionBox = isSignalGrayZone or isChoppy
 
 // Star system
 star_priceRangeExpanding = close > ta.highest(high, 20)[1] or close < ta.lowest(low, 20)[1]
@@ -1295,8 +1335,17 @@ bool cooldownOK = oppCooldownOK or bypassLong or bypassShort
 strictBypassLong = impulseLong or hasStrongTrendOverrideBull or hasMomentumOverrideLong
 strictBypassShort = impulseShort or hasStrongTrendOverrideBear or hasMomentumOverrideShort
 
+// Mandatory Trend-Only Filter gates (allow impulse/momentum bypass)
+mandatoryLongOK = (htfBullStructure and emaStackBull and vwapSlopeUp and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox)
+mandatoryShortOK = (htfBearStructure and emaStackBear and vwapSlopeDown and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox)
+trendOnlyLongGate = (not enableMandatoryTrendOnly) or mandatoryLongOK or strictBypassLong
+trendOnlyShortGate = (not enableMandatoryTrendOnly) or mandatoryShortOK or strictBypassShort
+
 canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasStrongTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasStrongTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
 canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasStrongTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasStrongTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
+
+canGoLong := canGoLong and trendOnlyLongGate
+canGoShort := canGoShort and trendOnlyShortGate
 
 if not tookTradeThisBar
     if enablePrioritySystem
@@ -1390,7 +1439,10 @@ shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 // Default: gate entries to bar close when enabled.
 // Exception: allow intrabar entries for Kenya MNQ 3m if enabled (to match the proven Kenya behavior).
-entryOK = (not enterOnBarClose or barstate.isconfirmed) or (kenyaAllowIntrabarEntries and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3")
+entryOK =
+     (not enterOnBarClose or barstate.isconfirmed) or
+     (kenyaAllowIntrabarEntries and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3") or
+     (allowIntrabarForP1P2 and (selectedPriority == "P1:IMPULSE" or selectedPriority == "P2:TREND"))
 bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
 bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
