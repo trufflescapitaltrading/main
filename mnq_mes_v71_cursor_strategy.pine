@@ -757,11 +757,11 @@ spinningTop = enableCandlePatterns and enableSpinningTop and bodyRatio >= 0.2 an
 tier1Bull = threeWhiteSoldiers or bullishEngulfing
 tier2Bull = morningStar or piercingLine
 tier3Bull = hammer or invertedHammer or bullishHarami
-tier4Bull = bullishMarubozu or doji or spinningTop
+tier4Bull = bullishMarubozu
 tier1Bear = threeBlackCrows or bearishEngulfing
 tier2Bear = eveningStar or darkCloudCover
 tier3Bear = shootingStar or hangingMan or bearishHarami
-tier4Bear = bearishMarubozu or doji or spinningTop
+tier4Bear = bearishMarubozu
 allowedBullPattern = (enableTier1 and tier1Bull) or (enableTier2 and tier2Bull) or (enableTier3 and tier3Bull) or (enableTier4 and tier4Bull)
 allowedBearPattern = (enableTier1 and tier1Bear) or (enableTier2 and tier2Bear) or (enableTier3 and tier3Bear) or (enableTier4 and tier4Bear)
 
@@ -784,13 +784,22 @@ for i = 0 to consecutiveCandlesRequired - 1
     if close[i] < open[i]
         consecutiveBearCandles := consecutiveBearCandles + 1
 
+// Directional close-run (captures “small body” continuation runs)
+runUpCloses = 0
+runDownCloses = 0
+for i = 0 to consecutiveCandlesRequired - 1
+    if close[i] > close[i + 1]
+        runUpCloses := runUpCloses + 1
+    if close[i] < close[i + 1]
+        runDownCloses := runDownCloses + 1
+
 volumeMA = ta.sma(volume, 20)
 isStrongVolume = volume > volumeMA * trendOverrideVolMultiplier
 avgRange = ta.atr(14)
 currentRange = high - low
 isStrongRange = currentRange > avgRange * trendOverrideRangeMultiplier
-hasStrongTrendOverrideBull = enableTrendOverride and ((consecutiveBullCandles >= consecutiveCandlesRequired and isStrongVolume and isStrongRange) or (consecutiveBullCandles >= 4))
-hasStrongTrendOverrideBear = enableTrendOverride and ((consecutiveBearCandles >= consecutiveCandlesRequired and isStrongVolume and isStrongRange) or (consecutiveBearCandles >= 4))
+hasStrongTrendOverrideBull = enableTrendOverride and (((consecutiveBullCandles >= consecutiveCandlesRequired or runUpCloses >= consecutiveCandlesRequired) and isStrongVolume and isStrongRange) or (consecutiveBullCandles >= 4))
+hasStrongTrendOverrideBear = enableTrendOverride and (((consecutiveBearCandles >= consecutiveCandlesRequired or runDownCloses >= consecutiveCandlesRequired) and isStrongVolume and isStrongRange) or (consecutiveBearCandles >= 4))
 
 // Enhanced trend detection
 priceRangeTrend = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
@@ -1086,8 +1095,13 @@ bodyStrong = not requireBodyStrength or (atr10 > 0 and bodySize >= atr10 * minBo
 longBarOK = bodyStrong and (not requireCandleDirection or candleBull)
 shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
 
-patternOKLong = (not enableCandlePatterns) or allowedBullPattern or hasStrongTrendOverrideBull or impulseLong or hasMomentumOverrideLong
-patternOKShort = (not enableCandlePatterns) or allowedBearPattern or hasStrongTrendOverrideBear or impulseShort or hasMomentumOverrideShort
+// Candle confirmation:
+// - Doji/spinning top are *not* treated as confirmations (prevents P1/P2 firing on dojis).
+// - A “strong body” directional candle can confirm even if it’s not one of the named patterns (prevents missing multi-candle runs).
+genericBullConfirm = candleBull and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
+genericBearConfirm = candleBear and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
+patternOKLong = (not enableCandlePatterns) or allowedBullPattern or genericBullConfirm or hasStrongTrendOverrideBull or impulseLong or hasMomentumOverrideLong
+patternOKShort = (not enableCandlePatterns) or allowedBearPattern or genericBearConfirm or hasStrongTrendOverrideBear or impulseShort or hasMomentumOverrideShort
 candleConfirmLong = patternOKLong
 candleConfirmShort = patternOKShort
 
@@ -1318,7 +1332,16 @@ if barstate.isnew
 
 bool canEnterNewPosition = strategy.position_size == 0
 maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades
-bool baseSafety = canEnterNewPosition and not maxTradesReached and not maxLossReached and not profitTargetReached and canTradeNow and not instrumentRiskLimitReached and (not pauseAfterLosses)
+
+// Continuation bypass: allow strong multi-candle continuation even when strict RSI gate would block.
+contRunReq = (is5min ? 2 : 3)
+contBypassLong = trendAlignedLong and (runUpCloses >= contRunReq) and atrExpandingNow and not isChoppy and (volume > volumeMA * 0.8)
+contBypassShort = trendAlignedShort and (runDownCloses >= contRunReq) and atrExpandingNow and not isChoppy and (volume > volumeMA * 0.8)
+
+// If streak-protection is pausing entries, allow only the strongest/continuation setups to bypass it.
+pauseBypass = overrideBypassAllowed or contBypassLong or contBypassShort
+
+bool baseSafety = canEnterNewPosition and not maxTradesReached and not maxLossReached and not profitTargetReached and canTradeNow and not instrumentRiskLimitReached and (not pauseAfterLosses or pauseBypass)
 bool canGoLong = baseSafety and canEnterLong
 bool canGoShort = baseSafety and canEnterShort
 
@@ -1337,8 +1360,8 @@ bool allowShortByBias = not enableBestSideRouter or biasDir == 0 or biasDir == -
 bool cooldownOK = oppCooldownOK or bypassLong or bypassShort
 
 // Restore: strict entry filter actually gates entries, but strong override signals can bypass it.
-strictBypassLong = impulseLong or hasStrongTrendOverrideBull or hasMomentumOverrideLong
-strictBypassShort = impulseShort or hasStrongTrendOverrideBear or hasMomentumOverrideShort
+strictBypassLong = impulseLong or hasStrongTrendOverrideBull or hasMomentumOverrideLong or contBypassLong
+strictBypassShort = impulseShort or hasStrongTrendOverrideBear or hasMomentumOverrideShort or contBypassShort
 
 // Mandatory Trend-Only Filter gates (allow impulse/momentum bypass)
 mandatoryLongOK = (htfBullStructure and emaStackBull and vwapSlopeUp and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox)
@@ -1373,11 +1396,13 @@ if not tookTradeThisBar
                 selectedPriority := "P1:IMPULSE"
                 entryPriority := "P1:IMPULSE"
         if not shouldEnterLong and not shouldEnterShort and allowPriority2
-            if canGoLong and hasStrongTrendOverrideBull and candleBull and candleConfirmLong
+            // P2: never fire on doji/small-body candles (prevents “P2 on doji / wrong candle” behavior)
+            p2BodyOK = bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
+            if canGoLong and hasStrongTrendOverrideBull and candleBull and candleConfirmLong and p2BodyOK
                 shouldEnterLong := true
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
-            else if canGoShort and hasStrongTrendOverrideBear and candleBear and candleConfirmShort
+            else if canGoShort and hasStrongTrendOverrideBear and candleBear and candleConfirmShort and p2BodyOK
                 shouldEnterShort := true
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
