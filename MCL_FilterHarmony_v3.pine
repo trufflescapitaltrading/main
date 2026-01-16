@@ -271,8 +271,9 @@ var float dayStartEquity = strategy.equity
 var int consecLosses = 0
 var int dailyTrades = 0
 
-// Reset on new day
-if ta.change(time("D"))
+// Reset on new day (ta.change returns float, need bool comparison)
+newDay = ta.change(time("D")) != 0
+if newDay
     dayStartEquity := strategy.equity
     consecLosses := 0
     dailyTrades := 0
