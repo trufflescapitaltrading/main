@@ -1070,85 +1070,89 @@ if strategy.position_size < 0
 
 showDash = input.bool(true, "Show Dashboard", group="📊 Display")
 
-var table dash = table.new(position.top_right, 3, 15, border_width=1)
+var table dash = table.new(position.top_right, 2, 16, border_width=1)
 
 if showDash and barstate.islast
     // Header
-    table.cell(dash, 0, 0, "MCL FILTER HARMONY v3", bgcolor=color.new(color.blue, 0), text_color=color.white, colspan=3)
+    table.cell(dash, 0, 0, "MCL HARMONY v3", bgcolor=color.new(color.blue, 0), text_color=color.white)
+    table.cell(dash, 1, 0, "DASHBOARD", bgcolor=color.new(color.blue, 0), text_color=color.white)
     
     // Bot Status
     table.cell(dash, 0, 1, "BOT", text_color=color.white)
     table.cell(dash, 1, 1, botEnabled ? "ON" : "WRONG CHART", 
                bgcolor=botEnabled ? color.new(color.green, 0) : color.new(color.red, 0), 
-               text_color=color.white, colspan=2)
+               text_color=color.white)
     
     // Status
     table.cell(dash, 0, 2, "STATUS", text_color=color.white)
     table.cell(dash, 1, 2, lockedOut ? "LOCKED" : allowedToTrade ? "TREND DAY" : "NO TRADE",
                bgcolor=lockedOut ? color.new(color.red, 0) : allowedToTrade ? color.new(color.green, 80) : color.new(color.orange, 80),
-               text_color=color.white, colspan=2)
+               text_color=color.white)
     
-    // Quality Scores
-    table.cell(dash, 0, 3, "QUALITY", text_color=color.white)
-    table.cell(dash, 1, 3, "L:" + str.tostring(math.round(longQuality)) + "%", 
+    // Quality Scores - Long
+    table.cell(dash, 0, 3, "QUALITY L", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(math.round(longQuality)) + "%", 
                text_color=longQuality >= minQualityThreshold ? color.green : color.red)
-    table.cell(dash, 2, 3, "S:" + str.tostring(math.round(shortQuality)) + "%", 
+    
+    // Quality Scores - Short
+    table.cell(dash, 0, 4, "QUALITY S", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(math.round(shortQuality)) + "%", 
                text_color=shortQuality >= minQualityThreshold ? color.green : color.red)
     
     // Score
-    table.cell(dash, 0, 4, "A++ SCORE", text_color=color.white)
-    table.cell(dash, 1, 4, gradeTxt + " (" + str.tostring(score) + ")", 
-               text_color=score >= 90 ? color.green : score >= 80 ? color.orange : color.red, colspan=2)
+    table.cell(dash, 0, 5, "A++ SCORE", text_color=color.white)
+    table.cell(dash, 1, 5, gradeTxt + " (" + str.tostring(score) + ")", 
+               text_color=score >= 90 ? color.green : score >= 80 ? color.orange : color.red)
     
     // Stars
-    table.cell(dash, 0, 5, "STARS", text_color=color.white)
-    table.cell(dash, 1, 5, str.tostring(starScore) + "/5 ⭐", 
-               text_color=starScore >= 4 ? color.green : starScore >= 3 ? color.yellow : color.red, colspan=2)
+    table.cell(dash, 0, 6, "STARS", text_color=color.white)
+    table.cell(dash, 1, 6, str.tostring(starScore) + "/5", 
+               text_color=starScore >= 4 ? color.green : starScore >= 3 ? color.yellow : color.red)
     
     // Confluence
-    table.cell(dash, 0, 6, "CONFLUENCE", text_color=color.white)
-    table.cell(dash, 1, 6, str.tostring(totalConfluenceScore) + "/" + str.tostring(requiredConfluence),
-               text_color=finalConfluenceOK ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 7, "CONFLUENCE", text_color=color.white)
+    table.cell(dash, 1, 7, str.tostring(totalConfluenceScore) + "/" + str.tostring(requiredConfluence),
+               text_color=finalConfluenceOK ? color.green : color.red)
     
     // HTF
-    table.cell(dash, 0, 7, "HTF ALIGN", text_color=color.white)
-    table.cell(dash, 1, 7, str.tostring(math.round(mtf_alignment_pct)) + "%",
-               text_color=mtf_alignment_pct >= mtfAlignThreshold ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 8, "HTF ALIGN", text_color=color.white)
+    table.cell(dash, 1, 8, str.tostring(math.round(mtf_alignment_pct)) + "%",
+               text_color=mtf_alignment_pct >= mtfAlignThreshold ? color.green : color.red)
     
     // ADX
-    table.cell(dash, 0, 8, "ADX", text_color=color.white)
-    table.cell(dash, 1, 8, str.tostring(math.round(adxValue, 1)) + (adxOk ? " ✓" : " ✗"),
-               text_color=adxOk ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 9, "ADX", text_color=color.white)
+    table.cell(dash, 1, 9, str.tostring(math.round(adxValue, 1)) + (adxOk ? " OK" : " LOW"),
+               text_color=adxOk ? color.green : color.red)
     
     // ATR
-    table.cell(dash, 0, 9, "ATR", text_color=color.white)
-    table.cell(dash, 1, 9, atrOk ? "EXPANDING ✓" : "FLAT ✗",
-               text_color=atrOk ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 10, "ATR", text_color=color.white)
+    table.cell(dash, 1, 10, atrOk ? "EXPANDING" : "FLAT",
+               text_color=atrOk ? color.green : color.red)
     
     // VWAP
-    table.cell(dash, 0, 10, "VWAP", text_color=color.white)
-    table.cell(dash, 1, 10, chopOk ? "CLEAN ✓" : "CHOP ✗",
-               text_color=chopOk ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 11, "VWAP", text_color=color.white)
+    table.cell(dash, 1, 11, chopOk ? "CLEAN" : "CHOP",
+               text_color=chopOk ? color.green : color.red)
     
     // Daily PnL
-    table.cell(dash, 0, 11, "DAILY P&L", text_color=color.white)
-    table.cell(dash, 1, 11, "$" + str.tostring(math.round(dayPnL)),
-               text_color=dayPnL >= 0 ? color.green : color.red, colspan=2)
+    table.cell(dash, 0, 12, "DAILY P&L", text_color=color.white)
+    table.cell(dash, 1, 12, "$" + str.tostring(math.round(dayPnL)),
+               text_color=dayPnL >= 0 ? color.green : color.red)
     
     // Trades
-    table.cell(dash, 0, 12, "TRADES", text_color=color.white)
-    table.cell(dash, 1, 12, str.tostring(dailyTradeCount) + "/" + str.tostring(maxDailyTrades),
-               text_color=tradeLimitReached ? color.red : color.white, colspan=2)
+    table.cell(dash, 0, 13, "TRADES", text_color=color.white)
+    table.cell(dash, 1, 13, str.tostring(dailyTradeCount) + "/" + str.tostring(maxDailyTrades),
+               text_color=tradeLimitReached ? color.red : color.white)
     
     // Streak
-    table.cell(dash, 0, 13, "LOSSES", text_color=color.white)
-    table.cell(dash, 1, 13, str.tostring(consecLoss) + "/" + str.tostring(maxConsecLoss),
-               text_color=streakLocked ? color.red : color.white, colspan=2)
+    table.cell(dash, 0, 14, "LOSSES", text_color=color.white)
+    table.cell(dash, 1, 14, str.tostring(consecLoss) + "/" + str.tostring(maxConsecLoss),
+               text_color=streakLocked ? color.red : color.white)
     
     // Priority
-    table.cell(dash, 0, 14, "PRIORITY", text_color=color.white)
-    table.cell(dash, 1, 14, hasPriorityLong ? priorityLong : hasPriorityShort ? priorityShort : "NONE",
-               text_color=hasPriorityLong or hasPriorityShort ? color.green : color.gray, colspan=2)
+    table.cell(dash, 0, 15, "PRIORITY", text_color=color.white)
+    table.cell(dash, 1, 15, hasPriorityLong ? priorityLong : hasPriorityShort ? priorityShort : "NONE",
+               text_color=hasPriorityLong or hasPriorityShort ? color.green : color.gray)
 
 // ───────────────────────────────────────────────────────────────────────────────
 // SECTION 33: VISUAL PLOTS
