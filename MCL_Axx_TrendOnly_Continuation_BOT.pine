@@ -1,0 +1,391 @@
+//@version=6
+strategy("MCL — A++ Trend-Only Continuation (Win-rate) [BOT] (Live-Safe)",
+     overlay=true, pyramiding=0, calc_on_every_tick=false, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=2.38)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MCL BOT — instrument-guarded + trendDayOnly + impulse breakout exception + live-safe exits
+// Recommended LIVE TF: 15m (HTF confirmation via 60m)
+// Exchange time assumed (CME/NYMEX typically CT); adjust sessions to your data feed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ───────────────── CONTRACT CONSTANTS (MCL)
+pointValue = 100.0
+tick       = syminfo.mintick
+
+// ───────────────── Instrument Guard
+expectedRoot = input.string("MCL", "Expected root symbol (MNQ/MCL/MGC)")
+isRightChart = str.contains(syminfo.ticker, expectedRoot) or str.contains(syminfo.tickerid, expectedRoot)
+botEnabled   = isRightChart
+
+// ───────────────── Inputs
+htfTf           = input.timeframe("60", "HTF trend TF")
+
+riskPerTrade    = input.float(100, "Max $ risk per trade", step=10)
+stopBuffTicks   = input.int(2, "Stop buffer (ticks)", minval=0)
+
+dailyLossStop   = input.float(500, "Daily loss stop ($)", step=50)
+maxConsecLoss   = input.int(3, "Max consecutive losing trades", minval=1)
+lockSess        = input.session("1700-1510", "Daily lockout session (CT recommended)")
+
+useTimeFilter   = input.bool(true, "Time filter (07:00–13:30)")
+tradeSess       = input.session("0700-1330", "Trade session (exchange time)")
+
+useTrendDayOnly = input.bool(true, "TRADE TREND DAYS ONLY (range auto-disable)")
+
+emaFastLen      = input.int(20, "HTF EMA fast", minval=1)
+emaMidLen       = input.int(50, "HTF EMA mid",  minval=1)
+emaSlowLen      = input.int(200,"HTF EMA slow", minval=1)
+
+atrLen          = input.int(14, "ATR length", minval=1)
+atrExpMult      = input.float(1.07, "ATR expansion mult (A++ MCL)", step=0.01)
+
+vwapCrossBars   = input.int(24, "VWAP cross window (bars)", minval=5)
+vwapCrossMax    = input.int(1, "Max VWAP crosses (A++ MCL)", minval=0)
+
+compressBars    = input.int(20, "Compression window (bars)", minval=5)
+compressMin     = input.float(2.4, "Min Range/ATR (A++ MCL)", step=0.1)
+
+useVolFilter    = input.bool(true, "Require volume > SMA")
+volLen          = input.int(20, "Volume SMA length", minval=1)
+
+useAdx          = input.bool(true, "ADX filter (A++)")
+adxLen          = input.int(14, "ADX length", minval=1)
+adxMin          = input.float(22, "Min ADX (A++ MCL)", step=0.5)
+
+useSpikeFilter  = input.bool(true, "Block spike candles (A++)")
+maxAtrCandle    = input.float(1.2, "Max candle range in ATR (A++ MCL)", step=0.1)
+
+minScoreToTrade = input.int(90, "A++ score threshold (MCL)", minval=0, maxval=100)
+showGrade       = input.bool(true, "Show grade label (last bar)")
+showDash        = input.bool(true, "Show dashboard")
+
+// Win-rate exits
+tp1R            = input.float(1.0, "TP1 (R) — win-rate mode", step=0.1)
+tp2R            = input.float(2.0, "TP2 (R) — win-rate mode", step=0.1)
+tp1Pct          = input.int(70, "TP1 %", minval=1, maxval=100)
+tp2Pct          = input.int(20, "TP2 %", minval=0, maxval=100)
+trailPct        = input.int(10, "Runner %", minval=0, maxval=100)
+
+// Break-even
+useBreakEven    = input.bool(true, "Break-even logic (A++)")
+beTriggerR      = input.float(0.8, "Move stop to BE after (R)", step=0.1)
+beOffsetTicks   = input.int(1, "BE offset ticks", minval=0)
+
+// Impulse breakout exception (only allowed when trendDay is false)
+enableImpulseBreakout = input.bool(true, "Allow impulse breakout when range filters say NO", tooltip="Trades only strong breakouts from compression if HTF trend is aligned.")
+breakoutLookback      = input.int(20, "Impulse breakout: lookback bars", minval=5)
+breakoutAtrMult       = input.float(1.30, "Impulse breakout: min candle range × ATR", minval=0.5, step=0.05)
+breakoutVolMult       = input.float(1.50, "Impulse breakout: min volume × SMA", minval=0.5, step=0.05)
+breakoutAdxMin        = input.float(20.0, "Impulse breakout: min ADX (fallback)", minval=0, step=0.5)
+
+// Webhook metadata
+acctTag         = input.string("TOPSTEPX", "Account tag (router)")
+routeTag        = input.string("TRADERSPOST", "Route tag (router)")
+orderType       = input.string("market", "Order type in JSON")
+
+// ───────────────── Time Filter
+inSession = not useTimeFilter or not na(time(timeframe.period, tradeSess))
+
+// ───────────────── HTF Trend (EMA stack + slope)
+emaF = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaFastLen), barmerge.gaps_off, barmerge.lookahead_off)
+emaM = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaMidLen),  barmerge.gaps_off, barmerge.lookahead_off)
+emaS = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaSlowLen), barmerge.gaps_off, barmerge.lookahead_off)
+
+slopeBars = 3
+emaSlopeUp   = emaF > emaF[slopeBars]
+emaSlopeDown = emaF < emaF[slopeBars]
+
+trendLong  = emaF > emaM and emaM > emaS and emaSlopeUp
+trendShort = emaF < emaM and emaM < emaS and emaSlopeDown
+
+// ───────────────── HTF Market Structure (HH/HL or LL/LH on HTF 60m+)
+htfPH = request.security(syminfo.tickerid, htfTf, ta.pivothigh(high, 2, 2), barmerge.gaps_off, barmerge.lookahead_off)
+htfPL = request.security(syminfo.tickerid, htfTf, ta.pivotlow(low, 2, 2),  barmerge.gaps_off, barmerge.lookahead_off)
+
+var float lastHTFPH = na
+var float prevHTFPH = na
+var float lastHTFPL = na
+var float prevHTFPL = na
+
+if not na(htfPH)
+    prevHTFPH := lastHTFPH
+    lastHTFPH := htfPH
+if not na(htfPL)
+    prevHTFPL := lastHTFPL
+    lastHTFPL := htfPL
+
+htfHas2Highs = not na(lastHTFPH) and not na(prevHTFPH)
+htfHas2Lows  = not na(lastHTFPL) and not na(prevHTFPL)
+
+htfHH = htfHas2Highs and lastHTFPH > prevHTFPH
+htfLH = htfHas2Highs and lastHTFPH < prevHTFPH
+htfHL = htfHas2Lows  and lastHTFPL > prevHTFPL
+htfLL = htfHas2Lows  and lastHTFPL < prevHTFPL
+
+htfStructureLong  = htfHH and htfHL
+htfStructureShort = htfLL and htfLH
+
+// ───────────────── VWAP + ATR + Chop + Compression
+vwap = ta.vwap(hlc3)
+vwapAcceptLong  = close > vwap and close[1] > vwap[1]
+vwapAcceptShort = close < vwap and close[1] < vwap[1]
+vwapSlopeUp     = vwap > vwap[slopeBars]
+vwapSlopeDown   = vwap < vwap[slopeBars]
+
+atr    = ta.atr(atrLen)
+atrSma = ta.sma(atr, 50)
+atrOk  = atr > atrSma * atrExpMult
+
+rng        = ta.highest(high, compressBars) - ta.lowest(low, compressBars)
+compressOk = (atr > 0) and ((rng / atr) >= compressMin)
+
+crossCount = ta.sum(ta.cross(close, vwap) ? 1 : 0, vwapCrossBars)
+chopOk     = crossCount <= vwapCrossMax
+
+volSma = ta.sma(volume, volLen)
+volOk  = not useVolFilter or (volume > volSma)
+
+// A++ Filters
+adx   = ta.adx(adxLen)
+adxOk = not useAdx or (adx >= adxMin)
+
+candleRange = high - low
+spikeOk = not useSpikeFilter or (candleRange <= atr * maxAtrCandle)
+
+// Trend-only day (range auto-disable)
+// "No trade day" requirement approximated as: HTF structure + EMA stack + VWAP slope + ATR expansion + low VWAP crosses + no compression box.
+trendDay = htfStructureLong or htfStructureShort
+trendDay := trendDay and atrOk and adxOk and compressOk and chopOk and (vwapSlopeUp or vwapSlopeDown)
+allowedToTrade = (not useTrendDayOnly) or trendDay
+
+// Regime gate (strict trend continuation)
+regimeLong  = botEnabled and inSession and allowedToTrade and trendLong  and htfStructureLong  and vwapAcceptLong  and vwapSlopeUp   and atrOk and compressOk and chopOk and adxOk
+regimeShort = botEnabled and inSession and allowedToTrade and trendShort and htfStructureShort and vwapAcceptShort and vwapSlopeDown and atrOk and compressOk and chopOk and adxOk
+
+// ───────────────── Entry Model (MCL allows VWAP/EMA blend)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+
+pullbackLong  = (low <= math.max(ema20, ema50) or low <= vwap) and close > ema20
+pullbackShort = (high >= math.min(ema20, ema50) or high >= vwap) and close < ema20
+
+revLong  = close > open and close > high[1]
+revShort = close < open and close < low[1]
+
+// ───────────────── Structure Stop (pivot-based)
+pl = ta.pivotlow(low, 2, 2)
+ph = ta.pivothigh(high, 2, 2)
+var float lastPL = na
+var float lastPH = na
+if not na(pl)
+    lastPL := pl
+if not na(ph)
+    lastPH := ph
+
+stopLong  = (na(lastPL) ? low  : lastPL) - stopBuffTicks * tick
+stopShort = (na(lastPH) ? high : lastPH) + stopBuffTicks * tick
+
+// ───────────────── Risk & sizing (LIVE-SAFE: do not force qty=1 if risk > riskPerTrade)
+riskPerContractLong  = math.abs(close - stopLong)  * pointValue
+riskPerContractShort = math.abs(stopShort - close) * pointValue
+
+rawQtyLong  = (riskPerContractLong  > 0) ? math.floor(riskPerTrade / riskPerContractLong)  : 0
+rawQtyShort = (riskPerContractShort > 0) ? math.floor(riskPerTrade / riskPerContractShort) : 0
+
+qtyLong  = int(math.max(0, rawQtyLong))
+qtyShort = int(math.max(0, rawQtyShort))
+
+// ───────────────── Scoring (A++)
+scoreTrend    = (regimeLong or regimeShort) ? 50 : 0
+scoreATR      = atrOk      ? 15 : 0
+scoreCompress = compressOk ? 15 : 0
+scoreChop     = chopOk     ? 10 : 0
+scoreVol      = volOk      ? 10 : 0
+scoreEntry    = ((pullbackLong and revLong) or (pullbackShort and revShort)) ? 10 : 0
+scoreAxx      = (adxOk ? 5 : 0) + (spikeOk ? 5 : 0)
+score         = math.min(100, scoreTrend + scoreATR + scoreCompress + scoreChop + scoreVol + scoreEntry + scoreAxx)
+
+gradeTxt   = score >= 90 ? "A++" : score >= 80 ? "A+" : score >= 60 ? "B" : "NO TRADE"
+allowScore = score >= minScoreToTrade
+
+if showGrade and barstate.islast
+    label.new(bar_index, high, expectedRoot + " " + gradeTxt + " (" + str.tostring(score) + ")",
+        style=label.style_label_down, textcolor=color.white)
+
+// ───────────────── Daily Lockout + 3-loss kill
+sessTime   = time(timeframe.period, lockSess)
+newDay     = not na(sessTime) and na(sessTime[1])
+
+var float dayStartEquity = na
+var float lastNetProfit  = na
+var int consecLoss       = 0
+
+if newDay
+    dayStartEquity := strategy.equity
+    lastNetProfit  := strategy.netprofit
+    consecLoss     := 0
+
+dayPnL = na(dayStartEquity) ? 0.0 : (strategy.equity - dayStartEquity)
+
+closedTrade = strategy.closedtrades > strategy.closedtrades[1]
+if closedTrade
+    npNow  = strategy.netprofit
+    npPrev = nz(lastNetProfit, strategy.netprofit)
+    delta  = npNow - npPrev
+    consecLoss := delta < 0 ? consecLoss + 1 : 0
+    lastNetProfit := npNow
+
+lockedOut = (dayPnL <= -dailyLossStop) or (consecLoss >= maxConsecLoss)
+
+// ───────────────── Impulse breakout exception (only if not allowedToTrade due to trendDay filters)
+// Goal: allow a single high-quality breakout from compression while still requiring HTF alignment.
+priorHigh = ta.highest(high, breakoutLookback)[1]
+priorLow  = ta.lowest(low, breakoutLookback)[1]
+
+breakoutRangeOk = (atr > 0) and (candleRange >= atr * breakoutAtrMult)
+breakoutVolOk   = (not useVolFilter) or (volume >= volSma * breakoutVolMult)
+breakoutAdxOk   = (not useAdx) or (adx >= breakoutAdxMin)
+
+impulseBreakoutLong  = enableImpulseBreakout and (not allowedToTrade) and botEnabled and inSession and trendLong  and htfStructureLong  and vwapAcceptLong  and vwapSlopeUp   and spikeOk and breakoutRangeOk and breakoutVolOk and breakoutAdxOk and close > priorHigh
+impulseBreakoutShort = enableImpulseBreakout and (not allowedToTrade) and botEnabled and inSession and trendShort and htfStructureShort and vwapAcceptShort and vwapSlopeDown and spikeOk and breakoutRangeOk and breakoutVolOk and breakoutAdxOk and close < priorLow
+
+// ───────────────── Entries + JSON (A++ only)
+flat = strategy.position_size == 0
+
+enterLongCore  = botEnabled and allowedToTrade and allowScore and not lockedOut and spikeOk and regimeLong  and pullbackLong  and revLong  and flat and (qtyLong  >= 1)
+enterShortCore = botEnabled and allowedToTrade and allowScore and not lockedOut and spikeOk and regimeShort and pullbackShort and revShort and flat and (qtyShort >= 1)
+
+enterLong  = enterLongCore  or (impulseBreakoutLong  and not lockedOut and flat and (qtyLong  >= 1))
+enterShort = enterShortCore or (impulseBreakoutShort and not lockedOut and flat and (qtyShort >= 1))
+
+jsonLong  = '{"strategy":"MCL_Axx","account":"' + acctTag + '","route":"' + routeTag + '","ticker":"' + syminfo.ticker + '","action":"buy","orderType":"' + orderType + '","quantity":' + str.tostring(qtyLong) + ',"score":' + str.tostring(score) + ',"mode":"' + (enterLongCore ? "CORE" : "IMPULSE") + '"}'
+jsonShort = '{"strategy":"MCL_Axx","account":"' + acctTag + '","route":"' + routeTag + '","ticker":"' + syminfo.ticker + '","action":"sell","orderType":"' + orderType + '","quantity":' + str.tostring(qtyShort) + ',"score":' + str.tostring(score) + ',"mode":"' + (enterShortCore ? "CORE" : "IMPULSE") + '"}'
+
+// ───────────────── Entry-state tracking for correct TP math
+var float entryStop = na
+var float entryR    = na
+
+if flat and (enterLong or enterShort)
+    // set before entry executes (next engine step); close is acceptable for strategy simulation
+    if enterLong
+        entryStop := stopLong
+        entryR    := math.max(math.abs(close - stopLong), tick)
+    if enterShort
+        entryStop := stopShort
+        entryR    := math.max(math.abs(stopShort - close), tick)
+
+if enterLong
+    strategy.entry("L", strategy.long, qty=qtyLong, alert_message=jsonLong)
+if enterShort
+    strategy.entry("S", strategy.short, qty=qtyShort, alert_message=jsonShort)
+
+// If we are flat and did not trigger entry this bar, clear pre-entry cached risk
+if flat and not (enterLong or enterShort)
+    entryStop := na
+    entryR    := na
+
+// ───────────────── Break-even Dynamic Stops (uses cached entryStop as baseline)
+var float dynStopLong  = na
+var float dynStopShort = na
+
+if flat
+    dynStopLong  := na
+    dynStopShort := na
+
+if strategy.position_size > 0
+    entry = strategy.position_avg_price
+    baseStop = nz(entryStop, stopLong)
+    r = nz(entryR, math.max(math.abs(entry - baseStop), tick))
+    bePrice = entry + beOffsetTicks * tick
+    if useBreakEven and high >= entry + r * beTriggerR
+        dynStopLong := math.max(nz(dynStopLong, baseStop), bePrice)
+    else
+        dynStopLong := nz(dynStopLong, baseStop)
+
+if strategy.position_size < 0
+    entry = strategy.position_avg_price
+    baseStop = nz(entryStop, stopShort)
+    r = nz(entryR, math.max(math.abs(baseStop - entry), tick))
+    bePrice = entry - beOffsetTicks * tick
+    if useBreakEven and low <= entry - r * beTriggerR
+        dynStopShort := math.min(nz(dynStopShort, baseStop), bePrice)
+    else
+        dynStopShort := nz(dynStopShort, baseStop)
+
+// ───────────────── Exits (win-rate mode) — LIVE-SAFE: TP prices based on entry, not moving close
+if strategy.position_size > 0
+    entry = strategy.position_avg_price
+    baseStop = nz(entryStop, stopLong)
+    r = nz(entryR, math.max(math.abs(entry - baseStop), tick))
+    tp1Long = entry + r * tp1R
+    tp2Long = entry + r * tp2R
+    trailStopL = math.min(ema20, close - tick)  // avoid invalid stop above market
+    strategy.exit("L-TP1", from_entry="L", limit=tp1Long, stop=dynStopLong, qty_percent=tp1Pct)
+    strategy.exit("L-TP2", from_entry="L", limit=tp2Long, stop=dynStopLong, qty_percent=tp2Pct)
+    if trailPct > 0
+        strategy.exit("L-TRAIL", from_entry="L", stop=trailStopL, qty_percent=trailPct)
+
+if strategy.position_size < 0
+    entry = strategy.position_avg_price
+    baseStop = nz(entryStop, stopShort)
+    r = nz(entryR, math.max(math.abs(baseStop - entry), tick))
+    tp1Short = entry - r * tp1R
+    tp2Short = entry - r * tp2R
+    trailStopS = math.max(ema20, close + tick) // avoid invalid stop below market (for shorts)
+    strategy.exit("S-TP1", from_entry="S", limit=tp1Short, stop=dynStopShort, qty_percent=tp1Pct)
+    strategy.exit("S-TP2", from_entry="S", limit=tp2Short, stop=dynStopShort, qty_percent=tp2Pct)
+    if trailPct > 0
+        strategy.exit("S-TRAIL", from_entry="S", stop=trailStopS, qty_percent=trailPct)
+
+// ───────────────── Dashboard
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
+
+statusTxt = lockedOut ? "LOCKED OUT" : allowedToTrade ? "TREND DAY" : (enableImpulseBreakout ? "NO TRADE (IMPULSE ONLY)" : "NO TRADE")
+
+if showDash and barstate.islast
+    table.cell(dash, 0, 0, "BOT", bgcolor=color.black, text_color=color.white)
+    table.cell(dash, 1, 0, expectedRoot + (botEnabled ? " ON" : " WRONG CHART"),
+        bgcolor = botEnabled ? color.new(color.green, 0) : color.new(color.red, 0),
+        text_color=color.white)
+
+    table.cell(dash, 0, 1, "STATUS")
+    table.cell(dash, 1, 1, statusTxt,
+        bgcolor = lockedOut ? color.new(color.red, 55) : allowedToTrade ? color.new(color.green, 80) : color.new(color.orange, 80),
+        text_color=color.white)
+
+    table.cell(dash, 0, 2, "HTF STRUCT")
+    table.cell(dash, 1, 2, (htfStructureLong or htfStructureShort) ? "OK" : "NO",
+        bgcolor=(htfStructureLong or htfStructureShort) ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 3, "ADX")
+    table.cell(dash, 1, 3, adxOk ? "OK" : "WEAK",
+        bgcolor = adxOk ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 4, "ATR")
+    table.cell(dash, 1, 4, atrOk ? "OK" : "FLAT",
+        bgcolor = atrOk ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 5, "VWAP")
+    table.cell(dash, 1, 5, chopOk ? "CLEAN" : "CHOP",
+        bgcolor = chopOk ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 6, "VWAP SLOPE")
+    table.cell(dash, 1, 6, vwapSlopeUp ? "UP" : vwapSlopeDown ? "DOWN" : "FLAT",
+        bgcolor=(vwapSlopeUp or vwapSlopeDown) ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 7, "SPIKE")
+    table.cell(dash, 1, 7, spikeOk ? "OK" : "BLOCK",
+        bgcolor = spikeOk ? color.new(color.green, 85) : color.new(color.red, 85))
+
+    table.cell(dash, 0, 8, "GRADE")
+    table.cell(dash, 1, 8, gradeTxt + " (" + str.tostring(score) + ")")
+
+    table.cell(dash, 0, 9, "QTY")
+    table.cell(dash, 1, 9, "L " + str.tostring(qtyLong) + " / S " + str.tostring(qtyShort))
+
+// ───────────────── Visuals
+plot(ema20, "EMA20")
+plot(ema50, "EMA50")
+plot(vwap,  "VWAP")
+bgcolor(lockedOut ? color.new(color.red, 85) : (botEnabled and (allowedToTrade or enableImpulseBreakout) and allowScore) ? color.new(color.green, 88) : na)
+
