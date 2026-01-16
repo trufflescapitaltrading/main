@@ -1172,14 +1172,23 @@ bgcolor(lockedOut ? color.new(color.red, 85) :
         (botEnabled and allowedToTrade and allowScore) ? color.new(color.green, 92) : 
         na)
 
-// Entry signals
+// Entry signals (plotshape text must be const string)
 plotshape(enterLong, "LONG", shape.triangleup, location.belowbar, 
-          color=longQuality >= 85 ? color.green : color.lime, size=size.normal,
-          text="L " + str.tostring(math.round(longQuality)) + "%")
+          color=color.green, size=size.normal, text="LONG")
 
 plotshape(enterShort, "SHORT", shape.triangledown, location.abovebar, 
-          color=shortQuality >= 85 ? color.red : color.maroon, size=size.normal,
-          text="S " + str.tostring(math.round(shortQuality)) + "%")
+          color=color.red, size=size.normal, text="SHORT")
+
+// Dynamic quality labels using label.new (allows series string)
+if enterLong
+    label.new(bar_index, low, "Q:" + str.tostring(math.round(longQuality)) + "%", 
+              style=label.style_label_up, color=longQuality >= 85 ? color.green : color.lime, 
+              textcolor=color.white, size=size.small)
+
+if enterShort
+    label.new(bar_index, high, "Q:" + str.tostring(math.round(shortQuality)) + "%", 
+              style=label.style_label_down, color=shortQuality >= 85 ? color.red : color.maroon, 
+              textcolor=color.white, size=size.small)
 
 // Priority labels
 p1 = str.contains(priorityLabel, "P1")
