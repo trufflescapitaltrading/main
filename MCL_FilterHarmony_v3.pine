@@ -1194,13 +1194,20 @@ plotshape(enterShort and p2, "P2 Short", text="P2", style=shape.labeldown, locat
 plotshape(enterShort and p3, "P3 Short", text="P3", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.purple, textcolor=color.white)
 
 // ───────────────────────────────────────────────────────────────────────────────
-// SECTION 34: ALERTS
+// SECTION 34: ALERTS (using alert() function calls)
 // ───────────────────────────────────────────────────────────────────────────────
 
-alertcondition(enterLong, "MCL Long Entry", "MCL LONG: {{strategy.order.alert_message}}")
-alertcondition(enterShort, "MCL Short Entry", "MCL SHORT: {{strategy.order.alert_message}}")
-alertcondition(lockedOut, "MCL Locked Out", "MCL BOT LOCKED - Check conditions")
-alertcondition(dailyProfitReached, "MCL Daily Target Hit", "MCL Daily profit target of $" + str.tostring(dailyProfitTarget) + " reached!")
+if enterLong
+    alert(jsonLong, alert.freq_once_per_bar_close)
+
+if enterShort
+    alert(jsonShort, alert.freq_once_per_bar_close)
+
+if lockedOut and not lockedOut[1]
+    alert("MCL BOT LOCKED - Daily loss: $" + str.tostring(math.round(dayPnL)) + " | Consec losses: " + str.tostring(consecLoss) + " | Trades: " + str.tostring(dailyTradeCount), alert.freq_once_per_bar)
+
+if dailyProfitReached and not dailyProfitReached[1]
+    alert("MCL Daily profit target of $" + str.tostring(dailyProfitTarget) + " reached! P&L: $" + str.tostring(math.round(dayPnL)), alert.freq_once_per_bar)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // END OF MCL FILTER HARMONY v3 BOT
