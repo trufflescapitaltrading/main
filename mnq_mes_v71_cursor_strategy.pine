@@ -750,7 +750,17 @@ bodyRatio = totalRange > 0 ? bodySize / totalRange : 0
 upperWickRatio = totalRange > 0 ? upperWick / totalRange : 0
 lowerWickRatio = totalRange > 0 ? lowerWick / totalRange : 0
 // Explicit doji bar filter (prevents P1/P2 firing on tiny-body candles).
-isDojiBar = totalRange > 0 ? (bodySize <= totalRange * 0.05) : true
+// Stronger doji/tiny-body detection: range% OR ATR-relative
+dojiRangePct = input.float(0.05, "Doji: body <= range%", minval=0.02, maxval=0.15, step=0.01)
+dojiAtrPct = input.float(0.10, "Doji: body <= ATR%", minval=0.03, maxval=0.30, step=0.01)
+isDojiBar =
+     (totalRange > 0 and bodySize <= totalRange * dojiRangePct) or
+     (atr10 > 0 and bodySize <= atr10 * dojiAtrPct)
+
+// ==================== ✅ Candle Quality Gate (ATR-relative) ====================
+minBodyRatioEntry = input.float(0.35, "Min body ratio for ALL entries", minval=0.15, maxval=0.80, step=0.01)
+minBodyAtrEntry = input.float(0.12, "Min body size (×ATR10) for ALL entries", minval=0.03, maxval=0.40, step=0.01)
+candleQualityOK = (not isDojiBar) and (bodyRatio >= minBodyRatioEntry) and (atr10 <= 0 or bodySize >= atr10 * minBodyAtrEntry)
 avgVolume = ta.sma(volume, 20)
 volumeOK = not requireVolumeConfirmation or volume > avgVolume * 0.8
 minCandleSize = currentATR * minPatternSize
@@ -794,8 +804,8 @@ momentumUpMove = close > close[momentumLookback] and priceMovePct >= momentumThr
 momentumDownMove = close < close[momentumLookback] and priceMovePct >= momentumThresholdPct
 mnqMomentumUpMove = isMNQ and (close - close[momentumLookback]) >= momentumThresholdPoints
 mnqMomentumDownMove = isMNQ and (close[momentumLookback] - close) >= momentumThresholdPoints
-hasMomentumOverrideLong = enableMomentumOverride and (momentumUpMove or mnqMomentumUpMove) and candleBull and not isDojiBar
-hasMomentumOverrideShort = enableMomentumOverride and (momentumDownMove or mnqMomentumDownMove) and candleBear and not isDojiBar
+hasMomentumOverrideLong = enableMomentumOverride and (momentumUpMove or mnqMomentumUpMove) and candleBull and candleQualityOK
+hasMomentumOverrideShort = enableMomentumOverride and (momentumDownMove or mnqMomentumDownMove) and candleBear and candleQualityOK
 
 // Consecutive candle trend override
 maxRunBars = 6
@@ -804,23 +814,36 @@ bullOCStreak = 0
 bearOCStreak = 0
 upCloseStreak = 0
 downCloseStreak = 0
+minRunBodyRatio = input.float(0.30, "Run candle min body ratio", minval=0.15, maxval=0.70, step=0.01)
 for i = 0 to maxRunBars - 1
-    if (close[i] > open[i]) and not isDojiBar[i]
+    rng_i = high[i] - low[i]
+    body_i = math.abs(close[i] - open[i])
+    bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
+    if (close[i] > open[i]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
         bullOCStreak += 1
     else
         break
 for i = 0 to maxRunBars - 1
-    if (close[i] < open[i]) and not isDojiBar[i]
+    rng_i = high[i] - low[i]
+    body_i = math.abs(close[i] - open[i])
+    bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
+    if (close[i] < open[i]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
         bearOCStreak += 1
     else
         break
 for i = 0 to maxRunBars - 1
-    if (close[i] > close[i + 1]) and not isDojiBar[i]
+    rng_i = high[i] - low[i]
+    body_i = math.abs(close[i] - open[i])
+    bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
+    if (close[i] > close[i + 1]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
         upCloseStreak += 1
     else
         break
 for i = 0 to maxRunBars - 1
-    if (close[i] < close[i + 1]) and not isDojiBar[i]
+    rng_i = high[i] - low[i]
+    body_i = math.abs(close[i] - open[i])
+    bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
+    if (close[i] < close[i + 1]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
         downCloseStreak += 1
     else
         break
@@ -833,6 +856,35 @@ isStrongVolume = volume > volumeMA * trendOverrideVolMultiplier
 avgRange = ta.atr(14)
 currentRange = high - low
 isStrongRange = currentRange > avgRange * trendOverrideRangeMultiplier
+
+// ==================== 🔥 P-1 TREND START (2nd candle early entry) ====================
+trendStartGroup = "🔥 P-1 Trend Start"
+enableTrendStart = input.bool(true, "Enable P-1 Trend Start (2nd candle)", group=trendStartGroup)
+trendStartBodyMin = input.float(0.40, "P-1 min body ratio", minval=0.20, maxval=0.80, step=0.01, group=trendStartGroup)
+trendStartVolMult = input.float(1.20, "P-1 volume multiple vs SMA20", minval=1.0, maxval=2.5, step=0.05, group=trendStartGroup)
+trendStartAccel = input.bool(true, "P-1 require acceleration", group=trendStartGroup)
+
+prevRange = high[1] - low[1]
+prevBody = math.abs(close[1] - open[1])
+prevBodyRatio = prevRange > 0 ? (prevBody / prevRange) : 0.0
+
+curStrongBull = candleBull and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
+curStrongBear = candleBear and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
+
+prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
+prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
+
+accelBull = (close - close[1]) > (close[1] - close[2])
+accelBear = (close[1] - close) > (close[2] - close[1])
+
+hasTrendStartLong =
+     enableTrendStart and (runUpCloses == 2) and curStrongBull and prevStrongBull and
+     (not trendStartAccel or accelBull)
+
+hasTrendStartShort =
+     enableTrendStart and (runDownCloses == 2) and curStrongBear and prevStrongBear and
+     (not trendStartAccel or accelBear)
+
 hasTrendOverrideBull = enableTrendOverride and (runUpCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar
 hasTrendOverrideBear = enableTrendOverride and (runDownCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar
 hasStrongTrendOverrideBull = enableTrendOverride and (runUpCloses >= 4) and isStrongVolume and isStrongRange and not isDojiBar
@@ -953,8 +1005,8 @@ barMove = math.abs(close - open)
 impulseMove = (atr10 > 0) and (barMove >= atr10 * impulseATRMult_eff)
 rangeOK = (atr10 > 0) and ((high - low) >= atr10 * impulseRangeMinATR)
 bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
-impulseLong = enableImpulseOverride and candleBull and not isDojiBar and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
-impulseShort = enableImpulseOverride and candleBear and not isDojiBar and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
+impulseLong = enableImpulseOverride and candleBull and candleQualityOK and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
+impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
 
 // EARLY TREND START (captures first 1-2 bars of new trend)
 // Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
@@ -1497,8 +1549,8 @@ bool allowShortByBias = not enableBestSideRouter or biasDir == 0 or biasDir == -
 bool cooldownOK = oppCooldownOK or bypassLong or bypassShort
 
 // Restore: strict entry filter actually gates entries, but strong override signals can bypass it.
-strictBypassLong = impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong or contBypassLong or tibLong or cpbLong
-strictBypassShort = impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort or contBypassShort or tibShort or cpbShort
+strictBypassLong = impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong or contBypassLong or tibLong or cpbLong or hasTrendStartLong
+strictBypassShort = impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort or contBypassShort or tibShort or cpbShort or hasTrendStartShort
 
 // Mandatory Trend-Only Filter gates (allow impulse/momentum bypass)
 mandatoryLongOK = (htfBullStructure and emaStackBull and vwapSlopeUp and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox)
@@ -1518,6 +1570,15 @@ canGoShort := canGoShort and mtfShortOK
 
 if not tookTradeThisBar
     if enablePrioritySystem
+        if not shouldEnterLong and not shouldEnterShort and allowPriorityMinus1
+            if canGoLong and hasTrendStartLong and candleBull and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P-1:TREND_START"
+                entryPriority := "P-1:TREND_START"
+            else if canGoShort and hasTrendStartShort and candleBear and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P-1:TREND_START"
+                entryPriority := "P-1:TREND_START"
         if not shouldEnterLong and not shouldEnterShort and allowPriority0
             if canGoLong and hasMomentumOverrideLong and candleBull and candleConfirmLong
                 shouldEnterLong := true
@@ -1527,15 +1588,6 @@ if not tookTradeThisBar
                 shouldEnterShort := true
                 selectedPriority := "P0:MOMENTUM"
                 entryPriority := "P0:MOMENTUM"
-        if not shouldEnterLong and not shouldEnterShort and allowPriorityMinus1
-            if canGoLong and tibLong and candleBull and candleConfirmLong
-                shouldEnterLong := true
-                selectedPriority := "P-1:TREND_START"
-                entryPriority := "P-1:TREND_START"
-            else if canGoShort and tibShort and candleBear and candleConfirmShort
-                shouldEnterShort := true
-                selectedPriority := "P-1:TREND_START"
-                entryPriority := "P-1:TREND_START"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
             if canGoLong and earlyTrendLong and candleBull and candleConfirmLong
                 shouldEnterLong := true
@@ -1546,7 +1598,15 @@ if not tookTradeThisBar
                 selectedPriority := "P1:EARLY_TREND"
                 entryPriority := "P1:EARLY_TREND"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1
-            if canGoLong and impulseLong and candleBull and candleConfirmLong
+            if canGoLong and tibLong and candleBull and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P1:IGNITION"
+                entryPriority := "P1:IGNITION"
+            else if canGoShort and tibShort and candleBear and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P1:IGNITION"
+                entryPriority := "P1:IGNITION"
+            else if canGoLong and impulseLong and candleBull and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P1:IMPULSE"
                 entryPriority := "P1:IMPULSE"
@@ -1651,19 +1711,50 @@ htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or ht
 shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
 shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
 
+// ==================== 🧷 LTF CONFIRM (Intrabar Safety) ====================
+// Only used when intrabar entries are allowed; prevents "looks wrong-color by close".
+ltfGroup = "🧷 Intrabar LTF Confirm"
+enableLTFConfirm = input.bool(true, "Enable 1m LTF confirm for intrabar entries", group=ltfGroup)
+ltfBodyMin = input.float(0.15, "LTF min body ratio", minval=0.05, maxval=0.50, step=0.01, group=ltfGroup)
+
+ltfBull = request.security(syminfo.tickerid, "1",
+     (close > open) and ((high - low) > 0) and (math.abs(close - open) / (high - low) >= ltfBodyMin),
+     barmerge.gaps_off, barmerge.lookahead_off)
+
+ltfBear = request.security(syminfo.tickerid, "1",
+     (close < open) and ((high - low) > 0) and (math.abs(close - open) / (high - low) >= ltfBodyMin),
+     barmerge.gaps_off, barmerge.lookahead_off)
+
+// Gate intrabar only (bar-close entries don't need this)
+intrabarAllowedNow = (not barstate.isconfirmed) and allowIntrabarForP1P2
+ltfOK_Long = (not enableLTFConfirm) or (not intrabarAllowedNow) or ltfBull
+ltfOK_Short = (not enableLTFConfirm) or (not intrabarAllowedNow) or ltfBear
+
+shouldEnterLong := shouldEnterLong and ltfOK_Long
+shouldEnterShort := shouldEnterShort and ltfOK_Short
+
 // Default: gate entries to bar close when enabled.
 // Exception: allow intrabar entries for Kenya MNQ 3m if enabled (to match the proven Kenya behavior).
+// Default: gate entries to bar close when enabled.
+// Exception: allow intrabar entries for Kenya MNQ 3m (restore) OR for P-1/P1/P2 when enabled.
+isPriorityIntrabar =
+     (selectedPriority == "P-1:TREND_START") or
+     (selectedPriority == "P1:IMPULSE") or
+     (selectedPriority == "P2:CONTINUATION") or
+     (selectedPriority == "P2:TREND") or
+     (selectedPriority == "P2:STRONG_TREND")
+
 entryOK =
      (not enterOnBarClose or barstate.isconfirmed) or
      (kenyaAllowIntrabarEntries and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3") or
-     (allowIntrabarForP1P2 and not enterOnBarClose and (selectedPriority == "P1:IMPULSE" or selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND"))
+     (allowIntrabarForP1P2 and isPriorityIntrabar)
 bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
 bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
 // ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
 var string lastBlockReason = "NONE"
-rawLongSignal = (hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or tibLong or cpbLong or ultraBuySignal or swingBuySignal)
-rawShortSignal = (hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or tibShort or cpbShort or ultraSellSignal or swingSellSignal)
+rawLongSignal = (hasTrendStartLong or hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or tibLong or cpbLong or ultraBuySignal or swingBuySignal)
+rawShortSignal = (hasTrendStartShort or hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or tibShort or cpbShort or ultraSellSignal or swingSellSignal)
 
 if strategy.position_size == 0
     // Default to NONE unless we detect a blocked actionable signal.
