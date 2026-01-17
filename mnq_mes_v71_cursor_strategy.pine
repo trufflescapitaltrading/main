@@ -141,6 +141,7 @@ priorityGroup = "⭐ PRIORITY HIERARCHY SYSTEM"
 enablePrioritySystem = input.bool(true, "✅ Enable Priority Hierarchy", group=priorityGroup)
 allowPriority0 = input.bool(true, "P0: Momentum Override 🎯", group=priorityGroup)
 allowPriority1 = input.bool(true, "P1: Impulse Override 🚀", group=priorityGroup)
+allowPriority1Early = input.bool(true, "P1: Early Trend Start (SuperTrend flip + momentum)", group=priorityGroup)
 allowPriority2 = input.bool(true, "P2: Strong Trend Override 📈", group=priorityGroup)
 allowPriority3 = input.bool(false, "P3: 5-Star Entry", group=priorityGroup)
 allowPriority4 = input.bool(false, "P4: 4-Star Entry", group=priorityGroup)
@@ -954,6 +955,12 @@ bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
 impulseLong = enableImpulseOverride and candleBull and not isDojiBar and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
 impulseShort = enableImpulseOverride and candleBear and not isDojiBar and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
 
+// EARLY TREND START (captures first 1-2 bars of new trend)
+// Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
+earlyTrendBodyOK = not isDojiBar and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
+earlyTrendLong = trendChange and trend == 1 and candleBull and earlyTrendBodyOK and hullAnyBullish and trendAlignedLong and canTradeNow
+earlyTrendShort = trendChange and trend == -1 and candleBear and earlyTrendBodyOK and hullAnyBearish and trendAlignedShort and canTradeNow
+
 // Price momentum
 priceChange = close - close[5]
 momentumBull = priceChange > 0
@@ -1464,6 +1471,15 @@ if not tookTradeThisBar
                 shouldEnterShort := true
                 selectedPriority := "P0:MOMENTUM"
                 entryPriority := "P0:MOMENTUM"
+        if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
+            if canGoLong and earlyTrendLong and candleBull and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P1:EARLY_TREND"
+                entryPriority := "P1:EARLY_TREND"
+            else if canGoShort and earlyTrendShort and candleBear and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P1:EARLY_TREND"
+                entryPriority := "P1:EARLY_TREND"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1
             if canGoLong and impulseLong and candleBull and candleConfirmLong
                 shouldEnterLong := true
@@ -2159,13 +2175,13 @@ if enableBackupSL and strategy.position_size != 0 and not na(entryPrice)
     backupSLDistance = getBackupSL()
     if strategy.position_size > 0
         backupStopLevel = entryPrice - backupSLDistance
-        if close <= backupStopLevel and not exitIssuedThisBar
+        if close <= backupStopLevel and not exitIssuedThisBar and currentProfitDollars < 0
             strategy.close("LONG", comment="BACKUP_SL")
             exitIssuedThisBar := true
             lastExitReason := "BACKUP_SL"
     else if strategy.position_size < 0
         backupStopLevel = entryPrice + backupSLDistance
-        if close >= backupStopLevel and not exitIssuedThisBar
+        if close >= backupStopLevel and not exitIssuedThisBar and currentProfitDollars < 0
             strategy.close("SHORT", comment="BACKUP_SL")
             exitIssuedThisBar := true
             lastExitReason := "BACKUP_SL"
@@ -2193,8 +2209,8 @@ if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and h
                 exitIssuedThisBar := true
                 lastExitReason := "V71_MOM_FADE"
 
-strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull
-strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear
+strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull and not isDojiBar
+strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear and not isDojiBar
 kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
 if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
     if strategy.position_size > 0 and strongOpposingSell
