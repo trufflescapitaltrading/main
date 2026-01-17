@@ -1,45 +1,38 @@
-// This source code is subject to the terms of the Mozilla Public License 2.0
-// Ultimate MCL Bot - Filter Harmony v3 Edition
-// Based on proven $920K profit logic with 62% win rate
-
-//@version=6
-strategy("MCL — Ultimate Filter Harmony v3 [BOT]", 
+//@version=5   
+strategy("ULTIMATE MCL 3H - ORIGINAL PROFIT LOGIC RESTORED", 
      overlay=true, 
      default_qty_type=strategy.percent_of_equity, 
-     default_qty_value=10,
-     initial_capital=10000,
-     commission_type=strategy.commission.cash_per_order,
-     commission_value=4.76)
+     default_qty_value=10)
 
-// ==================== CORE PARAMETERS ====================
-group_core = "📊 Core Settings"
+// ==================== CORE PARAMETERS (ORIGINAL BOT) ====================
 
-tf_higher = input.timeframe("15", "Higher Timeframe for Confirmation", group=group_core)
+// Timeframe Selection
+tf_higher = input.timeframe("15", "Higher Timeframe")
 
 // Moving Averages
-ma_fast_length = input.int(21, "Fast MA Length", minval=1, group=group_core)
-ma_slow_length = input.int(50, "Slow MA Length", minval=1, group=group_core)
-ma_type = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA"], group=group_core)
+ma_fast_length = input.int(21, "Fast MA Length", minval=1)
+ma_slow_length = input.int(50, "Slow MA Length", minval=1)
+ma_type = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA"])
 
 // RSI Settings
-rsi_length = input.int(14, "RSI Length", minval=1, group=group_core)
-rsi_overbought = input.float(70, "RSI Overbought", minval=50, maxval=100, group=group_core)
-rsi_oversold = input.float(30, "RSI Oversold", minval=0, maxval=50, group=group_core)
+rsi_length = input.int(14, "RSI Length", minval=1)
+rsi_overbought = input.float(70, "RSI Overbought", minval=50, maxval=100)
+rsi_oversold = input.float(30, "RSI Oversold", minval=0, maxval=50)
 
 // MACD Settings
-macd_fast = input.int(12, "MACD Fast Length", minval=1, group=group_core)
-macd_slow = input.int(26, "MACD Slow Length", minval=1, group=group_core)
-macd_signal = input.int(9, "MACD Signal Length", minval=1, group=group_core)
+macd_fast = input.int(12, "MACD Fast Length", minval=1)
+macd_slow = input.int(26, "MACD Slow Length", minval=1)
+macd_signal = input.int(9, "MACD Signal Length", minval=1)
 
 // Volume Settings
-volume_ma_length = input.int(20, "Volume MA Length", minval=1, group=group_core)
-volume_threshold = input.float(1.5, "Volume Threshold Multiplier", minval=1.0, step=0.1, group=group_core)
+volume_ma_length = input.int(20, "Volume MA Length", minval=1)
+volume_threshold = input.float(1.5, "Volume Threshold Multiplier", minval=1.0, step=0.1)
 
 // Bollinger Bands
-bb_length = input.int(20, "Bollinger Bands Length", minval=1, group=group_core)
-bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, step=0.1, group=group_core)
+bb_length = input.int(20, "Bollinger Bands Length", minval=1)
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, step=0.1)
 
-// ==================== RISK MANAGEMENT ====================
+// ==================== RISK MANAGEMENT (ORIGINAL BOT DEFAULTS) ====================
 group_risk = "🎯 Risk Management"
 
 position_size_pct = input.float(2.0, "Position Size (%)", minval=0.1, maxval=10.0, group=group_risk)
@@ -48,27 +41,29 @@ take_profit_pct = input.float(4.0, "Take Profit (%)", minval=1.0, maxval=20.0, g
 trailing_stop_pct = input.float(1.5, "Trailing Stop (%)", minval=0.5, maxval=5.0, group=group_risk)
 
 // ==================== MCL CONTRACT SPECIFICATIONS ====================
-group_contract = "🛢️ MCL Contract"
+group_contract = "🛢️ MCL Contract (Optional)"
 
-use_mcl_contract = input.bool(true, "Use MCL Contract Specs", group=group_contract)
+use_mcl_contract = input.bool(true, "Use MCL ($1/tick)", group=group_contract)
 mcl_tick_values = input.string("22.50", "MCL Tick Value", 
      options=["11.25", "16.88", "19.69", "22.50", "28.13", "33.75"], 
      group=group_contract)
 
-mcl_tick_value = mcl_tick_values == "11.25" ? 11.25 :
+mcl_tick_value = 
+     mcl_tick_values == "11.25" ? 11.25 :
      mcl_tick_values == "16.88" ? 16.88 :
      mcl_tick_values == "19.69" ? 19.69 :
      mcl_tick_values == "22.50" ? 22.50 :
-     mcl_tick_values == "28.13" ? 28.13 : 33.75
+     mcl_tick_values == "28.13" ? 28.13 :
+     33.75
 
-// ==================== POSITION SIZING MODE ====================
-group_position = "💰 Position Sizing"
+// ==================== POSITION SIZING MODE (OPTIONAL) ====================
+group_position_mode = "💰 Position Sizing (Optional - Default OFF)"
 
-use_fixed_contracts = input.bool(false, "Use Fixed Contracts", group=group_position)
-fixed_contracts = input.int(1, "Fixed Contracts", minval=1, maxval=50, group=group_position)
+use_fixed_contracts = input.bool(false, "🔄 Use Fixed Contracts", group=group_position_mode)
+fixed_contracts = input.int(1, "Fixed Contracts", minval=1, maxval=50, group=group_position_mode)
 
-// ==================== ADVANCED FEATURES ====================
-group_advanced = "🛡️ Advanced Features"
+// ==================== ADVANCED FEATURES (ALL DEFAULT OFF) ====================
+group_advanced = "🛡️ Advanced Features (Default OFF)"
 
 use_backup_stop = input.bool(false, "Backup Stop Loss", group=group_advanced)
 backup_stop_pct = input.float(3.5, "Backup Stop (%)", minval=2.0, maxval=10.0, group=group_advanced)
@@ -86,6 +81,7 @@ use_mae_protection = input.bool(false, "MAE Protection", group=group_advanced)
 mae_threshold_pct = input.float(1.0, "MAE Threshold (%)", minval=0.3, maxval=3.0, group=group_advanced)
 
 use_reversal_exit = input.bool(false, "Reversal Detection Exit", group=group_advanced)
+reversal_sensitivity = input.int(2, "Reversal Sensitivity", minval=1, maxval=3, group=group_advanced)
 
 use_daily_limits = input.bool(false, "Daily Loss Limits", group=group_advanced)
 max_daily_loss_dollar = input.float(1500.0, "Max Daily Loss $", minval=200.0, maxval=10000.0, group=group_advanced)
@@ -95,24 +91,25 @@ use_floating_protection = input.bool(false, "Floating Loss Protection", group=gr
 max_floating_loss_dollar = input.float(800.0, "Max Floating Loss $", minval=100.0, maxval=5000.0, group=group_advanced)
 max_floating_loss_time = input.int(360, "Max Loss Time (min)", minval=60, group=group_advanced)
 
+use_session_filter = input.bool(false, "Enable Session Filter", group=group_advanced)
 use_quality_filter = input.bool(false, "Entry Quality Filter", group=group_advanced)
 min_quality_score = input.int(6, "Min Quality Score", minval=0, maxval=10, group=group_advanced)
 
 // ==================== ALERTS ====================
 group_alerts = "🔔 Alerts"
 enable_alerts = input.bool(true, "Enable Alerts", group=group_alerts)
+enable_traderspost = input.bool(false, "Enable TradersPost", group=group_alerts)
+traderspost_strategy_id = input.string("MCL_3H", "Strategy ID", group=group_alerts)
 
-// ==================== TECHNICAL INDICATORS ====================
+// ==================== TECHNICAL INDICATORS (ORIGINAL BOT) ====================
 
-// MA Function
-ma_function(src, length, maType) =>
-    switch maType
+ma_function(src, length, ma_type) =>
+    switch ma_type
         "SMA" => ta.sma(src, length)
         "EMA" => ta.ema(src, length)
         "WMA" => ta.wma(src, length)
         => ta.ema(src, length)
 
-// Calculate indicators
 ma_fast = ma_function(close, ma_fast_length, ma_type)
 ma_slow = ma_function(close, ma_slow_length, ma_type)
 rsi = ta.rsi(close, rsi_length)
@@ -121,56 +118,41 @@ volume_ma = ta.sma(volume, volume_ma_length)
 high_volume = volume > volume_ma * volume_threshold
 [bb_upper, bb_middle, bb_lower] = ta.bb(close, bb_length, bb_mult)
 
-// HTF Data
-htf_ma_fast = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_fast_length, ma_type), barmerge.gaps_off, barmerge.lookahead_off)
-htf_ma_slow = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_slow_length, ma_type), barmerge.gaps_off, barmerge.lookahead_off)
+htf_ma_fast = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_fast_length, ma_type))
+htf_ma_slow = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_slow_length, ma_type))
 htf_trend_up = htf_ma_fast > htf_ma_slow
 htf_trend_down = htf_ma_fast < htf_ma_slow
 
-// ADX
 [diPlus, diMinus, adx] = ta.dmi(14, 14)
 
-// ==================== SIGNAL GENERATION ====================
+// ==================== SIGNAL GENERATION (ORIGINAL BOT) ====================
 
-// Trend conditions
 trend_up = ma_fast > ma_slow
 trend_down = ma_fast < ma_slow
-
-// Momentum conditions
 momentum_bullish = rsi > 50 and macd_line > signal_line
 momentum_bearish = rsi < 50 and macd_line < signal_line
-
-// Extreme conditions
 oversold_bounce = rsi < rsi_oversold and close < bb_lower
 overbought_pullback = rsi > rsi_overbought and close > bb_upper
-
-// Volume confirmation
 volume_confirmation = high_volume
-
-// HTF alignment
 htf_bullish_alignment = htf_trend_up
 htf_bearish_alignment = htf_trend_down
 
-// MA crossovers
-long_ma_cross = ta.crossover(ma_fast, ma_slow)
-short_ma_cross = ta.crossunder(ma_fast, ma_slow)
-
-// Combined conditions
 long_trend = trend_up and htf_bullish_alignment
 long_momentum = momentum_bullish or oversold_bounce
 long_volume = volume_confirmation
+long_ma_cross = ta.crossover(ma_fast, ma_slow)
 long_condition = (long_trend and long_momentum and long_volume) or (long_ma_cross and htf_bullish_alignment)
 
 short_trend = trend_down and htf_bearish_alignment
 short_momentum = momentum_bearish or overbought_pullback
 short_volume = volume_confirmation
+short_ma_cross = ta.crossunder(ma_fast, ma_slow)
 short_condition = (short_trend and short_momentum and short_volume) or (short_ma_cross and htf_bearish_alignment)
 
-// Exit conditions
 long_exit = ta.crossunder(ma_fast, ma_slow) or rsi > rsi_overbought
 short_exit = ta.crossover(ma_fast, ma_slow) or rsi < rsi_oversold
 
-// ==================== QUALITY SCORE ====================
+// ==================== QUALITY SCORE (OPTIONAL) ====================
 
 quality_score = 0
 if (ma_fast > ma_slow and htf_trend_up) or (ma_fast < ma_slow and htf_trend_down)
@@ -251,12 +233,15 @@ short_reversal_exit = use_reversal_exit and strategy.position_size < 0 and bulli
 
 filters_ok = not daily_loss_breach and not daily_trades_breach and quality_passed
 
-// ==================== POSITION SIZING ====================
+// ==================== POSITION SIZING (ORIGINAL BOT METHOD) ====================
 
+// THIS IS THE EXACT ORIGINAL BOT CALCULATION
 position_size = strategy.equity * position_size_pct / 100 / close
+
+// Override with fixed contracts if enabled
 final_position_size = use_fixed_contracts ? fixed_contracts : position_size
 
-// ==================== STOP/TARGET CALCULATION ====================
+// ==================== STOP/TARGET CALCULATION (ORIGINAL BOT) ====================
 
 long_stop_loss = close * (1 - stop_loss_pct / 100)
 long_take_profit = close * (1 + take_profit_pct / 100)
@@ -287,7 +272,7 @@ short_tp4 = use_4tier_tp ? close * (1 - tp4_pct / 100) : na
 long_emergency_exit = long_exit or floating_protection_triggered or mae_protection_triggered or long_reversal_exit
 short_emergency_exit = short_exit or floating_protection_triggered or mae_protection_triggered or short_reversal_exit
 
-// ==================== STRATEGY EXECUTION ====================
+// ==================== STRATEGY EXECUTION (ORIGINAL BOT LOGIC) ====================
 
 // Long Entry
 if long_condition and strategy.position_size == 0 and filters_ok
@@ -301,14 +286,12 @@ if long_condition and strategy.position_size == 0 and filters_ok
         strategy.entry("Long", strategy.long, qty=final_position_size)
     
     if enable_alerts
-        alert('{"action":"buy","ticker":"' + syminfo.ticker + '","qty":' + str.tostring(final_position_size, "#.##") + ',"quality":' + str.tostring(quality_score) + '}', alert.freq_once_per_bar)
+        alert("🚀 LONG ENTRY | Size: " + str.tostring(final_position_size, "#.##") + " | Q: " + str.tostring(quality_score), alert.freq_once_per_bar)
 
 // Long Exits
 if strategy.position_size > 0
     if long_emergency_exit
         strategy.close_all(comment="Emergency Exit")
-        if enable_alerts
-            alert('{"action":"close","ticker":"' + syminfo.ticker + '","reason":"emergency"}', alert.freq_once_per_bar)
     else
         if use_4tier_tp
             strategy.exit("TP1", "Long1", stop=long_be_stop, limit=long_tp1)
@@ -339,14 +322,12 @@ if short_condition and strategy.position_size == 0 and filters_ok
         strategy.entry("Short", strategy.short, qty=final_position_size)
     
     if enable_alerts
-        alert('{"action":"sell","ticker":"' + syminfo.ticker + '","qty":' + str.tostring(final_position_size, "#.##") + ',"quality":' + str.tostring(quality_score) + '}', alert.freq_once_per_bar)
+        alert("🚀 SHORT ENTRY | Size: " + str.tostring(final_position_size, "#.##") + " | Q: " + str.tostring(quality_score), alert.freq_once_per_bar)
 
 // Short Exits
 if strategy.position_size < 0
     if short_emergency_exit
         strategy.close_all(comment="Emergency Exit")
-        if enable_alerts
-            alert('{"action":"close","ticker":"' + syminfo.ticker + '","reason":"emergency"}', alert.freq_once_per_bar)
     else
         if use_4tier_tp
             strategy.exit("TP1", "Short1", stop=short_be_stop, limit=short_tp1)
@@ -373,17 +354,16 @@ plot(bb_upper, color=color.gray, title="BB Upper")
 plot(bb_lower, color=color.gray, title="BB Lower")
 plot(bb_middle, color=color.yellow, title="BB Middle")
 
-plotshape(long_condition and filters_ok, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY")
-plotshape(short_condition and filters_ok, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+plotshape(long_condition and filters_ok, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_condition and filters_ok, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
 
 bgcolor(htf_trend_up ? color.new(color.green, 95) : htf_trend_down ? color.new(color.red, 95) : na)
 bgcolor(in_profit_protection ? color.new(color.blue, 98) : na)
 
 // ==================== PERFORMANCE TABLE ====================
 
-var table info_table = table.new(position.top_right, 2, 12, bgcolor=color.white, border_width=1)
-
 if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 12, bgcolor=color.white, border_width=1)
     table.cell(info_table, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
     table.cell(info_table, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
     
@@ -401,7 +381,7 @@ if barstate.islast
     table.cell(info_table, 1, 4, str.tostring(win_rate, "#.##") + "%", text_color=win_rate > 50 ? color.green : color.red)
     
     table.cell(info_table, 0, 5, "Profit Factor", text_color=color.black)
-    profit_factor = strategy.grossloss != 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : 0
+    profit_factor = strategy.losstrades > 0 ? strategy.grossprofit / strategy.grossloss : na
     table.cell(info_table, 1, 5, str.tostring(profit_factor, "#.##"), text_color=profit_factor > 1 ? color.green : color.red)
     
     table.cell(info_table, 0, 6, "Max DD", text_color=color.black)
