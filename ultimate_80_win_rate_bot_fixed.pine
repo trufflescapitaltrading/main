@@ -309,14 +309,17 @@ volRegimeATRLen = input.int(20, "Volatility ATR Length", minval=10, maxval=50, g
 currentHourET = hour(time, "America/New_York")
 currentMinuteET = minute(time, "America/New_York")
 currentTime = currentHourET * 100 + currentMinuteET
-isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
+inTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
 
-isAsianSession = enableAsianSession and enable24_7Trading and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
-isLondonSession = enableLondonSession and enable24_7Trading and ((londonStart <= londonEnd and currentTime >= londonStart and currentTime < londonEnd) or (londonStart > londonEnd and (currentTime >= londonStart or currentTime < londonEnd)))
-isNYSession = enableNYSession and enable24_7Trading and ((nyStart <= nyEnd and currentTime >= nyStart and currentTime < nyEnd) or (nyStart > nyEnd and (currentTime >= nyStart or currentTime < nyEnd)))
-isUAESession = enableUAESession and enable24_7Trading and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
+inAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
+inLondonSession = enableLondonSession and ((londonStart <= londonEnd and currentTime >= londonStart and currentTime < londonEnd) or (londonStart > londonEnd and (currentTime >= londonStart or currentTime < londonEnd)))
+inNYSession = enableNYSession and ((nyStart <= nyEnd and currentTime >= nyStart and currentTime < nyEnd) or (nyStart > nyEnd and (currentTime >= nyStart or currentTime < nyEnd)))
+inUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
 
-canTradeNow = enable24_7Trading and isTradingHours
+// FIX: "Enable 24/7 Trading" should not accidentally BLOCK trading.
+// - If enable24_7Trading=true -> trade anytime
+// - Else -> trade if within any enabled time window
+canTradeNow = enable24_7Trading ? true : (inTradingHours or inAsianSession or inLondonSession or inNYSession or inUAESession)
 
 // Additional check: Remove any potential time restrictions after 9:40 AM
 // Ensure trading continues throughout the session
@@ -637,11 +640,12 @@ if strictEntryOK
     confluenceScore := confluenceScore + 1
 
 // MES specific filters
-mesSpecificOK = not enableMesAntiChop or not isMES or (adxValue >= mesMinADXForEntry and confluenceScore >= (6 - mesConfluenceBoost) and htfAlignedBull >= mesMinHTFAligned)
+mesSpecificOKLong = not enableMesAntiChop or not isMES or (adxValue >= mesMinADXForEntry and confluenceScore >= (6 - mesConfluenceBoost) and htfAlignedBull >= mesMinHTFAligned)
+mesSpecificOKShort = not enableMesAntiChop or not isMES or (adxValue >= mesMinADXForEntry and confluenceScore >= (6 - mesConfluenceBoost) and htfAlignedBear >= mesMinHTFAligned)
 
 // Base entry conditions
-baseLongCondition = trendRegimeOK and patternOKLong and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOK and not choppyMarket and canTradeNowEnhanced
-baseShortCondition = trendRegimeOK and patternOKShort and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOK and not choppyMarket and canTradeNowEnhanced
+baseLongCondition = trendRegimeOK and patternOKLong and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOKLong and not choppyMarket and canTradeNowEnhanced
+baseShortCondition = trendRegimeOK and patternOKShort and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOKShort and not choppyMarket and canTradeNowEnhanced
 
 finalLongCondition = baseLongCondition and confluenceScore >= confluenceLevel
 finalShortCondition = baseShortCondition and confluenceScore >= confluenceLevel
@@ -671,8 +675,9 @@ sameBarDedupeOK = not dedupeSameBar or (bar_index != lastEntryBar)
 
 dailyLossOK = not enableDailyLossCircuit or dailyPnL > -maxDailyLossDollars
 
-shouldEnterLong = finalLongCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
-shouldEnterShort = finalShortCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
+barCloseOK = not enterOnBarClose or barstate.isconfirmed
+shouldEnterLong = barCloseOK and finalLongCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
+shouldEnterShort = barCloseOK and finalShortCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
 
 if shouldEnterLong
     strategy.entry("LONG", strategy.long, comment=priorityLevel)
