@@ -1,5 +1,5 @@
 //@version=5
-strategy("ULTIMATE 80% WIN RATE BOT - FIXED", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+strategy("ULTIMATE 80% WIN RATE BOT - FIXED", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true, max_lines_count=500, max_labels_count=500)
 
 // ==================== 💰 PROFIT TARGETS & RISK MANAGEMENT ====================
 profitTargetGroup = "💰 Daily Profit Target"
@@ -540,6 +540,7 @@ var int barsInTrade = 0
 var float maxProfit = 0.0
 var float maxLoss = 0.0
 var bool nuclearTriggered = false
+var label lastSignalLabel = na
 
 // Global variables for profit logic
 var float targetPoints = 10.0
@@ -859,26 +860,48 @@ plotshape(shouldEnterLong, "LONG", shape.triangleup, location.belowbar, color=co
 plotshape(shouldEnterShort, "SHORT", shape.triangledown, location.abovebar, color=color.red, size=size.normal, text="SHORT")
 
 if shouldEnterLong or shouldEnterShort
-    label.new(bar_index, high, priorityLevel, color=color.new(color.black, 0), textcolor=color.white, size=size.small)
+    if not na(lastSignalLabel)
+        label.delete(lastSignalLabel)
+    lastSignalLabel := label.new(bar_index, high, priorityLevel, color=color.new(color.black, 0), textcolor=color.white, size=size.small)
 
 var line tpLine = na
 var line slLine = na
-if strategy.position_size != 0 and enableOptimized83WR
+
+inPosition_plot = strategy.position_size != 0
+posJustOpened_plot = inPosition_plot and strategy.position_size[1] == 0
+posJustClosed_plot = not inPosition_plot and strategy.position_size[1] != 0
+
+// Avoid runtime errors / object-limit issues:
+// create TP/SL guide lines once per trade, update while in trade, delete safely on close.
+if enableOptimized83WR and posJustOpened_plot
+    float tpLevel = na
+    float slLevel = na
     if isMES and timeframe.period == "3"
-        tpLevel = strategy.position_size > 0 ? (entryPrice + mes3m_optimizedTarget) : (entryPrice - mes3m_optimizedTarget)
-        slLevel = strategy.position_size > 0 ? (entryPrice - mes3m_optimizedSL) : (entryPrice + mes3m_optimizedSL)
-        tpLine := line.new(bar_index, tpLevel, bar_index + 50, tpLevel, color=color.green, width=2, style=line.style_dashed)
-        slLine := line.new(bar_index, slLevel, bar_index + 50, slLevel, color=color.red, width=2, style=line.style_dashed)
+        tpLevel := strategy.position_size > 0 ? (entryPrice + mes3m_optimizedTarget) : (entryPrice - mes3m_optimizedTarget)
+        slLevel := strategy.position_size > 0 ? (entryPrice - mes3m_optimizedSL) : (entryPrice + mes3m_optimizedSL)
     else if isMNQ and timeframe.period == "3"
-        tpLevel = strategy.position_size > 0 ? (entryPrice + mnq3m_optimizedTP1) : (entryPrice - mnq3m_optimizedTP1)
-        slLevel = strategy.position_size > 0 ? (entryPrice - mnq3m_optimizedSL) : (entryPrice + mnq3m_optimizedSL)
+        tpLevel := strategy.position_size > 0 ? (entryPrice + mnq3m_optimizedTP1) : (entryPrice - mnq3m_optimizedTP1)
+        slLevel := strategy.position_size > 0 ? (entryPrice - mnq3m_optimizedSL) : (entryPrice + mnq3m_optimizedSL)
+
+    if not na(tpLevel) and not na(slLevel)
+        if not na(tpLine)
+            line.delete(tpLine)
+        if not na(slLine)
+            line.delete(slLine)
         tpLine := line.new(bar_index, tpLevel, bar_index + 50, tpLevel, color=color.green, width=2, style=line.style_dashed)
         slLine := line.new(bar_index, slLevel, bar_index + 50, slLevel, color=color.red, width=2, style=line.style_dashed)
-else
-    line.delete(tpLine)
-    line.delete(slLine)
-    tpLine := na
-    slLine := na
+
+if enableOptimized83WR and inPosition_plot and not na(tpLine) and not na(slLine)
+    line.set_x2(tpLine, bar_index + 50)
+    line.set_x2(slLine, bar_index + 50)
+
+if posJustClosed_plot or not enableOptimized83WR
+    if not na(tpLine)
+        line.delete(tpLine)
+        tpLine := na
+    if not na(slLine)
+        line.delete(slLine)
+        slLine := na
 
 // ==================== 📊 COMPREHENSIVE PERFORMANCE TABLE ====================
 var table perfTable = table.new(position.top_right, 2, 15, border_width=1)
