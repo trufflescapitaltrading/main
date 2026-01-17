@@ -1393,8 +1393,12 @@ profitTargetReached = enableDailyProfitTarget and dailyPnL >= dailyProfitTarget
 var bool tookTradeThisBar = false
 var string entryPriority = "NONE"
 var string activeSignalType = "NONE"
+// Exit arbitration + diagnostics (prevents multiple conflicting closes per bar).
+var bool exitIssuedThisBar = false
+var string lastExitReason = "NONE"
 if barstate.isnew
     tookTradeThisBar := false
+    exitIssuedThisBar := false
 
 bool canEnterNewPosition = strategy.position_size == 0
 maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades
@@ -1563,6 +1567,61 @@ entryOK =
 bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
 bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
+// ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
+var string lastBlockReason = "NONE"
+rawLongSignal = (hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or ultraBuySignal or swingBuySignal)
+rawShortSignal = (hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or ultraSellSignal or swingSellSignal)
+
+if strategy.position_size == 0
+    // Default to NONE unless we detect a blocked actionable signal.
+    lastBlockReason := "NONE"
+    // Long-side block reason (only when a long-ish signal exists but no long entry fires)
+    if rawLongSignal and not longCondition
+        lastBlockReason :=
+             not canTradeNow ? "TIME" :
+             maxTradesReached ? "DAILY_TRADES" :
+             maxLossReached ? "DAILY_LOSS" :
+             profitTargetReached ? "DAILY_TARGET" :
+             instrumentRiskLimitReached ? "INSTR_RISK" :
+             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
+             (enableTrendOnly and not routerLongRegimeOK and not bypassLong) ? "TREND_ONLY" :
+             (enableBestSideRouter and not allowLongByBias) ? "BIAS_LOCK" :
+             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "VOL_REGIME" :
+             (not htfConfirmLongOK and not (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "HTF_ALIGN" :
+             (not strengthGateLongOK) ? "STRENGTH" :
+             (not (v71_strictEntryOK or strictBypassLong)) ? "STRICT_FILTER" :
+             (not trendOnlyLongGate) ? "MANDATORY_TREND" :
+             (not mtfLongOK) ? "MTF_FILTER" :
+             (not candleConfirmLong) ? "CANDLE_CONFIRM" :
+             (not dedupeLongOK) ? "DEDUPE" :
+             (not htfCandleColorOK_Long) ? "5M_COLOR" :
+             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
+             "OTHER"
+    // Short-side block reason (only when a short-ish signal exists but no short entry fires)
+    else if rawShortSignal and not shortCondition
+        lastBlockReason :=
+             not canTradeNow ? "TIME" :
+             maxTradesReached ? "DAILY_TRADES" :
+             maxLossReached ? "DAILY_LOSS" :
+             profitTargetReached ? "DAILY_TARGET" :
+             instrumentRiskLimitReached ? "INSTR_RISK" :
+             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
+             (enableTrendOnly and not routerShortRegimeOK and not bypassShort) ? "TREND_ONLY" :
+             (enableBestSideRouter and not allowShortByBias) ? "BIAS_LOCK" :
+             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "VOL_REGIME" :
+             (not htfConfirmShortOK and not (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "HTF_ALIGN" :
+             (not strengthGateShortOK) ? "STRENGTH" :
+             (not (v71_strictEntryOK or strictBypassShort)) ? "STRICT_FILTER" :
+             (not trendOnlyShortGate) ? "MANDATORY_TREND" :
+             (not mtfShortOK) ? "MTF_FILTER" :
+             (not candleConfirmShort) ? "CANDLE_CONFIRM" :
+             (not dedupeShortOK) ? "DEDUPE" :
+             (not htfCandleColorOK_Short) ? "5M_COLOR" :
+             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
+             "OTHER"
+
 if longCondition and strategy.position_size == 0
     activeSignalType := hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0
@@ -1692,8 +1751,10 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
 
     if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGap = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
-        if open <= protectStopGap
+        if open <= protectStopGap and not exitIssuedThisBar
             strategy.close_all(comment="GAP_STOP_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "GAP_STOP"
 
     if useTP and useEnhancedTP
         tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
@@ -1706,7 +1767,10 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
         strategy.exit("V20_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
 
     if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
-        strategy.close("LONG", comment="V20_TIME_EXIT_LONG")
+        if not exitIssuedThisBar
+            strategy.close("LONG", comment="V20_TIME_EXIT_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "V20_TIME_EXIT"
 
     if useSL
         if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
@@ -1730,8 +1794,10 @@ if useV20KenyaPerfectProfit and strategy.position_size < 0
 
     if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGapS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
-        if open >= protectStopGapS
+        if open >= protectStopGapS and not exitIssuedThisBar
             strategy.close_all(comment="GAP_STOP_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "GAP_STOP"
 
     if useTP and useEnhancedTP
         tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
@@ -1744,7 +1810,10 @@ if useV20KenyaPerfectProfit and strategy.position_size < 0
         strategy.exit("V20_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
 
     if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
-        strategy.close("SHORT", comment="V20_TIME_EXIT_SHORT")
+        if not exitIssuedThisBar
+            strategy.close("SHORT", comment="V20_TIME_EXIT_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "V20_TIME_EXIT"
 
     if useSL
         if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
@@ -2081,15 +2150,21 @@ if enableBackupSL and strategy.position_size != 0 and not na(entryPrice)
     backupSLDistance = getBackupSL()
     if strategy.position_size > 0
         backupStopLevel = entryPrice - backupSLDistance
-        if close <= backupStopLevel
+        if close <= backupStopLevel and not exitIssuedThisBar
             strategy.close("LONG", comment="BACKUP_SL")
+            exitIssuedThisBar := true
+            lastExitReason := "BACKUP_SL"
     else if strategy.position_size < 0
         backupStopLevel = entryPrice + backupSLDistance
-        if close >= backupStopLevel
+        if close >= backupStopLevel and not exitIssuedThisBar
             strategy.close("SHORT", comment="BACKUP_SL")
+            exitIssuedThisBar := true
+            lastExitReason := "BACKUP_SL"
 
-if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclearMaxBars
+if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclearMaxBars and not exitIssuedThisBar
     strategy.close_all(comment="NUCLEAR_EXIT")
+    exitIssuedThisBar := true
+    lastExitReason := "NUCLEAR_EXIT"
 
 // V71: Momentum-Fade Exit System
 v71_rsiNow = rsi
@@ -2098,30 +2173,48 @@ v71_inProfit = strategy.position_size > 0 ? (close > entryPrice) : strategy.posi
 if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars
     if strategy.position_size > 0
         if v71_rsiNow < v71_rsiPrev - momentumFadeThreshold and v71_rsiNow < 50
-            strategy.close("LONG", comment="V71_MOM_FADE")
+            if not exitIssuedThisBar
+                strategy.close("LONG", comment="V71_MOM_FADE")
+                exitIssuedThisBar := true
+                lastExitReason := "V71_MOM_FADE"
     else if strategy.position_size < 0
         if v71_rsiNow > v71_rsiPrev + momentumFadeThreshold and v71_rsiNow > 50
-            strategy.close("SHORT", comment="V71_MOM_FADE")
+            if not exitIssuedThisBar
+                strategy.close("SHORT", comment="V71_MOM_FADE")
+                exitIssuedThisBar := true
+                lastExitReason := "V71_MOM_FADE"
 
 strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull
 strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear
 kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
 if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
     if strategy.position_size > 0 and strongOpposingSell
-        strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
+        if not exitIssuedThisBar
+            strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
+            exitIssuedThisBar := true
+            lastExitReason := "SIGNAL_REVERSAL"
     else if strategy.position_size < 0 and strongOpposingBuy
-        strategy.close("SHORT", comment="SIGNAL_REVERSAL_STRONG")
+        if not exitIssuedThisBar
+            strategy.close("SHORT", comment="SIGNAL_REVERSAL_STRONG")
+            exitIssuedThisBar := true
+            lastExitReason := "SIGNAL_REVERSAL"
 
-if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay
+if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay and not exitIssuedThisBar
     strategy.close_all(comment="EOD_EXIT")
+    exitIssuedThisBar := true
+    lastExitReason := "EOD_EXIT"
 
 if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice)
     lossThresholdDollars = (strategy.equity * losingTradeThreshold / 100)
-    if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0
+    if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0 and not exitIssuedThisBar
         strategy.close_all(comment="LOSING_AUTO")
+        exitIssuedThisBar := true
+        lastExitReason := "LOSING_AUTO"
 
-if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars
+if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar
     strategy.close_all(comment="MAX_HOLD")
+    exitIssuedThisBar := true
+    lastExitReason := "MAX_HOLD"
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
 tpUseSim = tpSimulateBrokerPosition or alertOnlyMode
@@ -2296,7 +2389,7 @@ optimalSessionBg = isOptimalSession ? color.new(color.green, 97) : na
 bgcolor(isOptimalSession ? optimalSessionBg : na, title="Optimal Session")
 
 // ==================== 📊 PERFORMANCE METRICS TABLE ====================
-var table perfTable = table.new(position.top_right, 2, 12, border_width=1)
+var table perfTable = table.new(position.top_right, 2, 14, border_width=1)
 winRateAll = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
 targetProgress = dailyProfitTarget > 0 ? (dailyPnL / dailyProfitTarget) * 100 : 0
 if barstate.islast
@@ -2328,4 +2421,10 @@ if barstate.islast
     table.cell(perfTable, 1, 10, v71StatusText, text_color=v71StatusColor, bgcolor=color.new(color.gray, 85))
     table.cell(perfTable, 0, 11, "VOL ADJ", text_color=color.white, bgcolor=color.new(color.purple, 70))
     table.cell(perfTable, 1, 11, str.tostring(v71_volAdjust, "#.##") + "x", text_color=v71_volAdjust < 1.0 ? color.orange : color.white, bgcolor=color.new(color.gray, 85))
+
+    table.cell(perfTable, 0, 12, "BLOCK", text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(perfTable, 1, 12, lastBlockReason, text_color=lastBlockReason == "NONE" ? color.green : color.white, bgcolor=color.new(color.gray, 85))
+
+    table.cell(perfTable, 0, 13, "LAST EXIT", text_color=color.white, bgcolor=color.new(color.orange, 70))
+    table.cell(perfTable, 1, 13, lastExitReason, text_color=color.white, bgcolor=color.new(color.gray, 85))
 
