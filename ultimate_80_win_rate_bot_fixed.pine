@@ -352,9 +352,9 @@ rsi = ta.rsi(close, 6)
 stochK = ta.stoch(close, high, low, 6)
 stochD = ta.sma(stochK, 3)
 
-// ADX (built-in; avoids NaN/zero-div edge cases)
+// ADX (use DMI; ADX is 3rd output)
 adxLen = 14
-adxValue = ta.adx(adxLen)
+[_, __, adxValue] = ta.dmi(adxLen, adxLen)
 
 // Bollinger Bands
 [bbMiddle, bbUpper, bbLower] = ta.bb(close, 20, 2)
