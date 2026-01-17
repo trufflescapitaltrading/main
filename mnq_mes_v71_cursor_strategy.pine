@@ -362,6 +362,7 @@ tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker positi
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
 tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group="TradersPost Router")
+tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 actualTicker = useAutoSymbol ? syminfo.ticker : (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 
 require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
@@ -2220,12 +2221,21 @@ tpFlat = tpUseSim ? (tpPosDir == 0) : (strategy.position_size == 0)
 tpLong = tpUseSim ? (tpPosDir == 1) : (strategy.position_size > 0)
 tpShort = tpUseSim ? (tpPosDir == -1) : (strategy.position_size < 0)
 
+tpSession =
+     isLondonSession ? "LONDON" :
+     isNYSession ? "NY" :
+     isAsianSession ? "ASIAN" :
+     isUAESession ? "UAE" : "OTHER"
+
 // If a reverse signal occurs while a broker position exists, optionally send EXIT first to prevent rejections.
 if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat and not tookTradeThisBar
     if (longCondition and tpShort) or (shortCondition and tpLong)
-        exitNowMessage = '{' + '"ticker":"' + actualTicker + '",' +
+        exitNowMessage = '{' +
+             '"ticker":"' + actualTicker + '",' +
              '"action":"exit",' +
-             '"orderType":"market",' +
+             '"strategy":"' + tpStrategyName + '",' +
+             '"timeframe":"' + timeframe.period + '",' +
+             '"instrument":"' + instrumentName + '",' +
              '"timestamp":"' + str.tostring(time) + '"' +
              '}'
         alert(exitNowMessage, alert.freq_once_per_bar)
@@ -2247,27 +2257,28 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
     localTP1 = close + currentTP1_pts
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
-    longEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    longEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"buy",' +
-         '"sentiment":"bullish",' +
-         '"orderType":"market",' +
-         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"quantity":"' + str.tostring(finalContractQty) + '",' +
          '"price":"' + str.tostring(close) + '",' +
          '"stop_loss":"' + str.tostring(localSL) + '",' +
          '"take_profit":"' + str.tostring(localTP1) + '",' +
          (enableDollarStops ? ('"stop_loss_amount":"' + str.tostring(slDol) + '",') : "") +
          (enableDollarStops ? ('"take_profit_amount":"' + str.tostring(tpDol) + '",') : "") +
-         '"stopLoss":{"stopPrice":"' + str.tostring(localSL) + '"},' +
-         '"takeProfit":{"limitPrice":"' + str.tostring(localTP1) + '"},' +
-         '"signalType":"' + activeSignalType + '",' +
-         '"priority":"' + selectedPriority + '",' +
-         '"entryPrice":' + str.tostring(close) + ',' +
-         (includeSignalPrice ? ('"signal_price":"' + str.tostring(close) + '",') : "") +
-         '"direction":"LONG",' +
-         '"starScore":' + str.tostring(starScore) + ',' +
-         '"htfAlignment":' + str.tostring(htfAlignLongCount) + ',' +
-         '"adx":' + str.tostring(adxValue) + ',' +
-         '"rsi":' + str.tostring(rsi) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_type":"' + activeSignalType + '",' +
+         '"confluence":' + str.tostring(totalConfluenceScore) + ',' +
+         '"session":"' + tpSession + '",' +
+         '"signal_price":"' + str.tostring(close) + '",' +
+         '"mtf_alignment_pct":' + str.tostring(mtf_alignment_pct) + ',' +
+         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + (candleBull ? "GREEN" : "RED") + '",' +
+         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
@@ -2277,10 +2288,14 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
 
 // Same-direction behavior: ignore or "add" (prevents TradersPost rejections when a position already exists).
 if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
-    addLongMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    addLongMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"add",' +
-         '"orderType":"market",' +
-         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"quantity":"' + str.tostring(finalContractQty) + '",' +
+         '"price":"' + str.tostring(close) + '",' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(addLongMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
@@ -2299,27 +2314,28 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
     localTP1 = close - currentTP1_pts
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
-    shortEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    shortEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"sell",' +
-         '"sentiment":"bearish",' +
-         '"orderType":"market",' +
-         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"quantity":"' + str.tostring(finalContractQty) + '",' +
          '"price":"' + str.tostring(close) + '",' +
          '"stop_loss":"' + str.tostring(localSL) + '",' +
          '"take_profit":"' + str.tostring(localTP1) + '",' +
          (enableDollarStops ? ('"stop_loss_amount":"' + str.tostring(slDol) + '",') : "") +
          (enableDollarStops ? ('"take_profit_amount":"' + str.tostring(tpDol) + '",') : "") +
-         '"stopLoss":{"stopPrice":"' + str.tostring(localSL) + '"},' +
-         '"takeProfit":{"limitPrice":"' + str.tostring(localTP1) + '"},' +
-         '"signalType":"' + activeSignalType + '",' +
-         '"priority":"' + selectedPriority + '",' +
-         '"entryPrice":' + str.tostring(close) + ',' +
-         (includeSignalPrice ? ('"signal_price":"' + str.tostring(close) + '",') : "") +
-         '"direction":"SHORT",' +
-         '"starScore":' + str.tostring(starScore) + ',' +
-         '"htfAlignment":' + str.tostring(htfAlignShortCount) + ',' +
-         '"adx":' + str.tostring(adxValue) + ',' +
-         '"rsi":' + str.tostring(rsi) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_type":"' + activeSignalType + '",' +
+         '"confluence":' + str.tostring(totalConfluenceScore) + ',' +
+         '"session":"' + tpSession + '",' +
+         '"signal_price":"' + str.tostring(close) + '",' +
+         '"mtf_alignment_pct":' + str.tostring(mtf_alignment_pct) + ',' +
+         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + (candleBear ? "RED" : "GREEN") + '",' +
+         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
@@ -2328,19 +2344,26 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
         tpPosBar := bar_index
 
 if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
-    addShortMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    addShortMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"add",' +
-         '"orderType":"market",' +
-         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"quantity":"' + str.tostring(finalContractQty) + '",' +
+         '"price":"' + str.tostring(close) + '",' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(addShortMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
     tookTradeThisBar := true
 
 if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
-    exitMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    exitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
-         '"orderType":"market",' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(exitMessage, alert.freq_once_per_bar)
@@ -2350,9 +2373,12 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTrad
 
 // Alert-only safety: send EOD exit to reconcile broker state.
 if tpSendEODExitAlert and useEndOfDayExits and isEndOfDay and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and not tookTradeThisBar
-    eodExitMessage = '{' + '"ticker":"' + actualTicker + '",' +
+    eodExitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
-         '"orderType":"market",' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(eodExitMessage, alert.freq_once_per_bar)
