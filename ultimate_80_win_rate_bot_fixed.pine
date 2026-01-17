@@ -352,7 +352,8 @@ emaLong = ta.ema(close, 50)
 
 // RSI and Stoch
 rsi = ta.rsi(close, 6)
-stochK = ta.stoch(close, high, low, 6)
+// Pine signature: ta.stoch(high, low, close, length)
+stochK = ta.stoch(high, low, close, 6)
 stochD = ta.sma(stochK, 3)
 
 // ADX (use DMI; ADX is 3rd output)
@@ -647,13 +648,10 @@ mesSpecificOKShort = not enableMesAntiChop or not isMES or (adxValue >= mesMinAD
 baseLongCondition = trendRegimeOK and patternOKLong and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOKLong and not choppyMarket and canTradeNowEnhanced
 baseShortCondition = trendRegimeOK and patternOKShort and htfConfirmOK and strictEntryOK and grayZoneOK and mesSpecificOKShort and not choppyMarket and canTradeNowEnhanced
 
-finalLongCondition = baseLongCondition and confluenceScore >= confluenceLevel
-finalShortCondition = baseShortCondition and confluenceScore >= confluenceLevel
-
-if priorityLong and finalLongCondition
-    finalLongCondition := true
-if priorityShort and finalShortCondition
-    finalShortCondition := true
+// FIX: Priority system must actually bypass strict confluence threshold,
+// otherwise enabling it has no effect and can result in zero trades.
+finalLongCondition = baseLongCondition and (confluenceScore >= confluenceLevel or (enablePrioritySystem and priorityLong))
+finalShortCondition = baseShortCondition and (confluenceScore >= confluenceLevel or (enablePrioritySystem and priorityShort))
 
 if useSignalLineStrict
     finalLongCondition := finalLongCondition and hullMain > hullSignal
