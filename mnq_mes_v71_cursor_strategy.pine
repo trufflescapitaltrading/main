@@ -1742,13 +1742,6 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
     float trueBE = avgPrice + feesPoints
     float lockStop = avgPrice + lockKeepPoints
 
-    if useSL and enableFeeModel and beTriggerHit and canExitNow
-        strategy.exit("BE_FEES_LONG", from_entry="LONG", stop=trueBE)
-
-    if useSL and profitTriggerHit and canExitNow
-        float protectStop = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
-        strategy.exit("PRETP1_LOCK_LONG", from_entry="LONG", stop=protectStop)
-
     if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGap = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
         if open <= protectStopGap and not exitIssuedThisBar
@@ -1772,25 +1765,24 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
             exitIssuedThisBar := true
             lastExitReason := "V20_TIME_EXIT"
 
-    if useSL
+    // Single active protective stop (prevents overlapping BE/lock/trail/SL stop orders).
+    if useSL and not exitIssuedThisBar
+        float v20ProtectStop = localStopLoss
+        if enableFeeModel and beTriggerHit and canExitNow
+            v20ProtectStop := math.max(v20ProtectStop, trueBE)
+        if profitTriggerHit and canExitNow
+            float protectStop = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
+            v20ProtectStop := math.max(v20ProtectStop, protectStop)
         if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
             trailDistance = atrMain * 0.6
-            strategy.exit("TrailSL_LONG", from_entry="LONG", stop=close - trailDistance)
-        else
-            strategy.exit("SL_LONG", from_entry="LONG", stop=localStopLoss)
+            v20ProtectStop := math.max(v20ProtectStop, close - trailDistance)
+        strategy.exit("V20_PROTECT_L", from_entry="LONG", stop=v20ProtectStop)
 
 if useV20KenyaPerfectProfit and strategy.position_size < 0
     float avgPrice = strategy.position_avg_price
     float localStopLoss = avgPrice + exitSL
     float trueBE_S = avgPrice - feesPoints
     float lockStopS = avgPrice - lockKeepPoints
-
-    if useSL and enableFeeModel and beTriggerHit and canExitNow
-        strategy.exit("BE_FEES_SHORT", from_entry="SHORT", stop=trueBE_S)
-
-    if useSL and profitTriggerHit and canExitNow
-        float protectStopS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
-        strategy.exit("PRETP1_LOCK_SHORT", from_entry="SHORT", stop=protectStopS)
 
     if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGapS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
@@ -1815,12 +1807,18 @@ if useV20KenyaPerfectProfit and strategy.position_size < 0
             exitIssuedThisBar := true
             lastExitReason := "V20_TIME_EXIT"
 
-    if useSL
+    // Single active protective stop (prevents overlapping BE/lock/trail/SL stop orders).
+    if useSL and not exitIssuedThisBar
+        float v20ProtectStopS = localStopLoss
+        if enableFeeModel and beTriggerHit and canExitNow
+            v20ProtectStopS := math.min(v20ProtectStopS, trueBE_S)
+        if profitTriggerHit and canExitNow
+            float protectStopS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
+            v20ProtectStopS := math.min(v20ProtectStopS, protectStopS)
         if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
             trailDistance = atrMain * 0.6
-            strategy.exit("TrailSL_SHORT", from_entry="SHORT", stop=close + trailDistance)
-        else
-            strategy.exit("SL_SHORT", from_entry="SHORT", stop=localStopLoss)
+            v20ProtectStopS := math.min(v20ProtectStopS, close + trailDistance)
+        strategy.exit("V20_PROTECT_S", from_entry="SHORT", stop=v20ProtectStopS)
 
 // ==================== LEGACY PROFIT SYSTEM (disabled when V20 module is on) ====================
 if not useV20KenyaPerfectProfit and strategy.position_size > 0
