@@ -89,6 +89,7 @@ useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 
 kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
+v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
 
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
@@ -1739,7 +1740,14 @@ exitSL = slExecutionMode == "ATR" ? futuresStopDistance : slExecutionMode == "In
 futuresTPDistance = atrMain * tpMultiplier
 ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 
-if useV20KenyaPerfectProfit and strategy.position_size > 0
+// Profit-module router:
+// - Default behavior: V20 module runs on 5m+ (protects 3m expectancy).
+// - Kenya ladder always wins on MNQ 3m when enabled.
+is3m_chart_profit = timeframe.period == "3"
+kenyaActive_profit = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart_profit
+v20Active_profit = useV20KenyaPerfectProfit and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit
+
+if v20Active_profit and strategy.position_size > 0
     float avgPrice = strategy.position_avg_price
     float localStopLoss = avgPrice - exitSL
     float trueBE = avgPrice + feesPoints
@@ -1781,7 +1789,7 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
             v20ProtectStop := math.max(v20ProtectStop, close - trailDistance)
         strategy.exit("V20_PROTECT_L", from_entry="LONG", stop=v20ProtectStop)
 
-if useV20KenyaPerfectProfit and strategy.position_size < 0
+if v20Active_profit and strategy.position_size < 0
     float avgPrice = strategy.position_avg_price
     float localStopLoss = avgPrice + exitSL
     float trueBE_S = avgPrice - feesPoints
@@ -1824,7 +1832,7 @@ if useV20KenyaPerfectProfit and strategy.position_size < 0
         strategy.exit("V20_PROTECT_S", from_entry="SHORT", stop=v20ProtectStopS)
 
 // ==================== LEGACY PROFIT SYSTEM (disabled when V20 module is on) ====================
-if not useV20KenyaPerfectProfit and strategy.position_size > 0
+if not v20Active_profit and strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
@@ -1986,7 +1994,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
             if useSL
                 strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
 
-if not useV20KenyaPerfectProfit and strategy.position_size < 0
+if not v20Active_profit and strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
