@@ -628,10 +628,10 @@ isOptimalSession = isNYOpen_opt or isNYClose_opt or isLondonNYOverlap_opt
 canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
-isAsianSession = enableAsianSession and enable24_7Trading and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
-isLondonSession = enableLondonSession and enable24_7Trading and ((londonStart <= londonEnd and currentTime >= londonStart and currentTime < londonEnd) or (londonStart > londonEnd and (currentTime >= londonStart or currentTime < londonEnd)))
-isNYSession = enableNYSession and enable24_7Trading and ((nyStart <= nyEnd and currentTime >= nyStart and currentTime <= nyEnd) or (nyStart > nyEnd and (currentTime >= nyStart or currentTime <= nyEnd)))
-isUAESession = enableUAESession and enable24_7Trading and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
+isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
+isLondonSession = enableLondonSession and ((londonStart <= londonEnd and currentTime >= londonStart and currentTime < londonEnd) or (londonStart > londonEnd and (currentTime >= londonStart or currentTime < londonEnd)))
+isNYSession = enableNYSession and ((nyStart <= nyEnd and currentTime >= nyStart and currentTime <= nyEnd) or (nyStart > nyEnd and (currentTime >= nyStart or currentTime <= nyEnd)))
+isUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
 
 instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
 isOptimalForAsian = str.contains(asianBestInstruments, instrumentName)
@@ -648,7 +648,7 @@ else if isNYSession and isOptimalForNY
     activeSessionMultiplier := nyMultiplier
 else if isUAESession and isOptimalForUAE
     activeSessionMultiplier := uaeMultiplier
-else if enable24_7Trading and (isAsianSession or isLondonSession or isUAESession)
+else if (isAsianSession or isLondonSession or isUAESession)
     activeSessionMultiplier := 0.7
 else
     activeSessionMultiplier := 1.0
@@ -1315,11 +1315,13 @@ if useDynamicSizing
 riskMultiplier := math.max(math.min(riskMultiplier, 5.0), 0.1)
 
 effectiveRiskPercent = math.max(math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5), 0.1)
-riskAmountDollars = math.max(strategy.equity * effectiveRiskPercent / 100, 100)
+safePointValue = syminfo.pointvalue > 0 ? syminfo.pointvalue : 1.0
+safePrice = close > 0 ? close : 1.0
+riskAmountDollars = math.max(strategy.equity * effectiveRiskPercent / 100, 0)
 futuresStopDistance = math.max(safeATR * (is1min ? (isMYM ? 1.8 : 2.0) : is2min ? (isMYM ? 2.0 : 2.2) : is3min ? (isMYM ? 2.2 : 2.4) : is5min ? (isMYM ? 2.4 : 2.6) : is10min ? (isMYM ? 2.6 : 2.8) : is15min ? (isMYM ? 2.8 : 3.0) : is30min ? (isMYM ? 3.0 : 3.2) : is1hour ? (isMYM ? 3.2 : 3.4) : is2hour ? (isMYM ? 3.4 : 3.6) : is4hour ? (isMYM ? 3.6 : 3.8) : (isMYM ? 2.6 : 2.8)), syminfo.mintick * 10)
-stopDistanceDollars = math.max(futuresStopDistance * syminfo.pointvalue, 1)
+stopDistanceDollars = math.max(futuresStopDistance * safePointValue, 1)
 contractsFromRisk = math.floor(riskAmountDollars / stopDistanceDollars)
-maxContracts = math.floor((strategy.equity * maxPositionSize / 100) / (close * syminfo.pointvalue))
+maxContracts = math.floor((strategy.equity * maxPositionSize / 100) / (safePrice * safePointValue))
 if useFixedContractSize
     finalContractQty := fixedContracts
 else if useDynamicSizing
@@ -1631,36 +1633,37 @@ if useV20KenyaPerfectProfit and strategy.position_size > 0
     float trueBE = avgPrice + feesPoints
     float lockStop = avgPrice + lockKeepPoints
 
-    if enableFeeModel and beTriggerHit and canExitNow
-        strategy.exit("BE_FEES_LONG", stop=trueBE)
+    if useSL and enableFeeModel and beTriggerHit and canExitNow
+        strategy.exit("BE_FEES_LONG", from_entry="LONG", stop=trueBE)
 
-    if profitTriggerHit and canExitNow
+    if useSL and profitTriggerHit and canExitNow
         float protectStop = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
-        strategy.exit("PRETP1_LOCK_LONG", stop=protectStop)
+        strategy.exit("PRETP1_LOCK_LONG", from_entry="LONG", stop=protectStop)
 
-    if enableGapStopProtection and profitTriggerHit and canExitNow
+    if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGap = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
         if open <= protectStopGap
             strategy.close_all(comment="GAP_STOP_LONG")
 
-    if useEnhancedTP
+    if useTP and useEnhancedTP
         tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
         tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
         tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
         tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
-        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
-        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
-        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
-        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+        strategy.exit("V20_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+        strategy.exit("V20_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+        strategy.exit("V20_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+        strategy.exit("V20_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
 
     if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
-        strategy.close("LONG")
+        strategy.close("LONG", comment="V20_TIME_EXIT_LONG")
 
-    if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
-        trailDistance = atrMain * 0.6
-        strategy.exit("TrailSL_LONG", stop=close - trailDistance)
-    else
-        strategy.exit("SL_LONG", stop=localStopLoss)
+    if useSL
+        if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
+            trailDistance = atrMain * 0.6
+            strategy.exit("TrailSL_LONG", from_entry="LONG", stop=close - trailDistance)
+        else
+            strategy.exit("SL_LONG", from_entry="LONG", stop=localStopLoss)
 
 if useV20KenyaPerfectProfit and strategy.position_size < 0
     float avgPrice = strategy.position_avg_price
@@ -1668,36 +1671,37 @@ if useV20KenyaPerfectProfit and strategy.position_size < 0
     float trueBE_S = avgPrice - feesPoints
     float lockStopS = avgPrice - lockKeepPoints
 
-    if enableFeeModel and beTriggerHit and canExitNow
-        strategy.exit("BE_FEES_SHORT", stop=trueBE_S)
+    if useSL and enableFeeModel and beTriggerHit and canExitNow
+        strategy.exit("BE_FEES_SHORT", from_entry="SHORT", stop=trueBE_S)
 
-    if profitTriggerHit and canExitNow
+    if useSL and profitTriggerHit and canExitNow
         float protectStopS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
-        strategy.exit("PRETP1_LOCK_SHORT", stop=protectStopS)
+        strategy.exit("PRETP1_LOCK_SHORT", from_entry="SHORT", stop=protectStopS)
 
-    if enableGapStopProtection and profitTriggerHit and canExitNow
+    if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
         float protectStopGapS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
         if open >= protectStopGapS
             strategy.close_all(comment="GAP_STOP_SHORT")
 
-    if useEnhancedTP
+    if useTP and useEnhancedTP
         tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
         tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
         tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
         tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
-        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
-        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
-        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
-        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+        strategy.exit("V20_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+        strategy.exit("V20_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+        strategy.exit("V20_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+        strategy.exit("V20_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
 
     if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
-        strategy.close("SHORT")
+        strategy.close("SHORT", comment="V20_TIME_EXIT_SHORT")
 
-    if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
-        trailDistance = atrMain * 0.6
-        strategy.exit("TrailSL_SHORT", stop=close + trailDistance)
-    else
-        strategy.exit("SL_SHORT", stop=localStopLoss)
+    if useSL
+        if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
+            trailDistance = atrMain * 0.6
+            strategy.exit("TrailSL_SHORT", from_entry="SHORT", stop=close + trailDistance)
+        else
+            strategy.exit("SL_SHORT", from_entry="SHORT", stop=localStopLoss)
 
 // ==================== LEGACY PROFIT SYSTEM (disabled when V20 module is on) ====================
 if not useV20KenyaPerfectProfit and strategy.position_size > 0
@@ -1735,11 +1739,13 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
         tp2Ticks = math.round(currentTP2 / syminfo.mintick)
         tp3Ticks = math.round(currentTP3 / syminfo.mintick)
         tp4Ticks = math.round(currentTP4 / syminfo.mintick)
-        strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
-        strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
-        strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
-        strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
-        strategy.exit("SL", stop=localStopLoss)
+        if useTP
+            strategy.exit("KENYA_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
+            strategy.exit("KENYA_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
+            strategy.exit("KENYA_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
+            strategy.exit("KENYA_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
+        if useSL
+            strategy.exit("KENYA_SL_L", from_entry="LONG", stop=localStopLoss)
     else
         // --- V71 logic ---
         currentProfitPts = close - localEntryPrice
@@ -1759,7 +1765,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
             oneWayFees = commissionPerContract + extraFeesPerContract
             roundTripFees = oneWayFees * 2
             slipPts = slippageTicksOneWay * syminfo.mintick
-            beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
+            beOffsetPoints := (roundTripFees / safePointValue) + slipPts
 
         localStopLoss = localEntryPrice - currentSL
         localBEStop = localEntryPrice + beOffsetPoints
@@ -1804,7 +1810,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
                 oneWayFees = commissionPerContract + extraFeesPerContract
                 roundTripFees = oneWayFees * 2
                 slipPts = slippageTicksOneWay * syminfo.mintick
-                beOffsetPts := (roundTripFees / syminfo.pointvalue) + slipPts
+                beOffsetPts := (roundTripFees / safePointValue) + slipPts
             // Optional MES 3m booster: same idea, but defaults ON to push WR toward ~83%.
             bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
             float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
@@ -1823,7 +1829,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
                 oneWayFees2 = commissionPerContract + extraFeesPerContract
                 roundTripFees2 = oneWayFees2 * 2
                 slipPts2 = slippageTicksOneWay * syminfo.mintick
-                mesBEOffsetPts := (roundTripFees2 / syminfo.pointvalue) + slipPts2
+                mesBEOffsetPts := (roundTripFees2 / safePointValue) + slipPts2
             float mesBEStop = localEntryPrice + mesBEOffsetPts
             float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
             float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.max(activeStop, mesBEStop) : activeStop
@@ -1833,7 +1839,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
                 oneWayFees3 = commissionPerContract + extraFeesPerContract
                 roundTripFees3 = oneWayFees3 * 2
                 slipPts3 = slippageTicksOneWay * syminfo.mintick
-                mes5mBEOffsetPts := (roundTripFees3 / syminfo.pointvalue) + slipPts3
+                mes5mBEOffsetPts := (roundTripFees3 / safePointValue) + slipPts3
             float mes5mBEStop = localEntryPrice + mes5mBEOffsetPts
             float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
             float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.max(activeStop, mes5mBEStop) : activeStop
@@ -1845,13 +1851,20 @@ if not useV20KenyaPerfectProfit and strategy.position_size > 0
             int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
             targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
             float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
-            strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
+            if useTP and useSL
+                strategy.exit("V71_TP_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks, stop=finalStop)
+            else if useTP
+                strategy.exit("V71_TP_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("V71_SL_SINGLE_L", from_entry="LONG", qty_percent=100, stop=finalStop)
         else
-            strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
-            strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
-            strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
-            strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
-            strategy.exit("SL", stop=activeStop)
+            if useTP
+                strategy.exit("V71_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("V71_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("V71_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("V71_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
 
 if not useV20KenyaPerfectProfit and strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
@@ -1884,11 +1897,13 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
         tp2Ticks = math.round(currentTP2 / syminfo.mintick)
         tp3Ticks = math.round(currentTP3 / syminfo.mintick)
         tp4Ticks = math.round(currentTP4 / syminfo.mintick)
-        strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
-        strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
-        strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
-        strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
-        strategy.exit("SL", stop=localStopLoss)
+        if useTP
+            strategy.exit("KENYA_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
+            strategy.exit("KENYA_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
+            strategy.exit("KENYA_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
+            strategy.exit("KENYA_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
+        if useSL
+            strategy.exit("KENYA_SL_S", from_entry="SHORT", stop=localStopLoss)
     else
         // --- V71 logic continues below ---
 
@@ -1909,7 +1924,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
             oneWayFees = commissionPerContract + extraFeesPerContract
             roundTripFees = oneWayFees * 2
             slipPts = slippageTicksOneWay * syminfo.mintick
-            beOffsetPoints := (roundTripFees / syminfo.pointvalue) + slipPts
+            beOffsetPoints := (roundTripFees / safePointValue) + slipPts
 
         localStopLoss = localEntryPrice + currentSL
         localBEStop = localEntryPrice - beOffsetPoints
@@ -1954,7 +1969,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
                 oneWayFees = commissionPerContract + extraFeesPerContract
                 roundTripFees = oneWayFees * 2
                 slipPts = slippageTicksOneWay * syminfo.mintick
-                beOffsetPts := (roundTripFees / syminfo.pointvalue) + slipPts
+                beOffsetPts := (roundTripFees / safePointValue) + slipPts
 
             // Optional MES 3m booster: smaller target + BE protection (defaults ON) to lift WR.
             bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
@@ -1974,7 +1989,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
                 oneWayFees2 = commissionPerContract + extraFeesPerContract
                 roundTripFees2 = oneWayFees2 * 2
                 slipPts2 = slippageTicksOneWay * syminfo.mintick
-                mesBEOffsetPts := (roundTripFees2 / syminfo.pointvalue) + slipPts2
+                mesBEOffsetPts := (roundTripFees2 / safePointValue) + slipPts2
             float mesBEStop = localEntryPrice - mesBEOffsetPts
             float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
             float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.min(activeStop, mesBEStop) : activeStop
@@ -1984,7 +1999,7 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
                 oneWayFees3 = commissionPerContract + extraFeesPerContract
                 roundTripFees3 = oneWayFees3 * 2
                 slipPts3 = slippageTicksOneWay * syminfo.mintick
-                mes5mBEOffsetPts := (roundTripFees3 / syminfo.pointvalue) + slipPts3
+                mes5mBEOffsetPts := (roundTripFees3 / safePointValue) + slipPts3
             float mes5mBEStop = localEntryPrice - mes5mBEOffsetPts
             float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
             float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.min(activeStop, mes5mBEStop) : activeStop
@@ -1993,13 +2008,20 @@ if not useV20KenyaPerfectProfit and strategy.position_size < 0
             int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
             targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
             float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
-            strategy.exit("TP_SINGLE", qty_percent=100, profit=targetTicks, stop=finalStop)
+            if useTP and useSL
+                strategy.exit("V71_TP_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks, stop=finalStop)
+            else if useTP
+                strategy.exit("V71_TP_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("V71_SL_SINGLE_S", from_entry="SHORT", qty_percent=100, stop=finalStop)
         else
-            strategy.exit("TP1", qty_percent=60, profit=tp1Ticks)
-            strategy.exit("TP2", qty_percent=25, profit=tp2Ticks)
-            strategy.exit("TP3", qty_percent=10, profit=tp3Ticks)
-            strategy.exit("TP4", qty_percent=5, profit=tp4Ticks)
-            strategy.exit("SL", stop=activeStop)
+            if useTP
+                strategy.exit("V71_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("V71_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("V71_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("V71_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("V71_SL_S", from_entry="SHORT", stop=activeStop)
 
 // ==================== 🛡️ SAFETY EXITS ====================
 getBackupSL() =>
@@ -2057,10 +2079,14 @@ if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong 
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    if useManualDollarOverrides and manualDollarSL > 0
+        currentSL_pts := manualDollarSL / safePointValue
+    if useManualDollarOverrides and manualDollarTP > 0
+        currentTP1_pts := manualDollarTP / safePointValue
     localSL = close - currentSL_pts
     localTP1 = close + currentTP1_pts
-    slDol = currentSL_pts * syminfo.pointvalue
-    tpDol = currentTP1_pts * syminfo.pointvalue
+    slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
+    tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     longEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
          '"action":"buy",' +
          '"sentiment":"bullish",' +
@@ -2091,10 +2117,14 @@ if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShor
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
     float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    if useManualDollarOverrides and manualDollarSL > 0
+        currentSL_pts := manualDollarSL / safePointValue
+    if useManualDollarOverrides and manualDollarTP > 0
+        currentTP1_pts := manualDollarTP / safePointValue
     localSL = close + currentSL_pts
     localTP1 = close - currentTP1_pts
-    slDol = currentSL_pts * syminfo.pointvalue
-    tpDol = currentTP1_pts * syminfo.pointvalue
+    slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
+    tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     shortEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
          '"action":"sell",' +
          '"sentiment":"bearish",' +
