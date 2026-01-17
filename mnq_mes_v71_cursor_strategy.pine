@@ -72,9 +72,15 @@ mnq3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", gr
 // ==================== 🎯 MES 3m WIN-RATE BOOSTER (DEFAULT ON) ====================
 mes3mBoosterGroup = "🎯 MES 3m Win-Rate Booster"
 enableMes3mWinRateBooster = input.bool(true, "Enable MES 3m Win-Rate Booster (single contract)", group=mes3mBoosterGroup)
-mes3mBoosterTargetPctOfTP1 = input.float(0.60, "Target = TP1 × pct (0.30–1.00)", minval=0.30, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
-mes3mBoosterBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
+mes3mBoosterTargetPctOfTP1 = input.float(0.40, "Target = TP1 × pct (0.30–1.00)", minval=0.30, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
+mes3mBoosterBETriggerPctOfTarget = input.float(0.35, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
 mes3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes3mBoosterGroup)
+
+mes3mQualityGroup = "🎯 MES 3m Quality Gate (WR)"
+enableMes3mQualityGate = input.bool(true, "Enable MES 3m stricter entry gates (aim 80%+ WR)", group=mes3mQualityGroup)
+mes3mMinADX = input.float(26.0, "MES 3m Min ADX", minval=10, maxval=50, group=mes3mQualityGroup)
+mes3mConfluenceBoost = input.int(2, "MES 3m Confluence +", minval=0, maxval=8, group=mes3mQualityGroup)
+mes3mMinHTFAligned = input.int(2, "MES 3m Min HTF Align", minval=1, maxval=3, group=mes3mQualityGroup)
 
 // ==================== 🎯 MES 5m WIN-RATE BOOSTER (DEFAULT ON) ====================
 mes5mBoosterGroup = "🎯 MES 5m Win-Rate Booster"
@@ -988,7 +994,8 @@ mtfDirectionalPctLong = math.round((mtfBullCount / 3.0) * 100.0)
 mtfDirectionalPctShort = math.round((mtfBearCount / 3.0) * 100.0)
 mtfLongOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctLong >= mtfAlignThreshold)
 mtfShortOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctShort >= mtfAlignThreshold)
-effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
+useMes3mQuality = isMES and is3min and enableMes3mQualityGate
+effMinHTFAligned = useMes3mQuality ? mes3mMinHTFAligned : (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasTrendOverrideBull or hasMomentumOverrideLong
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasTrendOverrideBear or hasMomentumOverrideShort
 
@@ -1084,7 +1091,7 @@ emaTrendOK_Short = trendAlignedShort or hasTrendOverrideBear or impulseShort or 
 adxValue = adx(14, 14)
 
 // MES anti-chop "effective" thresholds
-effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
+effMinADXForEntry = useMes3mQuality ? mes3mMinADX : (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
 
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
 v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
@@ -1245,7 +1252,7 @@ conf_trend = (strongTrend or moderateTrend) ? 1 : 0
 conf_priceAction = (priceUp or priceDown) ? 1 : 0
 conf_atrExpanding = star_atrExpanding ? 1 : 0
 totalConfluenceScore = conf_volume + conf_strongVolume + conf_momentum + conf_strongMom + conf_trend + conf_priceAction + conf_atrExpanding
-effConfluenceLevel = (isMES and enableMesAntiChop) ? math.min(confluenceLevel + mesConfluenceBoost, 15) : confluenceLevel
+effConfluenceLevel = useMes3mQuality ? math.min(confluenceLevel + mes3mConfluenceBoost, 15) : (isMES and enableMesAntiChop) ? math.min(confluenceLevel + mesConfluenceBoost, 15) : confluenceLevel
 requiredConfluence =
      effConfluenceLevel <= 2 ? 1 :
      effConfluenceLevel <= 4 ? 2 :
