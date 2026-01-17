@@ -358,6 +358,10 @@ tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (Updat
 tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Update contract month!)")
 useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
 alertOnlyMode = input.bool(false, "Alert Only Mode")
+tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state (required for Alert Only Mode)", group="TradersPost Router")
+tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
+tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
+tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group="TradersPost Router")
 actualTicker = useAutoSymbol ? syminfo.ticker : (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 
 require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
@@ -915,6 +919,17 @@ mtfScore() =>
         alignPairs == 3 ? 100 : alignPairs == 2 ? 66 : alignPairs == 1 ? 33 : 0
 
 mtf_alignment_pct = mtfScore()
+
+// Directional MTF % (used for MTF FILTER mode).
+mtfBull1 = request.security(syminfo.tickerid, mtf_tf1, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfBull2 = request.security(syminfo.tickerid, mtf_tf2, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfBull3 = request.security(syminfo.tickerid, mtf_tf3, close > ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfBullCount = (mtfBull1 ? 1 : 0) + (mtfBull2 ? 1 : 0) + (mtfBull3 ? 1 : 0)
+mtfBearCount = 3 - mtfBullCount
+mtfDirectionalPctLong = math.round((mtfBullCount / 3.0) * 100.0)
+mtfDirectionalPctShort = math.round((mtfBearCount / 3.0) * 100.0)
+mtfLongOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctLong >= mtfAlignThreshold)
+mtfShortOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctShort >= mtfAlignThreshold)
 effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasTrendOverrideBull or hasMomentumOverrideLong
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasTrendOverrideBear or hasMomentumOverrideShort
@@ -1148,6 +1163,13 @@ bypassShort = allowImpulseBypass and isStrongBypassShort
 var int biasDir = 0
 var int biasLockUntilBar = na
 var int lastOppositeEntryBar = na
+// Signal-based router state (works even in Alert Only Mode where strategy.position_size stays flat).
+var int lastSignalDir = 0
+var int lastSignalBar = na
+
+// TradersPost simulated broker position state (for alert-only reconciliation).
+var int tpPosDir = 0   // 1=long, -1=short, 0=flat
+var int tpPosBar = na
 
 inBiasLock = enableBestSideRouter and not na(biasLockUntilBar) and bar_index <= biasLockUntilBar
 barsSinceOppositeEntry = na(lastOppositeEntryBar) ? 999999 : (bar_index - lastOppositeEntryBar)
@@ -1419,6 +1441,10 @@ canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldo
 canGoLong := canGoLong and trendOnlyLongGate
 canGoShort := canGoShort and trendOnlyShortGate
 
+// MTF filter mode gates (directional).
+canGoLong := canGoLong and mtfLongOK
+canGoShort := canGoShort and mtfShortOK
+
 if not tookTradeThisBar
     if enablePrioritySystem
         if not shouldEnterLong and not shouldEnterShort and allowPriority0
@@ -1575,6 +1601,11 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastLongSignalBar := bar_index
+    // Router state for cooldown correctness.
+    if lastSignalDir == -1
+        lastOppositeEntryBar := bar_index
+    lastSignalDir := 1
+    lastSignalBar := bar_index
 
 bool allowEntryShort = true
 if require5Star and not fiveStarOK and not hasTrendOverrideBear and not (impulseShort and candleBear) and not hasMomentumOverrideShort
@@ -1591,6 +1622,11 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastShortSignalBar := bar_index
+    // Router state for cooldown correctness.
+    if lastSignalDir == 1
+        lastOppositeEntryBar := bar_index
+    lastSignalDir := -1
+    lastSignalBar := bar_index
 
 // ==================== 🔥 PROFIT SYSTEM (60/25/10/5) ====================
 // Restored for MNQ 3m:
@@ -2088,7 +2124,26 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
     strategy.close_all(comment="MAX_HOLD")
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
-if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
+tpUseSim = tpSimulateBrokerPosition or alertOnlyMode
+tpFlat = tpUseSim ? (tpPosDir == 0) : (strategy.position_size == 0)
+tpLong = tpUseSim ? (tpPosDir == 1) : (strategy.position_size > 0)
+tpShort = tpUseSim ? (tpPosDir == -1) : (strategy.position_size < 0)
+
+// If a reverse signal occurs while a broker position exists, optionally send EXIT first to prevent rejections.
+if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat and not tookTradeThisBar
+    if (longCondition and tpShort) or (shortCondition and tpLong)
+        exitNowMessage = '{' + '"ticker":"' + actualTicker + '",' +
+             '"action":"exit",' +
+             '"orderType":"market",' +
+             '"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+        alert(exitNowMessage, alert.freq_once_per_bar)
+        if tpUseSim
+            tpPosDir := 0
+            tpPosBar := bar_index
+        tookTradeThisBar := true
+
+if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -2125,8 +2180,22 @@ if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong 
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosDir := 1
+        tpPosBar := bar_index
 
-if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
+// Same-direction behavior: ignore or "add" (prevents TradersPost rejections when a position already exists).
+if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addLongMessage = '{' + '"ticker":"' + actualTicker + '",' +
+         '"action":"add",' +
+         '"orderType":"market",' +
+         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addLongMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    tookTradeThisBar := true
+
+if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -2163,6 +2232,19 @@ if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShor
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosDir := -1
+        tpPosBar := bar_index
+
+if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addShortMessage = '{' + '"ticker":"' + actualTicker + '",' +
+         '"action":"add",' +
+         '"orderType":"market",' +
+         '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addShortMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    tookTradeThisBar := true
 
 if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
     exitMessage = '{' + '"ticker":"' + actualTicker + '",' +
@@ -2171,6 +2253,21 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTrad
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(exitMessage, alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosDir := 0
+        tpPosBar := bar_index
+
+// Alert-only safety: send EOD exit to reconcile broker state.
+if tpSendEODExitAlert and useEndOfDayExits and isEndOfDay and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and not tookTradeThisBar
+    eodExitMessage = '{' + '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"orderType":"market",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(eodExitMessage, alert.freq_once_per_bar)
+    tpPosDir := 0
+    tpPosBar := bar_index
+    tookTradeThisBar := true
 
 // ==================== 📊 VISUAL INDICATORS ====================
 hullMainColor = slopeMain == 1 ? color.new(color.green, 50) : slopeMain == -1 ? color.new(color.red, 50) : color.new(color.gray, 70)
