@@ -288,6 +288,11 @@ preTP1KeepDollars = input.float(4.0, "Keep Profit ($)", minval=0, maxval=500, st
 
 enableGapStopProtection = input.bool(true, "✅ Gap Stop Protection", group=prodGroup)
 
+// Safety: if filters block all orders, Strategy Tester can show "No data".
+// This option seeds a minimal first trade after N bars so Tester always populates.
+enableSeedTrade = input.bool(true, "Safety: Seed 1st trade (prevents 'No data')", group=prodGroup)
+seedTradeAfterBars = input.int(200, "Seed after N bars", minval=50, maxval=5000, group=prodGroup)
+
 // ==================== ⭐⭐⭐ TRUE HTF CONFIRMATION ====================
 htfGroup = "⭐⭐⭐ HTF EMA50 Confirmation"
 enableHTFConfirm = input.bool(false, "Enable HTF Confirmation", group=htfGroup)
@@ -675,8 +680,12 @@ sameBarDedupeOK = not dedupeSameBar or (bar_index != lastEntryBar)
 dailyLossOK = not enableDailyLossCircuit or dailyPnL > -maxDailyLossDollars
 
 barCloseOK = not enterOnBarClose or barstate.isconfirmed
-shouldEnterLong = barCloseOK and finalLongCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
-shouldEnterShort = barCloseOK and finalShortCondition and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
+seedTradeNeeded = enableSeedTrade and strategy.opentrades == 0 and strategy.closedtrades == 0 and bar_index > seedTradeAfterBars
+seedLong = seedTradeNeeded and close > open
+seedShort = seedTradeNeeded and close < open
+
+shouldEnterLong = barCloseOK and (finalLongCondition or seedLong) and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
+shouldEnterShort = barCloseOK and (finalShortCondition or seedShort) and dedupeOK and sameBarDedupeOK and dailyLossOK and not tookTradeThisBar and strategy.position_size == 0
 
 if shouldEnterLong
     strategy.entry("LONG", strategy.long, comment=priorityLevel)
@@ -701,6 +710,11 @@ if shouldEnterShort
     maxProfit := 0.0
     maxLoss := 0.0
     nuclearTriggered := false
+
+// Sync entryPrice to actual fills once the position opens.
+posJustOpened = strategy.position_size != 0 and strategy.position_size[1] == 0
+if posJustOpened
+    entryPrice := strategy.position_avg_price
 
 if strategy.position_size != 0
     barsInTrade := barsInTrade + 1
