@@ -1,0 +1,404 @@
+//@version=5
+strategy("ULTIMATE MCL 3H - ORIGINAL PROFIT LOGIC RESTORED",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10)
+
+// ==================== CORE PARAMETERS (ORIGINAL BOT) ====================
+
+// Timeframe Selection
+tf_higher = input.timeframe("15", "Higher Timeframe")
+
+// Moving Averages
+ma_fast_length = input.int(21, "Fast MA Length", minval=1)
+ma_slow_length = input.int(50, "Slow MA Length", minval=1)
+ma_type = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA"])
+
+// RSI Settings
+rsi_length = input.int(14, "RSI Length", minval=1)
+rsi_overbought = input.float(70, "RSI Overbought", minval=50, maxval=100)
+rsi_oversold = input.float(30, "RSI Oversold", minval=0, maxval=50)
+
+// MACD Settings
+macd_fast = input.int(12, "MACD Fast Length", minval=1)
+macd_slow = input.int(26, "MACD Slow Length", minval=1)
+macd_signal = input.int(9, "MACD Signal Length", minval=1)
+
+// Volume Settings
+volume_ma_length = input.int(20, "Volume MA Length", minval=1)
+volume_threshold = input.float(1.5, "Volume Threshold Multiplier", minval=1.0, step=0.1)
+
+// Bollinger Bands
+bb_length = input.int(20, "Bollinger Bands Length", minval=1)
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, step=0.1)
+
+// ==================== RISK MANAGEMENT (ORIGINAL BOT DEFAULTS) ====================
+group_risk = "🎯 Risk Management"
+
+position_size_pct = input.float(2.0, "Position Size (%)", minval=0.1, maxval=10.0, group=group_risk)
+stop_loss_pct = input.float(2.0, "Stop Loss (%)", minval=0.5, maxval=10.0, group=group_risk)
+take_profit_pct = input.float(4.0, "Take Profit (%)", minval=1.0, maxval=20.0, group=group_risk)
+trailing_stop_pct = input.float(1.5, "Trailing Stop (%)", minval=0.5, maxval=5.0, group=group_risk)
+
+// ==================== MCL CONTRACT SPECIFICATIONS ====================
+group_contract = "🛢️ MCL Contract (Optional)"
+
+use_mcl_contract = input.bool(true, "Use MCL ($1/tick)", group=group_contract)
+mcl_tick_values = input.string("22.50", "MCL Tick Value",
+     options=["11.25", "16.88", "19.69", "22.50", "28.13", "33.75"],
+     group=group_contract)
+
+mcl_tick_value =
+     mcl_tick_values == "11.25" ? 11.25 :
+     mcl_tick_values == "16.88" ? 16.88 :
+     mcl_tick_values == "19.69" ? 19.69 :
+     mcl_tick_values == "22.50" ? 22.50 :
+     mcl_tick_values == "28.13" ? 28.13 :
+     33.75
+
+// ==================== POSITION SIZING MODE (OPTIONAL) ====================
+group_position_mode = "💰 Position Sizing (Optional - Default OFF)"
+
+use_fixed_contracts = input.bool(false, "🔄 Use Fixed Contracts", group=group_position_mode)
+fixed_contracts = input.int(1, "Fixed Contracts", minval=1, maxval=50, group=group_position_mode)
+
+// ==================== ADVANCED FEATURES (ALL DEFAULT OFF) ====================
+group_advanced = "🛡️ Advanced Features (Default OFF)"
+
+use_backup_stop = input.bool(false, "Backup Stop Loss", group=group_advanced)
+backup_stop_pct = input.float(3.5, "Backup Stop (%)", minval=2.0, maxval=10.0, group=group_advanced)
+
+use_4tier_tp = input.bool(false, "4-Tier Take Profit", group=group_advanced)
+tp1_pct = input.float(2.0, "TP1 % (25%)", minval=0.5, maxval=10.0, group=group_advanced)
+tp2_pct = input.float(3.0, "TP2 % (25%)", minval=1.0, maxval=15.0, group=group_advanced)
+tp3_pct = input.float(4.0, "TP3 % (25%)", minval=1.5, maxval=20.0, group=group_advanced)
+tp4_pct = input.float(6.0, "TP4 % (25%)", minval=2.0, maxval=30.0, group=group_advanced)
+
+use_profit_protection = input.bool(false, "Profit Protection (BE Stop)", group=group_advanced)
+profit_protection_pct = input.float(1.5, "Move to BE after % profit", minval=0.5, maxval=5.0, group=group_advanced)
+
+use_mae_protection = input.bool(false, "MAE Protection", group=group_advanced)
+mae_threshold_pct = input.float(1.0, "MAE Threshold (%)", minval=0.3, maxval=3.0, group=group_advanced)
+
+use_reversal_exit = input.bool(false, "Reversal Detection Exit", group=group_advanced)
+reversal_sensitivity = input.int(2, "Reversal Sensitivity", minval=1, maxval=3, group=group_advanced)
+
+use_daily_limits = input.bool(false, "Daily Loss Limits", group=group_advanced)
+max_daily_loss_dollar = input.float(1500.0, "Max Daily Loss $", minval=200.0, maxval=10000.0, group=group_advanced)
+max_daily_trades = input.int(8, "Max Daily Trades", minval=2, maxval=20, group=group_advanced)
+
+use_floating_protection = input.bool(false, "Floating Loss Protection", group=group_advanced)
+max_floating_loss_dollar = input.float(800.0, "Max Floating Loss $", minval=100.0, maxval=5000.0, group=group_advanced)
+max_floating_loss_time = input.int(360, "Max Loss Time (min)", minval=60, group=group_advanced)
+
+use_session_filter = input.bool(false, "Enable Session Filter", group=group_advanced)
+use_quality_filter = input.bool(false, "Entry Quality Filter", group=group_advanced)
+min_quality_score = input.int(6, "Min Quality Score", minval=0, maxval=10, group=group_advanced)
+
+// ==================== ALERTS ====================
+group_alerts = "🔔 Alerts"
+enable_alerts = input.bool(true, "Enable Alerts", group=group_alerts)
+enable_traderspost = input.bool(false, "Enable TradersPost", group=group_alerts)
+traderspost_strategy_id = input.string("MCL_3H", "Strategy ID", group=group_alerts)
+
+// ==================== TECHNICAL INDICATORS (ORIGINAL BOT) ====================
+
+ma_function(src, length, ma_type) =>
+    switch ma_type
+        "SMA" => ta.sma(src, length)
+        "EMA" => ta.ema(src, length)
+        "WMA" => ta.wma(src, length)
+        => ta.ema(src, length)
+
+ma_fast = ma_function(close, ma_fast_length, ma_type)
+ma_slow = ma_function(close, ma_slow_length, ma_type)
+rsi = ta.rsi(close, rsi_length)
+[macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+volume_ma = ta.sma(volume, volume_ma_length)
+high_volume = volume > volume_ma * volume_threshold
+[bb_upper, bb_middle, bb_lower] = ta.bb(close, bb_length, bb_mult)
+
+htf_ma_fast = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_fast_length, ma_type))
+htf_ma_slow = request.security(syminfo.tickerid, tf_higher, ma_function(close, ma_slow_length, ma_type))
+htf_trend_up = htf_ma_fast > htf_ma_slow
+htf_trend_down = htf_ma_fast < htf_ma_slow
+
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+
+// ==================== SIGNAL GENERATION (ORIGINAL BOT) ====================
+
+trend_up = ma_fast > ma_slow
+trend_down = ma_fast < ma_slow
+momentum_bullish = rsi > 50 and macd_line > signal_line
+momentum_bearish = rsi < 50 and macd_line < signal_line
+oversold_bounce = rsi < rsi_oversold and close < bb_lower
+overbought_pullback = rsi > rsi_overbought and close > bb_upper
+volume_confirmation = high_volume
+htf_bullish_alignment = htf_trend_up
+htf_bearish_alignment = htf_trend_down
+
+long_trend = trend_up and htf_bullish_alignment
+long_momentum = momentum_bullish or oversold_bounce
+long_volume = volume_confirmation
+long_ma_cross = ta.crossover(ma_fast, ma_slow)
+long_condition = (long_trend and long_momentum and long_volume) or (long_ma_cross and htf_bullish_alignment)
+
+short_trend = trend_down and htf_bearish_alignment
+short_momentum = momentum_bearish or overbought_pullback
+short_volume = volume_confirmation
+short_ma_cross = ta.crossunder(ma_fast, ma_slow)
+short_condition = (short_trend and short_momentum and short_volume) or (short_ma_cross and htf_bearish_alignment)
+
+long_exit = ta.crossunder(ma_fast, ma_slow) or rsi > rsi_overbought
+short_exit = ta.crossover(ma_fast, ma_slow) or rsi < rsi_oversold
+
+// ==================== QUALITY SCORE (OPTIONAL) ====================
+
+quality_score = 0
+if (ma_fast > ma_slow and htf_trend_up) or (ma_fast < ma_slow and htf_trend_down)
+    quality_score := quality_score + 3
+if (rsi > 50 and macd_line > signal_line) or (rsi < 50 and macd_line < signal_line)
+    quality_score := quality_score + 2
+if high_volume
+    quality_score := quality_score + 2
+if rsi > 40 and rsi < 60
+    quality_score := quality_score + 1
+if adx > 25
+    quality_score := quality_score + 2
+
+quality_passed = not use_quality_filter or quality_score >= min_quality_score
+
+// ==================== DAILY TRACKING ====================
+
+var float daily_loss_dollar = 0.0
+var int daily_trade_count = 0
+var int last_trade_day = 0
+
+if dayofmonth != last_trade_day
+    daily_loss_dollar := 0.0
+    daily_trade_count := 0
+    last_trade_day := dayofmonth
+
+if strategy.closedtrades > 0 and strategy.closedtrades != strategy.closedtrades[1]
+    daily_loss_dollar := daily_loss_dollar + (strategy.netprofit - strategy.netprofit[1])
+    daily_trade_count := daily_trade_count + 1
+
+daily_loss_breach = use_daily_limits and daily_loss_dollar < -max_daily_loss_dollar
+daily_trades_breach = use_daily_limits and daily_trade_count >= max_daily_trades
+
+// ==================== POSITION TRACKING ====================
+
+var int position_entry_time = 0
+var float position_entry_price = 0.0
+var float position_max_mae = 0.0
+var bool in_profit_protection = false
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    position_entry_time := time
+    position_entry_price := close
+    position_max_mae := 0.0
+    in_profit_protection := false
+
+if strategy.position_size == 0
+    in_profit_protection := false
+
+if strategy.position_size > 0
+    current_mae_pct = (position_entry_price - low) / position_entry_price * 100
+    position_max_mae := math.max(position_max_mae, current_mae_pct)
+else if strategy.position_size < 0
+    current_mae_pct = (high - position_entry_price) / position_entry_price * 100
+    position_max_mae := math.max(position_max_mae, current_mae_pct)
+
+time_in_position = strategy.position_size != 0 ? (time - position_entry_time) / 60000 : 0
+floating_loss = strategy.openprofit
+floating_loss_breach = floating_loss < -max_floating_loss_dollar
+floating_time_breach = time_in_position > max_floating_loss_time
+floating_protection_triggered = use_floating_protection and (floating_loss_breach or floating_time_breach)
+mae_protection_triggered = use_mae_protection and position_max_mae > mae_threshold_pct
+
+if strategy.position_size != 0 and use_profit_protection
+    profit_pct = math.abs(strategy.openprofit / (position_entry_price * math.abs(strategy.position_size))) * 100
+    if profit_pct >= profit_protection_pct and not in_profit_protection
+        in_profit_protection := true
+
+// ==================== REVERSAL DETECTION ====================
+
+bullish_reversal = ta.crossover(macd_line, signal_line) and rsi < 40 and close > ma_fast
+bearish_reversal = ta.crossunder(macd_line, signal_line) and rsi > 60 and close < ma_fast
+
+long_reversal_exit = use_reversal_exit and strategy.position_size > 0 and bearish_reversal
+short_reversal_exit = use_reversal_exit and strategy.position_size < 0 and bullish_reversal
+
+// ==================== FILTERS ====================
+
+filters_ok = not daily_loss_breach and not daily_trades_breach and quality_passed
+
+// ==================== POSITION SIZING (ORIGINAL BOT METHOD) ====================
+
+// THIS IS THE EXACT ORIGINAL BOT CALCULATION
+position_size = strategy.equity * position_size_pct / 100 / close
+
+// Override with fixed contracts if enabled
+final_position_size = use_fixed_contracts ? fixed_contracts : position_size
+
+// ==================== STOP/TARGET CALCULATION (ORIGINAL BOT) ====================
+
+long_stop_loss = close * (1 - stop_loss_pct / 100)
+long_take_profit = close * (1 + take_profit_pct / 100)
+long_trail_points = close * trailing_stop_pct / 100 / syminfo.mintick
+
+short_stop_loss = close * (1 + stop_loss_pct / 100)
+short_take_profit = close * (1 - take_profit_pct / 100)
+short_trail_points = close * trailing_stop_pct / 100 / syminfo.mintick
+
+long_backup_stop = use_backup_stop ? close * (1 - backup_stop_pct / 100) : na
+short_backup_stop = use_backup_stop ? close * (1 + backup_stop_pct / 100) : na
+
+long_be_stop = in_profit_protection ? position_entry_price : long_stop_loss
+short_be_stop = in_profit_protection ? position_entry_price : short_stop_loss
+
+long_tp1 = use_4tier_tp ? close * (1 + tp1_pct / 100) : na
+long_tp2 = use_4tier_tp ? close * (1 + tp2_pct / 100) : na
+long_tp3 = use_4tier_tp ? close * (1 + tp3_pct / 100) : na
+long_tp4 = use_4tier_tp ? close * (1 + tp4_pct / 100) : na
+
+short_tp1 = use_4tier_tp ? close * (1 - tp1_pct / 100) : na
+short_tp2 = use_4tier_tp ? close * (1 - tp2_pct / 100) : na
+short_tp3 = use_4tier_tp ? close * (1 - tp3_pct / 100) : na
+short_tp4 = use_4tier_tp ? close * (1 - tp4_pct / 100) : na
+
+// ==================== EMERGENCY EXITS ====================
+
+long_emergency_exit = long_exit or floating_protection_triggered or mae_protection_triggered or long_reversal_exit
+short_emergency_exit = short_exit or floating_protection_triggered or mae_protection_triggered or short_reversal_exit
+
+// ==================== STRATEGY EXECUTION (ORIGINAL BOT LOGIC) ====================
+
+// Long Entry
+if long_condition and strategy.position_size == 0 and filters_ok
+    if use_4tier_tp
+        quarter_size = final_position_size / 4
+        strategy.entry("Long1", strategy.long, qty=quarter_size)
+        strategy.entry("Long2", strategy.long, qty=quarter_size)
+        strategy.entry("Long3", strategy.long, qty=quarter_size)
+        strategy.entry("Long4", strategy.long, qty=quarter_size)
+    else
+        strategy.entry("Long", strategy.long, qty=final_position_size)
+
+    if enable_alerts
+        alert("🚀 LONG ENTRY | Size: " + str.tostring(final_position_size, "#.##") + " | Q: " + str.tostring(quality_score), alert.freq_once_per_bar)
+
+// Long Exits
+if strategy.position_size > 0
+    if long_emergency_exit
+        strategy.close_all(comment="Emergency Exit")
+    else
+        if use_4tier_tp
+            strategy.exit("TP1", "Long1", stop=long_be_stop, limit=long_tp1)
+            strategy.exit("TP2", "Long2", stop=long_be_stop, limit=long_tp2)
+            strategy.exit("TP3", "Long3", stop=long_be_stop, limit=long_tp3)
+            strategy.exit("TP4", "Long4", stop=long_be_stop, limit=long_tp4, trail_points=long_trail_points)
+        else
+            strategy.exit("Exit Long", "Long", stop=long_be_stop, limit=long_take_profit, trail_points=long_trail_points)
+
+        if use_backup_stop and not na(long_backup_stop)
+            if use_4tier_tp
+                strategy.exit("Backup1", "Long1", stop=long_backup_stop)
+                strategy.exit("Backup2", "Long2", stop=long_backup_stop)
+                strategy.exit("Backup3", "Long3", stop=long_backup_stop)
+                strategy.exit("Backup4", "Long4", stop=long_backup_stop)
+            else
+                strategy.exit("Backup", "Long", stop=long_backup_stop)
+
+// Short Entry
+if short_condition and strategy.position_size == 0 and filters_ok
+    if use_4tier_tp
+        quarter_size = final_position_size / 4
+        strategy.entry("Short1", strategy.short, qty=quarter_size)
+        strategy.entry("Short2", strategy.short, qty=quarter_size)
+        strategy.entry("Short3", strategy.short, qty=quarter_size)
+        strategy.entry("Short4", strategy.short, qty=quarter_size)
+    else
+        strategy.entry("Short", strategy.short, qty=final_position_size)
+
+    if enable_alerts
+        alert("🚀 SHORT ENTRY | Size: " + str.tostring(final_position_size, "#.##") + " | Q: " + str.tostring(quality_score), alert.freq_once_per_bar)
+
+// Short Exits
+if strategy.position_size < 0
+    if short_emergency_exit
+        strategy.close_all(comment="Emergency Exit")
+    else
+        if use_4tier_tp
+            strategy.exit("TP1", "Short1", stop=short_be_stop, limit=short_tp1)
+            strategy.exit("TP2", "Short2", stop=short_be_stop, limit=short_tp2)
+            strategy.exit("TP3", "Short3", stop=short_be_stop, limit=short_tp3)
+            strategy.exit("TP4", "Short4", stop=short_be_stop, limit=short_tp4, trail_points=short_trail_points)
+        else
+            strategy.exit("Exit Short", "Short", stop=short_be_stop, limit=short_take_profit, trail_points=short_trail_points)
+
+        if use_backup_stop and not na(short_backup_stop)
+            if use_4tier_tp
+                strategy.exit("Backup1", "Short1", stop=short_backup_stop)
+                strategy.exit("Backup2", "Short2", stop=short_backup_stop)
+                strategy.exit("Backup3", "Short3", stop=short_backup_stop)
+                strategy.exit("Backup4", "Short4", stop=short_backup_stop)
+            else
+                strategy.exit("Backup", "Short", stop=short_backup_stop)
+
+// ==================== VISUALIZATION ====================
+
+plot(ma_fast, color=color.blue, linewidth=2, title="Fast MA")
+plot(ma_slow, color=color.red, linewidth=2, title="Slow MA")
+plot(bb_upper, color=color.gray, title="BB Upper")
+plot(bb_lower, color=color.gray, title="BB Lower")
+plot(bb_middle, color=color.yellow, title="BB Middle")
+
+plotshape(long_condition and filters_ok, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_condition and filters_ok, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+bgcolor(htf_trend_up ? color.new(color.green, 95) : htf_trend_down ? color.new(color.red, 95) : na)
+bgcolor(in_profit_protection ? color.new(color.blue, 98) : na)
+
+// ==================== PERFORMANCE TABLE ====================
+
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 12, bgcolor=color.white, border_width=1)
+    table.cell(info_table, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
+
+    table.cell(info_table, 0, 1, "Contract", text_color=color.black)
+    table.cell(info_table, 1, 1, use_mcl_contract ? "MCL $" + str.tostring(mcl_tick_value) : "Standard", text_color=color.blue)
+
+    table.cell(info_table, 0, 2, "Net Profit", text_color=color.black)
+    table.cell(info_table, 1, 2, "$" + str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit > 0 ? color.green : color.red)
+
+    table.cell(info_table, 0, 3, "Total Trades", text_color=color.black)
+    table.cell(info_table, 1, 3, str.tostring(strategy.closedtrades), text_color=color.black)
+
+    table.cell(info_table, 0, 4, "Win Rate %", text_color=color.black)
+    win_rate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+    table.cell(info_table, 1, 4, str.tostring(win_rate, "#.##") + "%", text_color=win_rate > 50 ? color.green : color.red)
+
+    table.cell(info_table, 0, 5, "Profit Factor", text_color=color.black)
+    profit_factor = strategy.losstrades > 0 ? strategy.grossprofit / strategy.grossloss : na
+    table.cell(info_table, 1, 5, str.tostring(profit_factor, "#.##"), text_color=profit_factor > 1 ? color.green : color.red)
+
+    table.cell(info_table, 0, 6, "Max DD", text_color=color.black)
+    table.cell(info_table, 1, 6, "$" + str.tostring(strategy.max_drawdown, "#.##"), text_color=color.red)
+
+    table.cell(info_table, 0, 7, "Position Size", text_color=color.black)
+    table.cell(info_table, 1, 7, use_fixed_contracts ? str.tostring(fixed_contracts) + " contracts" : str.tostring(position_size_pct) + "%", text_color=color.blue)
+
+    table.cell(info_table, 0, 8, "Current RSI", text_color=color.black)
+    table.cell(info_table, 1, 8, str.tostring(rsi, "#.##"), text_color=rsi > rsi_overbought ? color.red : rsi < rsi_oversold ? color.green : color.black)
+
+    table.cell(info_table, 0, 9, "HTF Trend", text_color=color.black)
+    htf_trend_text = htf_trend_up ? "UP" : htf_trend_down ? "DOWN" : "Neutral"
+    table.cell(info_table, 1, 9, htf_trend_text, text_color=htf_trend_up ? color.green : htf_trend_down ? color.red : color.gray)
+
+    table.cell(info_table, 0, 10, "Quality", text_color=color.black)
+    table.cell(info_table, 1, 10, str.tostring(quality_score) + "/10", text_color=quality_score >= 6 ? color.green : color.orange)
+
+    table.cell(info_table, 0, 11, "Floating PnL", text_color=color.black)
+    table.cell(info_table, 1, 11, "$" + str.tostring(strategy.openprofit, "#.##"), text_color=strategy.openprofit >= 0 ? color.green : color.red)
