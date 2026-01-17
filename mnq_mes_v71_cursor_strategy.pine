@@ -349,10 +349,16 @@ maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0)
 maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5, maxval=25.0)
 
 enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts")
-tradersPostSymbol = input.string("MNQH2026", "TradersPost Symbol (Update contract month!)")
+tradersPostSymbol = input.string("MNQH2026", "TradersPost Symbol (Default / fallback)")
+tradersPostSymbolMNQ = input.string("MNQH2026", "TradersPost Symbol - MNQ (Update contract month!)")
+tradersPostSymbolMES = input.string("MESH2026", "TradersPost Symbol - MES (Update contract month!)")
+tradersPostSymbolMYM = input.string("MYMH2026", "TradersPost Symbol - MYM (Update contract month!)")
+tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K (Update contract month!)")
+tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (Update contract month!)")
+tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Update contract month!)")
 useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
 alertOnlyMode = input.bool(false, "Alert Only Mode")
-actualTicker = useAutoSymbol ? syminfo.ticker : tradersPostSymbol
+actualTicker = useAutoSymbol ? syminfo.ticker : (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 
 require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
 minMESRangePoints = input.float(5.0, "V8: Min MES Range (points)", minval=0.0, maxval=20.0)
@@ -1550,8 +1556,9 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
     int tradeQty = getActiveQty(finalContractQty)
     if not alertOnlyMode
         strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriority)
-        tookTradeThisBar := true
-        lastLongSignalBar := bar_index
+    // Even in alert-only mode we must advance internal state to avoid duplicate signals.
+    tookTradeThisBar := true
+    lastLongSignalBar := bar_index
 
 bool allowEntryShort = true
 if require5Star and not fiveStarOK and not hasTrendOverrideBear and not (impulseShort and candleBear) and not hasMomentumOverrideShort
@@ -1565,8 +1572,9 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
     int tradeQtyS = getActiveQty(finalContractQty)
     if not alertOnlyMode
         strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriority)
-        tookTradeThisBar := true
-        lastShortSignalBar := bar_index
+    // Even in alert-only mode we must advance internal state to avoid duplicate signals.
+    tookTradeThisBar := true
+    lastShortSignalBar := bar_index
 
 // ==================== 🔥 PROFIT SYSTEM (60/25/10/5) ====================
 // Restored for MNQ 3m:
@@ -2051,16 +2059,24 @@ if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong 
     float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     localSL = close - currentSL_pts
     localTP1 = close + currentTP1_pts
+    slDol = currentSL_pts * syminfo.pointvalue
+    tpDol = currentTP1_pts * syminfo.pointvalue
     longEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
          '"action":"buy",' +
          '"sentiment":"bullish",' +
          '"orderType":"market",' +
          '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"price":"' + str.tostring(close) + '",' +
+         '"stop_loss":"' + str.tostring(localSL) + '",' +
+         '"take_profit":"' + str.tostring(localTP1) + '",' +
+         (enableDollarStops ? ('"stop_loss_amount":"' + str.tostring(slDol) + '",') : "") +
+         (enableDollarStops ? ('"take_profit_amount":"' + str.tostring(tpDol) + '",') : "") +
          '"stopLoss":{"stopPrice":"' + str.tostring(localSL) + '"},' +
          '"takeProfit":{"limitPrice":"' + str.tostring(localTP1) + '"},' +
          '"signalType":"' + activeSignalType + '",' +
          '"priority":"' + selectedPriority + '",' +
          '"entryPrice":' + str.tostring(close) + ',' +
+         (includeSignalPrice ? ('"signal_price":"' + str.tostring(close) + '",') : "") +
          '"direction":"LONG",' +
          '"starScore":' + str.tostring(starScore) + ',' +
          '"htfAlignment":' + str.tostring(htfAlignLongCount) + ',' +
@@ -2068,7 +2084,7 @@ if entryOK and longCondition and strategy.position_size == 0 and allowEntryLong 
          '"rsi":' + str.tostring(rsi) + ',' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(longEntryMessage, alert.freq_once_per_bar)
+    alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
 
 if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
@@ -2077,16 +2093,24 @@ if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShor
     float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
     localSL = close + currentSL_pts
     localTP1 = close - currentTP1_pts
+    slDol = currentSL_pts * syminfo.pointvalue
+    tpDol = currentTP1_pts * syminfo.pointvalue
     shortEntryMessage = '{' + '"ticker":"' + actualTicker + '",' +
          '"action":"sell",' +
          '"sentiment":"bearish",' +
          '"orderType":"market",' +
          '"quantity":' + str.tostring(finalContractQty) + ',' +
+         '"price":"' + str.tostring(close) + '",' +
+         '"stop_loss":"' + str.tostring(localSL) + '",' +
+         '"take_profit":"' + str.tostring(localTP1) + '",' +
+         (enableDollarStops ? ('"stop_loss_amount":"' + str.tostring(slDol) + '",') : "") +
+         (enableDollarStops ? ('"take_profit_amount":"' + str.tostring(tpDol) + '",') : "") +
          '"stopLoss":{"stopPrice":"' + str.tostring(localSL) + '"},' +
          '"takeProfit":{"limitPrice":"' + str.tostring(localTP1) + '"},' +
          '"signalType":"' + activeSignalType + '",' +
          '"priority":"' + selectedPriority + '",' +
          '"entryPrice":' + str.tostring(close) + ',' +
+         (includeSignalPrice ? ('"signal_price":"' + str.tostring(close) + '",') : "") +
          '"direction":"SHORT",' +
          '"starScore":' + str.tostring(starScore) + ',' +
          '"htfAlignment":' + str.tostring(htfAlignShortCount) + ',' +
@@ -2094,7 +2118,7 @@ if entryOK and shortCondition and strategy.position_size == 0 and allowEntryShor
          '"rsi":' + str.tostring(rsi) + ',' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(shortEntryMessage, alert.freq_once_per_bar)
+    alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
 
 if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
     exitMessage = '{' + '"ticker":"' + actualTicker + '",' +
