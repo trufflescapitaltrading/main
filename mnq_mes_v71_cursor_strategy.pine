@@ -1349,6 +1349,20 @@ if newDayDetected
     dailyPnL := 0.0
 dailyPnL := na(dayStartNetprofit) ? 0.0 : (strategy.netprofit - dayStartNetprofit)
 
+// Per-instrument daily loss tracking (for risk limits).
+// Note: this script runs per-chart/instrument, so we map the chart's daily drawdown into the active instrument bucket.
+curDailyLossDol = dailyPnL < 0 ? -dailyPnL : 0.0
+if isMYM
+    mymDailyLoss := curDailyLossDol
+else if isMNQ
+    mnqDailyLoss := curDailyLossDol
+else if isMES
+    mesDailyLoss := curDailyLossDol
+else if isMCL
+    mclDailyLoss := curDailyLossDol
+else if isMGC
+    mgcDailyLoss := curDailyLossDol
+
 dailyLossLimitPct = (na(dayStartEquity) or dayStartEquity <= 0) ? 0.0 : (dayStartEquity * (maxDailyLoss / 100.0))
 dailyLossLimitDol = maxDailyLossDollars
 maxLossReached = enableDailyLossCircuit and ((dailyLossMode == "Percent" and dailyPnL <= -dailyLossLimitPct) or (dailyLossMode == "Dollar" and dailyPnL <= -dailyLossLimitDol))
