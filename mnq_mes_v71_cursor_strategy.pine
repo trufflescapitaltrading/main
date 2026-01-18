@@ -83,6 +83,10 @@ mes5mTargetSLMult = input.float(0.90, "Target = SL × mult", minval=0.30, maxval
 mes5mBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes5mBoosterGroup)
 mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes5mBoosterGroup)
 
+// ==================== 🔥 MES MJV6 PROFIT LOGIC (SIMPLIFIED LADDER) ====================
+mesProfitGroup = "🔥 MES Profit Logic (MJV6)"
+useMJV6MesProfitLogic = input.bool(true, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
+
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
@@ -2043,7 +2047,39 @@ if not v20Active_profit and strategy.position_size > 0
 
     v71_tp1Target := currentTP1
 
-    if kenyaActive
+    // MES: Use simplified MJV6-style profit logic (TP ladder + trail + time exit).
+    if isMES and useMJV6MesProfitLogic
+        int posQty = int(math.abs(strategy.position_size))
+        float mjvAtr = atr10
+        float mjvFuturesTP = mjvAtr * tpMultiplier
+        float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
+
+        if useTP and useEnhancedTP
+            tp1Points = math.round((mjvUltraQuickTP * 0.4) / syminfo.mintick)
+            tp2Points = math.round((mjvFuturesTP * 0.3) / syminfo.mintick)
+            tp3Points = math.round((mjvFuturesTP * 0.6) / syminfo.mintick)
+            tp4Points = math.round((mjvFuturesTP * 1.0) / syminfo.mintick)
+            if posQty <= 1
+                strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=100, profit=tp1Points)
+            else
+                strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+                strategy.exit("MJV6_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+                strategy.exit("MJV6_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+                strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
+
+        if quickExitMode and holdingPeriod >= maxHoldingBars and not exitIssuedThisBar
+            strategy.close("LONG", comment="MJV6_TIME_EXIT_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "MJV6_TIME_EXIT"
+
+        if useSL and not exitIssuedThisBar
+            float stopLossPrice = localEntryPrice - futuresStopDistance
+            float protectStop = stopLossPrice
+            if useSmartTrailing and close > localEntryPrice + (mjvFuturesTP * trailActivationRatio)
+                trailDistance = mjvAtr * 0.6
+                protectStop := math.max(protectStop, close - trailDistance)
+            strategy.exit("MJV6_PROTECT_L", from_entry="LONG", stop=protectStop)
+    else if kenyaActive
         // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
         localStopLoss = localEntryPrice - currentSL
         tp1Ticks = math.round(currentTP1 / syminfo.mintick)
@@ -2201,8 +2237,40 @@ if not v20Active_profit and strategy.position_size < 0
 
     v71_tp1Target := currentTP1
 
+    // MES: Use simplified MJV6-style profit logic (TP ladder + trail + time exit).
+    if isMES and useMJV6MesProfitLogic
+        int posQty = int(math.abs(strategy.position_size))
+        float mjvAtr = atr10
+        float mjvFuturesTP = mjvAtr * tpMultiplier
+        float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
+
+        if useTP and useEnhancedTP
+            tp1Points = math.round((mjvUltraQuickTP * 0.5) / syminfo.mintick)
+            tp2Points = math.round((mjvFuturesTP * 0.4) / syminfo.mintick)
+            tp3Points = math.round((mjvFuturesTP * 0.7) / syminfo.mintick)
+            tp4Points = math.round((mjvFuturesTP * 1.1) / syminfo.mintick)
+            if posQty <= 1
+                strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=100, profit=tp1Points)
+            else
+                strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+                strategy.exit("MJV6_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+                strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+                strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
+
+        if quickExitMode and holdingPeriod >= maxHoldingBars and not exitIssuedThisBar
+            strategy.close("SHORT", comment="MJV6_TIME_EXIT_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "MJV6_TIME_EXIT"
+
+        if useSL and not exitIssuedThisBar
+            float stopLossPrice = localEntryPrice + futuresStopDistance
+            float protectStop = stopLossPrice
+            if useSmartTrailing and close < localEntryPrice - (mjvFuturesTP * trailActivationRatio)
+                trailDistance = mjvAtr * 0.6
+                protectStop := math.min(protectStop, close + trailDistance)
+            strategy.exit("MJV6_PROTECT_S", from_entry="SHORT", stop=protectStop)
     // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
-    if kenyaActive
+    else if kenyaActive
         localStopLoss = localEntryPrice + currentSL
         tp1Ticks = math.round(currentTP1 / syminfo.mintick)
         tp2Ticks = math.round(currentTP2 / syminfo.mintick)
