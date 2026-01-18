@@ -1160,6 +1160,11 @@ var float v71_lockedProfitLevel = na
 var int v71_profitBarsCount = 0
 var float v71_entryRSI = na
 var float v71_tp1Target = na
+// V20 and V71 Profit Module Activation Flags
+// V20 is active for Kenya MNQ 3m ONLY when enabled and NOT on MES with MJV6
+v20Active_profit = useV20KenyaPerfectProfit and isMNQ and timeframe.period == "3" and (v20AllowOn3m or not is3min)
+// V71 profit logic is OFF by default (MJV6 handles MES, Kenya handles MNQ 3m)
+v71Active_profit = false
 holdingPeriod = not na(entryBar) and strategy.position_size != 0 ? bar_index - entryBar : 0
 currentInstrumentLoss = isMYM ? mymDailyLoss : isMNQ ? mnqDailyLoss : isMES ? mesDailyLoss : isMCL ? mclDailyLoss : isMGC ? mgcDailyLoss : 0.0
 currentInstrumentMaxLoss = isMYM ? mymMaxDailyRisk : isMNQ ? mnqMaxDailyRisk : isMES ? mesMaxDailyRisk : isMCL ? mclMaxDailyRisk : isMGC ? mgcMaxDailyRisk : totalDailyRisk
@@ -1548,7 +1553,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
     lastSignalBar := bar_index
 // ==================== ⭐⭐⭐ MJV6 MES PROFIT LOGIC (EXACT) ====================
 if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.position_size != 0
-    float mjvAtr = ta.atr(10)
+    float mjvAtr = atr10
     float futuresTPDistance_mjv = mjvAtr * tpMultiplier
     float ultraQuickTP_mjv = mjvAtr * (tpMultiplier * 0.5)
     float futuresStopDistance_mjv = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
@@ -1603,7 +1608,7 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
 // ==================== 📈 V20 PROFIT LOGIC ====================
 if v20Active_profit and strategy.position_size != 0
     float v20_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float v20_atr = ta.atr(14)
+    float v20_atr = atrMain
     float v20_tp1Pct = 0.003
     float v20_tp2Pct = 0.006
     float v20_tp3Pct = 0.01
@@ -1630,7 +1635,7 @@ if v20Active_profit and strategy.position_size != 0
 // ==================== 📊 V71 PROFIT LOGIC ====================
 if v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float v71_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float v71_atr = ta.atr(14)
+    float v71_atr = atrMain
     float v71_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.5
     float v71_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
     float v71_tp1Distance = v71_atr * v71_tpMultiplier * 0.5
@@ -1682,7 +1687,7 @@ if v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
 kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
 if kenyaActive and strategy.position_size != 0 and not exitIssuedThisBar
     float kenya_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float kenya_atr = ta.atr(10)
+    float kenya_atr = atr10
     float kenya_tp1Distance = kenya_atr * 0.8
     float kenya_tp2Distance = kenya_atr * 1.2
     float kenya_tp3Distance = kenya_atr * 1.8
@@ -1709,7 +1714,7 @@ if kenyaActive and strategy.position_size != 0 and not exitIssuedThisBar
 // ==================== 📊 MYM PROFIT LOGIC ====================
 if isMYM and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float mym_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mym_atr = ta.atr(14)
+    float mym_atr = atrMain
     float mym_tpMultiplier = is1min ? 1.3 : is3min ? 1.5 : is5min ? 1.7 : 1.5
     float mym_slMultiplier = is1min ? 1.1 : is3min ? 1.3 : is5min ? 1.5 : 1.3
     float mym_tp1Distance = mym_atr * mym_tpMultiplier * 0.6
@@ -1738,7 +1743,7 @@ if isMYM and not v20Active_profit and not v71Active_profit and strategy.position
 // ==================== 📊 MNQ PROFIT LOGIC (NON-KENYA) ====================
 if isMNQ and not kenyaActive and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float mnq_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mnq_atr = ta.atr(14)
+    float mnq_atr = atrMain
     float mnq_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.5
     float mnq_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
     float mnq_tp1Distance = mnq_atr * mnq_tpMultiplier * 0.5
@@ -1767,7 +1772,7 @@ if isMNQ and not kenyaActive and not v20Active_profit and not v71Active_profit a
 // ==================== 📊 MCL PROFIT LOGIC ====================
 if isMCL and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float mcl_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mcl_atr = ta.atr(14)
+    float mcl_atr = atrMain
     float mcl_tpMultiplier = is1min ? 1.4 : is3min ? 1.6 : is5min ? 1.8 : 1.6
     float mcl_slMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.4
     float mcl_tp1Distance = mcl_atr * mcl_tpMultiplier * 0.6
@@ -1796,7 +1801,7 @@ if isMCL and not v20Active_profit and not v71Active_profit and strategy.position
 // ==================== 📊 MGC PROFIT LOGIC ====================
 if isMGC and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float mgc_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mgc_atr = ta.atr(14)
+    float mgc_atr = atrMain
     float mgc_tpMultiplier = is1min ? 1.3 : is3min ? 1.5 : is5min ? 1.7 : 1.5
     float mgc_slMultiplier = is1min ? 1.1 : is3min ? 1.3 : is5min ? 1.5 : 1.3
     float mgc_tp1Distance = mgc_atr * mgc_tpMultiplier * 0.5
@@ -1825,7 +1830,7 @@ if isMGC and not v20Active_profit and not v71Active_profit and strategy.position
 // ==================== 📊 M2K PROFIT LOGIC ====================
 if isM2K and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
     float m2k_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float m2k_atr = ta.atr(14)
+    float m2k_atr = atrMain
     float m2k_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.4
     float m2k_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
     float m2k_tp1Distance = m2k_atr * m2k_tpMultiplier * 0.5
