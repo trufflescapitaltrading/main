@@ -2056,17 +2056,15 @@ if not v20Active_profit and strategy.position_size > 0
         float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
 
         if useTP and useEnhancedTP
+            // Match MJV6 ladder exactly (60/25/10/5 always)
             tp1Points = math.round((mjvUltraQuickTP * 0.4) / syminfo.mintick)
             tp2Points = math.round((mjvFuturesTP * 0.3) / syminfo.mintick)
             tp3Points = math.round((mjvFuturesTP * 0.6) / syminfo.mintick)
             tp4Points = math.round((mjvFuturesTP * 1.0) / syminfo.mintick)
-            if posQty <= 1
-                strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=100, profit=tp1Points)
-            else
-                strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
-                strategy.exit("MJV6_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
-                strategy.exit("MJV6_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
-                strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
+            strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+            strategy.exit("MJV6_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+            strategy.exit("MJV6_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+            strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
 
         if quickExitMode and holdingPeriod >= maxHoldingBars and not exitIssuedThisBar
             strategy.close("LONG", comment="MJV6_TIME_EXIT_LONG")
@@ -2074,15 +2072,14 @@ if not v20Active_profit and strategy.position_size > 0
             lastExitReason := "MJV6_TIME_EXIT"
 
         if useSL and not exitIssuedThisBar
-            // Match MJV6 stop distance logic (ATR10 × TF factor)
+            // Match MJV6: SL unless trail active (no extra protective order)
             float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
             float stopLossPrice = localEntryPrice - mjvStopDistance
-            float stopPrice = stopLossPrice
             if useSmartTrailing and close > localEntryPrice + (mjvFuturesTP * trailActivationRatio)
                 trailDistance = mjvAtr * 0.6
-                stopPrice := close - trailDistance
-            // Single active stop order (prevents stale SL/Trail orders)
-            strategy.exit("MJV6_STOP_L", from_entry="LONG", stop=stopPrice)
+                strategy.exit("MJV6_TrailSL_L", from_entry="LONG", stop=close - trailDistance)
+            else
+                strategy.exit("MJV6_SL_L", from_entry="LONG", stop=stopLossPrice)
     else if kenyaActive
         // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
         localStopLoss = localEntryPrice - currentSL
@@ -2249,17 +2246,15 @@ if not v20Active_profit and strategy.position_size < 0
         float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
 
         if useTP and useEnhancedTP
+            // Match MJV6 ladder exactly (60/25/10/5 always)
             tp1Points = math.round((mjvUltraQuickTP * 0.5) / syminfo.mintick)
             tp2Points = math.round((mjvFuturesTP * 0.4) / syminfo.mintick)
             tp3Points = math.round((mjvFuturesTP * 0.7) / syminfo.mintick)
             tp4Points = math.round((mjvFuturesTP * 1.1) / syminfo.mintick)
-            if posQty <= 1
-                strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=100, profit=tp1Points)
-            else
-                strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
-                strategy.exit("MJV6_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
-                strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
-                strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
+            strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+            strategy.exit("MJV6_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+            strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+            strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
 
         if quickExitMode and holdingPeriod >= maxHoldingBars and not exitIssuedThisBar
             strategy.close("SHORT", comment="MJV6_TIME_EXIT_SHORT")
@@ -2267,15 +2262,14 @@ if not v20Active_profit and strategy.position_size < 0
             lastExitReason := "MJV6_TIME_EXIT"
 
         if useSL and not exitIssuedThisBar
-            // Match MJV6 stop distance logic (ATR10 × TF factor)
+            // Match MJV6: SL unless trail active (no extra protective order)
             float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
             float stopLossPrice = localEntryPrice + mjvStopDistance
-            float stopPrice = stopLossPrice
             if useSmartTrailing and close < localEntryPrice - (mjvFuturesTP * trailActivationRatio)
                 trailDistance = mjvAtr * 0.6
-                stopPrice := close + trailDistance
-            // Single active stop order (prevents stale SL/Trail orders)
-            strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
+                strategy.exit("MJV6_TrailSL_S", from_entry="SHORT", stop=close + trailDistance)
+            else
+                strategy.exit("MJV6_SL_S", from_entry="SHORT", stop=stopLossPrice)
     // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
     else if kenyaActive
         localStopLoss = localEntryPrice + currentSL
@@ -2413,7 +2407,9 @@ if not v20Active_profit and strategy.position_size < 0
 getBackupSL() =>
     isMES ? backupSL_MES : isMNQ ? backupSL_MNQ : backupSL_Default
 
-if enableBackupSL and strategy.position_size != 0 and not na(entryPrice)
+mesMJV6Active = isMES and useMJV6MesProfitLogic
+
+if enableBackupSL and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
     backupSLDistance = getBackupSL()
     if strategy.position_size > 0
         backupStopLevel = entryPrice - backupSLDistance
@@ -2437,7 +2433,7 @@ if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclea
 v71_rsiNow = rsi
 v71_rsiPrev = rsi[momentumFadeBars]
 v71_inProfit = strategy.position_size > 0 ? (close > entryPrice) : strategy.position_size < 0 ? (close < entryPrice) : false
-if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars
+if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars and not mesMJV6Active
     if strategy.position_size > 0
         if v71_rsiNow < v71_rsiPrev - momentumFadeThreshold and v71_rsiNow < 50
             if not exitIssuedThisBar
@@ -2454,7 +2450,7 @@ if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and h
 strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull and not isDojiBar
 strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear and not isDojiBar
 kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
-if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal
+if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal and not mesMJV6Active
     if strategy.position_size > 0 and strongOpposingSell
         if not exitIssuedThisBar
             strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
@@ -2466,19 +2462,19 @@ if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 an
             exitIssuedThisBar := true
             lastExitReason := "SIGNAL_REVERSAL"
 
-if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay and not exitIssuedThisBar
+if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay and not exitIssuedThisBar and not mesMJV6Active
     strategy.close_all(comment="EOD_EXIT")
     exitIssuedThisBar := true
     lastExitReason := "EOD_EXIT"
 
-if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice)
+if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
     lossThresholdDollars = (strategy.equity * losingTradeThreshold / 100)
     if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0 and not exitIssuedThisBar
         strategy.close_all(comment="LOSING_AUTO")
         exitIssuedThisBar := true
         lastExitReason := "LOSING_AUTO"
 
-if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar
+if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar and not mesMJV6Active
     strategy.close_all(comment="MAX_HOLD")
     exitIssuedThisBar := true
     lastExitReason := "MAX_HOLD"
