@@ -1591,13 +1591,16 @@ canGoShort := canGoShort and mtfShortOK
 
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE (MES-only) ====================
 if isMES and enableMesHighWinEntryGate
-    bool mesSessionOK = (not mesOnlyRegularSession) or isRegularSession
+    // Avoid "no trades" if user disables session filters globally.
+    bool mesSessionOK = (not mesOnlyRegularSession) or (not enableSessionFilters) or isRegularSession
     bool mesConfluenceOK = totalConfluenceScore >= mesMinConfluenceScore
     bool mesMtfOK_Long = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctLong >= mesMinMtfDirectionalPct)
     bool mesMtfOK_Short = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctShort >= mesMinMtfDirectionalPct)
     // Force "Mandatory Trend-Only" structure (no bypass) for MES when enabled.
-    bool mesMandatoryOK_Long = (not mesForceMandatoryTrend) or mandatoryLongOK
-    bool mesMandatoryOK_Short = (not mesForceMandatoryTrend) or mandatoryShortOK
+    // Fail-safe: if HTF pivots haven't formed yet, don't block all trading.
+    bool mesHtfStructureReady = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLastLow) and not na(htfPrevLow)
+    bool mesMandatoryOK_Long = (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryLongOK
+    bool mesMandatoryOK_Short = (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryShortOK
 
     canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
     canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
