@@ -79,13 +79,14 @@ mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes
 mesProfitGroup = "🔥 MES Profit Logic (MJV6)"
 useMJV6MesProfitLogic = input.bool(true, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE ====================
+// ⚠️ DISABLED BY DEFAULT - Original MJV6 did NOT have these restrictions
 mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
-enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
-mesOnlyRegularSession = input.bool(true, "MES: Trade only Regular Session (filters chop)", group=mesEntryGateGroup)
-mesForceMandatoryTrend = input.bool(true, "MES: Require Mandatory Trend-Only conditions", group=mesEntryGateGroup)
-mesMinConfluenceScore = input.int(5, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
-mesMinMtfDirectionalPct = input.int(67, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
-mesRestrictToPminus1P1P2 = input.bool(true, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
+enableMesHighWinEntryGate = input.bool(false, "Enable MES-only strict entry gate (DISABLED for MJV6 compatibility)", group=mesEntryGateGroup)
+mesOnlyRegularSession = input.bool(false, "MES: Trade only Regular Session", group=mesEntryGateGroup)
+mesForceMandatoryTrend = input.bool(false, "MES: Require Mandatory Trend-Only conditions", group=mesEntryGateGroup)
+mesMinConfluenceScore = input.int(2, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
+mesMinMtfDirectionalPct = input.int(33, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
+mesRestrictToPminus1P1P2 = input.bool(false, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
@@ -110,21 +111,22 @@ quickScalpProfitPct = input.float(40.0, "Quick Scalp Profit (% of TP1)", minval=
 quickScalpBars = input.int(5, "Quick Scalp Max Bars", minval=2, maxval=15, group=winOptGroup)
 enableVolatilityAdjustedExits = input.bool(true, "✅ Volatility-Adjusted Exits", group=winOptGroup)
 volAdjustFactor = input.float(0.8, "Vol Adjustment Factor", minval=0.5, maxval=1.2, group=winOptGroup)
-enableStrictEntryFilter = input.bool(true, "✅ Strict Entry Filter for Higher WR", group=winOptGroup)
-minADXForEntry = input.float(18.0, "Min ADX for Entry", minval=10, maxval=30, group=winOptGroup)
+enableStrictEntryFilter = input.bool(false, "Strict Entry Filter (DISABLED for MJV6 compatibility)", group=winOptGroup)
+minADXForEntry = input.float(15.0, "Min ADX for Entry", minval=10, maxval=30, group=winOptGroup)
 minRSIRangeLow = input.float(35.0, "RSI Range Low", minval=20, maxval=45, group=winOptGroup)
 minRSIRangeHigh = input.float(65.0, "RSI Range High", minval=55, maxval=80, group=winOptGroup)
 // ==================== ✅ ENTRY EXECUTION ====================
 entryGroup = "✅ Entry Execution"
-enterOnBarClose = input.bool(true, "Enter ONLY on bar close (no intrabar entries)", group=entryGroup)
+enterOnBarClose = input.bool(false, "Enter ONLY on bar close (DISABLED for more trades)", group=entryGroup)
 allowIntrabarForP1P2 = input.bool(true, "Allow intrabar entries for P1/P2 (earlier impulse/trend)", group=entryGroup)
-require5mCandleColorConfirm = input.bool(true, "3m entries require 5m candle color confirmation", group=entryGroup)
+require5mCandleColorConfirm = input.bool(false, "3m entries require 5m candle color confirmation (DISABLED)", group=entryGroup)
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
+// ⚠️ LOOSENED - Original MJV6 had simpler filters
 mesGuardGroup = "🛡️ MES Anti-Chop Guard"
-enableMesAntiChop = input.bool(true, "Enable MES stricter filters (reduces chop entries)", group=mesGuardGroup)
-mesMinADXForEntry = input.float(22.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
-mesConfluenceBoost = input.int(1, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
-mesMinHTFAligned = input.int(2, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
+enableMesAntiChop = input.bool(false, "Enable MES stricter filters (DISABLED for MJV6 compatibility)", group=mesGuardGroup)
+mesMinADXForEntry = input.float(15.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
+mesConfluenceBoost = input.int(0, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
+mesMinHTFAligned = input.int(1, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
 // ==================== ✅ MANDATORY TREND-ONLY FILTER (NON-NEGOTIABLE) ====================
 trendOnlyGroup = "✅ Mandatory Trend-Only Filter"
 enableMandatoryTrendOnly = input.bool(false, "Enable Mandatory Trend-Only Filter (hard block)", group=trendOnlyGroup)
@@ -142,11 +144,11 @@ allowPriorityMinus1 = input.bool(true, "P-1: Trend Start (Ignition) 🔥", group
 allowPriority1 = input.bool(true, "P1: Impulse Override 🚀", group=priorityGroup)
 allowPriority1Early = input.bool(true, "P1: Early Trend Start (SuperTrend flip + momentum)", group=priorityGroup)
 allowPriority2 = input.bool(true, "P2: Strong Trend Override 📈", group=priorityGroup)
-allowPriority3 = input.bool(false, "P3: 5-Star Entry", group=priorityGroup)
-allowPriority4 = input.bool(false, "P4: 4-Star Entry", group=priorityGroup)
-allowPriority5 = input.bool(false, "P5: 3-Star Entry", group=priorityGroup)
-allowPriority6 = input.bool(false, "P6: 2-Star Entry", group=priorityGroup)
-allowPriority7 = input.bool(false, "P7: Swing Signal", group=priorityGroup)
+allowPriority3 = input.bool(true, "P3: 5-Star Entry", group=priorityGroup)
+allowPriority4 = input.bool(true, "P4: 4-Star Entry", group=priorityGroup)
+allowPriority5 = input.bool(true, "P5: 3-Star Entry", group=priorityGroup)
+allowPriority6 = input.bool(true, "P6: 2-Star Entry", group=priorityGroup)
+allowPriority7 = input.bool(true, "P7: Swing Signal", group=priorityGroup)
 group_entryConfirm = "✅ Entry Confirmation"
 requireCandleDirection = input.bool(true, "⚠️ STRICT: Long=Green, Short=Red", group=group_entryConfirm)
 requireBodyStrength = input.bool(false, "Require Body Strength", group=group_entryConfirm)
@@ -156,13 +158,13 @@ impulseATRMult = input.float(1.15, "Impulse Move ATR Multiple", minval=0.3, maxv
 impulseVolMult = input.float(1.7, "Impulse Volume Multiple", minval=1.0, maxval=10.0, step=0.05, group=group_entryConfirm)
 impulseBodyMin = input.float(0.6, "Impulse: Min body ratio", minval=0.10, maxval=0.95, step=0.05, group=group_entryConfirm)
 impulseRangeMinATR = input.float(0.90, "Impulse: Min full range × ATR", minval=0.30, maxval=3.0, step=0.05, group=group_entryConfirm)
-confluenceLevel = input.int(6, "🎯 Confluence Level (1=Loose, 15=Strict)", minval=1, maxval=15)
+confluenceLevel = input.int(3, "🎯 Confluence Level (1=Loose, 15=Strict)", minval=1, maxval=15)
 enableTrendOverride = input.bool(true, "🚀 Enable Strong Trend Override", group="Trend Override")
 consecutiveCandlesRequired = input.int(3, "Consecutive Candles for Override", minval=2, maxval=5, group="Trend Override")
 trendOverrideVolMultiplier = input.float(0.6, "Volume Multiplier for Override", minval=0.5, maxval=1.5, group="Trend Override")
 trendOverrideRangeMultiplier = input.float(0.9, "Range Multiplier for Override", minval=0.5, maxval=3.0, group="Trend Override")
 choppyFilterGroup = "Choppy Market Filter"
-enableChoppyFilter = input.bool(true, "Enable Choppy/Sideways Market Filter", group=choppyFilterGroup)
+enableChoppyFilter = input.bool(false, "Enable Choppy/Sideways Market Filter (DISABLED for MJV6)", group=choppyFilterGroup)
 choppyADXThreshold = input.float(23.0, "ADX Threshold (below = choppy)", minval=10.0, maxval=35.0, group=choppyFilterGroup)
 choppyATRMultiplier = input.float(0.85, "ATR Multiplier (below avg = choppy)", minval=0.5, maxval=1.2, group=choppyFilterGroup)
 choppyBBWidthThreshold = input.float(0.020, "BB Width Threshold", minval=0.005, maxval=0.050, group=choppyFilterGroup)
@@ -340,9 +342,9 @@ tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy nam
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
 actualTicker = useAutoSymbol ? syminfo.ticker : (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
-minMESRangePoints = input.float(5.0, "V8: Min MES Range (points)", minval=0.0, maxval=20.0)
-usePointRangeCheck = input.bool(true, "V8: Enable Min Range Check")
-minStarsRequired = input.int(3, "V8: Minimum Stars Required", minval=1, maxval=5)
+minMESRangePoints = input.float(0.0, "V8: Min MES Range (points)", minval=0.0, maxval=20.0)
+usePointRangeCheck = input.bool(false, "V8: Enable Min Range Check (DISABLED)")
+minStarsRequired = input.int(1, "V8: Minimum Stars Required", minval=1, maxval=5)
 enableMTF = input.bool(false, "V8: Enable Multi-Timeframe Checks")
 mtfMode = input.string("Confirmation", "V8: MTF Mode", options=["Confirmation", "Filter", "Advisory"])
 mtf_tf1 = input.timeframe("15", "V8: MTF 1")
@@ -358,7 +360,7 @@ atr10 = ta.atr(10)
 atrMain = ta.atr(14)
 // ==================== ⭐⭐⭐ TRUE HTF CONFIRMATION ====================
 htfGroup = "⭐⭐⭐ HTF EMA50 Confirmation"
-enableHTFConfirm = input.bool(true, "Enable HTF Confirmation", group=htfGroup)
+enableHTFConfirm = input.bool(false, "Enable HTF Confirmation (DISABLED for MJV6 compatibility)", group=htfGroup)
 htf_tfA = input.timeframe("15", "HTF A", group=htfGroup)
 htf_tfB = input.timeframe("60", "HTF B", group=htfGroup)
 htf_tfC = input.timeframe("240", "HTF C", group=htfGroup)
@@ -377,7 +379,7 @@ htfAlignmentPctLong = math.round((htfAlignLongCount / 3.0) * 100.0)
 htfAlignmentPctShort = math.round((htfAlignShortCount / 3.0) * 100.0)
 // ==================== 📈 VOLATILITY REGIME FILTER ====================
 volRegimeGroup = "📈 Volatility Regime"
-enableVolRegime = input.bool(true, "Enable Volatility Regime Filter", group=volRegimeGroup)
+enableVolRegime = input.bool(false, "Enable Volatility Regime Filter (DISABLED for MJV6)", group=volRegimeGroup)
 atrRegLen = input.int(20, "ATR Length", minval=5, maxval=50, group=volRegimeGroup)
 atrRegSmaLen = input.int(100, "ATR Baseline SMA", minval=20, maxval=300, group=volRegimeGroup)
 highVolThresh = input.float(1.2, "High Vol Threshold", minval=1.0, maxval=2.0, step=0.05, group=volRegimeGroup)
@@ -487,7 +489,7 @@ enableBEAfterTP1 = input.bool(false, "Move Stop to BE AFTER TP1 - optional", gro
 beAfterTP1UseFees = input.bool(true, "BE After TP1 includes fees", group=partialGroup)
 var bool tp1Hit = false
 routerGroup = "✅ Router (Trend-Only + Best-Side)"
-enableTrendOnly = input.bool(true, "Trade Trend Only", group=routerGroup)
+enableTrendOnly = input.bool(false, "Trade Trend Only (DISABLED for more trades)", group=routerGroup)
 allowModerateTrend = input.bool(true, "Allow Moderate Trend", group=routerGroup)
 enableBestSideRouter = input.bool(false, "Best-Side Router - DISABLED FOR MORE TRADES", group=routerGroup)
 biasLockBars = input.int(3, "Bias Lock Bars", minval=1, maxval=20, group=routerGroup)
