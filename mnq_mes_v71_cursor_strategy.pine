@@ -1932,7 +1932,8 @@ ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 // - Kenya ladder always wins on MNQ 3m when enabled.
 is3m_chart_profit = timeframe.period == "3"
 kenyaActive_profit = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart_profit
-v20Active_profit = useV20KenyaPerfectProfit and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit
+// IMPORTANT: When using MJV6 MES profit logic, do not run V20 on MES (prevents profit-module conflicts).
+v20Active_profit = useV20KenyaPerfectProfit and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit and not (isMES and useMJV6MesProfitLogic)
 
 if v20Active_profit and strategy.position_size > 0
     float avgPrice = strategy.position_avg_price
@@ -2073,12 +2074,15 @@ if not v20Active_profit and strategy.position_size > 0
             lastExitReason := "MJV6_TIME_EXIT"
 
         if useSL and not exitIssuedThisBar
-            float stopLossPrice = localEntryPrice - futuresStopDistance
-            float protectStop = stopLossPrice
+            // Match MJV6 stop distance logic (ATR10 × TF factor)
+            float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
+            float stopLossPrice = localEntryPrice - mjvStopDistance
+            float stopPrice = stopLossPrice
             if useSmartTrailing and close > localEntryPrice + (mjvFuturesTP * trailActivationRatio)
                 trailDistance = mjvAtr * 0.6
-                protectStop := math.max(protectStop, close - trailDistance)
-            strategy.exit("MJV6_PROTECT_L", from_entry="LONG", stop=protectStop)
+                stopPrice := close - trailDistance
+            // Single active stop order (prevents stale SL/Trail orders)
+            strategy.exit("MJV6_STOP_L", from_entry="LONG", stop=stopPrice)
     else if kenyaActive
         // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
         localStopLoss = localEntryPrice - currentSL
@@ -2263,12 +2267,15 @@ if not v20Active_profit and strategy.position_size < 0
             lastExitReason := "MJV6_TIME_EXIT"
 
         if useSL and not exitIssuedThisBar
-            float stopLossPrice = localEntryPrice + futuresStopDistance
-            float protectStop = stopLossPrice
+            // Match MJV6 stop distance logic (ATR10 × TF factor)
+            float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
+            float stopLossPrice = localEntryPrice + mjvStopDistance
+            float stopPrice = stopLossPrice
             if useSmartTrailing and close < localEntryPrice - (mjvFuturesTP * trailActivationRatio)
                 trailDistance = mjvAtr * 0.6
-                protectStop := math.min(protectStop, close + trailDistance)
-            strategy.exit("MJV6_PROTECT_S", from_entry="SHORT", stop=protectStop)
+                stopPrice := close + trailDistance
+            // Single active stop order (prevents stale SL/Trail orders)
+            strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
     // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
     else if kenyaActive
         localStopLoss = localEntryPrice + currentSL
