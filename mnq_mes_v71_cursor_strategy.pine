@@ -86,6 +86,20 @@ mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes
 // ==================== 🔥 MES MJV6 PROFIT LOGIC (SIMPLIFIED LADDER) ====================
 mesProfitGroup = "🔥 MES Profit Logic (MJV6)"
 useMJV6MesProfitLogic = input.bool(true, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
+mesMJV6HighWinProtect = input.bool(true, "MES MJV6: High-Win protections (early BE + earlier trail)", group=mesProfitGroup)
+mesMJV6TPScale = input.float(0.85, "MES MJV6: TP scale (smaller = higher WR)", minval=0.50, maxval=1.20, step=0.05, group=mesProfitGroup)
+mesMJV6BETriggerPct = input.float(0.35, "MES MJV6: Move stop to BE after TP distance × pct", minval=0.10, maxval=0.90, step=0.05, group=mesProfitGroup)
+mesMJV6BEUseFees = input.bool(true, "MES MJV6: BE includes est. fees/slippage", group=mesProfitGroup)
+mesMJV6TrailActivationRatio = input.float(0.60, "MES MJV6: Trail activation ratio", minval=0.30, maxval=1.20, step=0.05, group=mesProfitGroup)
+
+// ==================== 🛡️ MES HIGH-WIN ENTRY GATE ====================
+mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
+enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
+mesOnlyRegularSession = input.bool(true, "MES: Trade only Regular Session (filters chop)", group=mesEntryGateGroup)
+mesForceMandatoryTrend = input.bool(true, "MES: Require Mandatory Trend-Only conditions", group=mesEntryGateGroup)
+mesMinConfluenceScore = input.int(5, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
+mesMinMtfDirectionalPct = input.int(67, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
+mesRestrictToPminus1P1P2 = input.bool(true, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
 
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
@@ -1575,6 +1589,19 @@ canGoShort := canGoShort and trendOnlyShortGate
 canGoLong := canGoLong and mtfLongOK
 canGoShort := canGoShort and mtfShortOK
 
+// ==================== 🛡️ MES HIGH-WIN ENTRY GATE (MES-only) ====================
+if isMES and enableMesHighWinEntryGate
+    bool mesSessionOK = (not mesOnlyRegularSession) or isRegularSession
+    bool mesConfluenceOK = totalConfluenceScore >= mesMinConfluenceScore
+    bool mesMtfOK_Long = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctLong >= mesMinMtfDirectionalPct)
+    bool mesMtfOK_Short = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctShort >= mesMinMtfDirectionalPct)
+    // Force "Mandatory Trend-Only" structure (no bypass) for MES when enabled.
+    bool mesMandatoryOK_Long = (not mesForceMandatoryTrend) or mandatoryLongOK
+    bool mesMandatoryOK_Short = (not mesForceMandatoryTrend) or mandatoryShortOK
+
+    canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
+    canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
+
 if not tookTradeThisBar
     if enablePrioritySystem
         if not shouldEnterLong and not shouldEnterShort and allowPriorityMinus1
@@ -1700,6 +1727,21 @@ if not tookTradeThisBar
         shouldEnterShort := rawShortCondition
         selectedPriority := "NO_PRIORITY"
 
+    // MES: optionally restrict entries to the highest-quality priority tiers only.
+    if isMES and enableMesHighWinEntryGate and mesRestrictToPminus1P1P2
+        bool mesPriorityAllowed =
+             (selectedPriority == "P-1:TREND_START") or
+             (selectedPriority == "P1:EARLY_TREND") or
+             (selectedPriority == "P1:IGNITION") or
+             (selectedPriority == "P1:IMPULSE") or
+             (selectedPriority == "P2:CONTINUATION") or
+             (selectedPriority == "P2:TREND") or
+             (selectedPriority == "P2:STRONG_TREND")
+        if not mesPriorityAllowed
+            shouldEnterLong := false
+            shouldEnterShort := false
+            selectedPriority := "MES_BLOCKED"
+
 var int lastLongSignalBar = na
 var int lastShortSignalBar = na
 barsSinceLongSignal = na(lastLongSignalBar) ? 999999 : (bar_index - lastLongSignalBar)
@@ -1770,6 +1812,7 @@ if strategy.position_size == 0
     if rawLongSignal and not longCondition
         lastBlockReason :=
              not canTradeNow ? "TIME" :
+             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
              maxTradesReached ? "DAILY_TRADES" :
              maxLossReached ? "DAILY_LOSS" :
              profitTargetReached ? "DAILY_TARGET" :
@@ -1793,6 +1836,7 @@ if strategy.position_size == 0
     else if rawShortSignal and not shortCondition
         lastBlockReason :=
              not canTradeNow ? "TIME" :
+             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
              maxTradesReached ? "DAILY_TRADES" :
              maxLossReached ? "DAILY_LOSS" :
              profitTargetReached ? "DAILY_TARGET" :
@@ -2027,13 +2071,24 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
     float mjvAtr = atr10
 
     // From your posted script:
-    float futuresTPDistance = mjvAtr * tpMultiplier
-    float ultraQuickTP = mjvAtr * (tpMultiplier * 0.5)
+    float effectiveTPMult = tpMultiplier * (mesMJV6HighWinProtect ? mesMJV6TPScale : 1.0)
+    float futuresTPDistance = mjvAtr * effectiveTPMult
+    float ultraQuickTP = mjvAtr * (effectiveTPMult * 0.5)
 
     // From your posted script (stop distance):
     float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
 
-    float entryPrice = strategy.position_avg_price
+    // Prefer the bot's persistent entry tracker when available.
+    float entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
+
+    // Optional BE offset in points (fees + slippage modeled per-contract).
+    float mjvBEOffsetPts = 0.0
+    if mesMJV6HighWinProtect and mesMJV6BEUseFees and enableFeeModel and syminfo.pointvalue > 0
+        float tickValue = syminfo.mintick * syminfo.pointvalue
+        float slipDolRT_perContract = slippageTicksOneWay * tickValue * 2.0
+        float commDolRT_perContract = commissionPerContract * 2.0
+        float feesRT_perContract = commDolRT_perContract + slipDolRT_perContract + extraFeesPerContract
+        mjvBEOffsetPts := feesRT_perContract / syminfo.pointvalue
 
     // ---- LONG ----
     if strategy.position_size > 0 and not exitIssuedThisBar
@@ -2060,9 +2115,13 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
         // Smart trailing replaces SL once activated (posted script behavior)
         if useSL and not exitIssuedThisBar
             float stopPrice = stopLoss
-            if useSmartTrailing and close > entryPrice + (futuresTPDistance * trailActivationRatio)
+            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            if useSmartTrailing and close > entryPrice + (futuresTPDistance * actRatio)
                 float trailDistance = mjvAtr * 0.6
                 stopPrice := close - trailDistance
+            // High-win: once price moves in our favor, protect to (fees-aware) breakeven.
+            if mesMJV6HighWinProtect and close > entryPrice + (futuresTPDistance * mesMJV6BETriggerPct)
+                stopPrice := math.max(stopPrice, entryPrice + mjvBEOffsetPts)
             // Single active stop (prevents multiple stale SL/Trail orders)
             strategy.exit("MJV6_STOP_L", from_entry="LONG", stop=stopPrice)
 
@@ -2088,9 +2147,12 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
 
         if useSL and not exitIssuedThisBar
             float stopPrice = stopLoss
-            if useSmartTrailing and close < entryPrice - (futuresTPDistance * trailActivationRatio)
+            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            if useSmartTrailing and close < entryPrice - (futuresTPDistance * actRatio)
                 float trailDistance = mjvAtr * 0.6
                 stopPrice := close + trailDistance
+            if mesMJV6HighWinProtect and close < entryPrice - (futuresTPDistance * mesMJV6BETriggerPct)
+                stopPrice := math.min(stopPrice, entryPrice - mjvBEOffsetPts)
             strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
 
 if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic)
