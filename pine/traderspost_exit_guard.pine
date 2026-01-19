@@ -1,0 +1,66 @@
+//@version=5
+// TradersPost Exit Guard Module
+// Drop-in helpers to prevent sending action:"exit" when flat,
+// and to optionally force a contract ticker (MNQH2026) instead of MNQ1!.
+
+// ==================== ✅ TRADERSPOST EXIT GUARD ====================
+tpGuardGroup = "TradersPost Exit Guard"
+tpEnableExitGuard = input.bool(true, "✅ Guard EXIT alerts when flat", group=tpGuardGroup)
+
+// Choose which “position state” to trust for guarding exits:
+// - "Auto": if alertOnlyMode/tpUseSim -> simulated; else -> strategy
+// - "Strategy": uses TradingView strategy.position_size
+// - "Simulated": uses your script’s tpPosDir/tpPosQty variables
+tpExitGuardSource = input.string("Auto", "Exit guard source", options=["Auto","Strategy","Simulated"], group=tpGuardGroup)
+
+// Optional: force the outbound ticker to the configured contract symbol (recommended for live)
+tpForceContractTicker = input.bool(true, "✅ Force contract ticker (avoid *1!)", group=tpGuardGroup)
+
+// Provide your contract tickers (or wire these to your existing inputs)
+tpContractMNQ = input.string("MNQH2026", "MNQ contract ticker", group=tpGuardGroup)
+tpContractMES = input.string("MESH2026", "MES contract ticker", group=tpGuardGroup)
+
+// ---- Integration notes ----
+// This module expects you already have (or will define) these variables in your script:
+// - bool alertOnlyMode
+// - bool tpSimulateBrokerPosition (optional)
+// - bool tpUseSim   (recommended: tpSimulateBrokerPosition or alertOnlyMode)
+// - int  tpPosDir   (1=long, -1=short, 0=flat)
+// - int  tpPosQty   (>=0)
+// - bool isMNQ / isMES
+//
+// If you don’t use simulated state, you can ignore tpPosDir/tpPosQty
+// and set tpExitGuardSource="Strategy".
+
+// Determine whether we should consider ourselves “in a position” for exit purposes.
+tpGuardHasPosition(tpUseSim, tpPosDir, tpPosQty) =>
+    src =
+         tpExitGuardSource == "Auto" ? (tpUseSim ? "Simulated" : "Strategy") :
+         tpExitGuardSource
+    src == "Simulated" ? (tpPosDir != 0 and tpPosQty > 0) : (strategy.position_size != 0)
+
+// Wrap outbound ticker selection to avoid accidental MNQ1!/MES1! in live routing.
+tpGuardTicker(actualTickerIn) =>
+    if not tpForceContractTicker
+        actualTickerIn
+    else if isMNQ
+        tpContractMNQ
+    else if isMES
+        tpContractMES
+    else
+        actualTickerIn
+
+// Helper you call right before sending an EXIT alert payload.
+tpGuardAllowExit(tpUseSim, tpPosDir, tpPosQty) =>
+    not tpEnableExitGuard or tpGuardHasPosition(tpUseSim, tpPosDir, tpPosQty)
+
+// ==================== ✅ EXAMPLE USAGE ====================
+// 1) Wrap your ticker:
+// actualTicker := tpGuardTicker(actualTicker)
+//
+// 2) Before any EXIT alert():
+// if tpGuardAllowExit(tpUseSim, tpPosDir, tpPosQty)
+//     alert(exitMessage, alert.freq_once_per_bar)
+// else
+//     // do nothing (prevents TradersPost “No position open to exit” rejection)
+
