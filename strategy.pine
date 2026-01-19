@@ -1355,9 +1355,19 @@ qualityOKShort = entryQualityScoreShort >= minQualityThreshold
 
 // ==================== ⭐ PRIORITY SYSTEM - WORK WITH QUALITY SCORE ====================
 determinePriority(isLong, qualityScore) =>
-    if isLong and impulseLong and qualityScore >= 85
+    if isLong and hasTrendStartLong and qualityScore >= 80
+        "P-1:TREND_START"
+    else if isLong and earlyTrendLong and qualityScore >= 80
+        "P1:EARLY_TREND"
+    else if isLong and tibLong and qualityScore >= 80
+        "P1:IGNITION"
+    else if isLong and impulseLong and qualityScore >= 85
         "P1:IMPULSE"
+    else if isLong and cpbLong and qualityScore >= 80
+        "P2:CONTINUATION"
     else if isLong and hasStrongTrendOverrideBull and qualityScore >= 80
+        "P2:STRONG_TREND"
+    else if isLong and hasTrendOverrideBull and qualityScore >= 80
         "P2:TREND"
     else if isLong and is5Star and qualityScore >= 85
         "P3:5⭐"
@@ -1369,9 +1379,19 @@ determinePriority(isLong, qualityScore) =>
         "P6:2⭐"
     else if isLong and swingBuySignal and qualityScore >= 65
         "P7:SWING"
+    else if not isLong and hasTrendStartShort and qualityScore >= 80
+        "P-1:TREND_START"
+    else if not isLong and earlyTrendShort and qualityScore >= 80
+        "P1:EARLY_TREND"
+    else if not isLong and tibShort and qualityScore >= 80
+        "P1:IGNITION"
     else if not isLong and impulseShort and qualityScore >= 85
         "P1:IMPULSE"
+    else if not isLong and cpbShort and qualityScore >= 80
+        "P2:CONTINUATION"
     else if not isLong and hasStrongTrendOverrideBear and qualityScore >= 80
+        "P2:STRONG_TREND"
+    else if not isLong and hasTrendOverrideBear and qualityScore >= 80
         "P2:TREND"
     else if not isLong and is5Star and qualityScore >= 85
         "P3:5⭐"
