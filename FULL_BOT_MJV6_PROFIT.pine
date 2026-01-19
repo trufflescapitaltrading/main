@@ -1580,6 +1580,10 @@ getActiveQty(baseQty) =>
 // Using cash-based position sizing like original MJV6 (default_qty_value=1000)
 // Removed excessive filters that were blocking trades
 
+// Keep these for compatibility with plots/alerts
+bool allowEntryLong = true
+bool allowEntryShort = true
+
 // Simple entry conditions - match MJV6 simplicity
 simpleLongCondition = (ultraBuySignal or swingBuySignal or impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong) and strategy.position_size == 0 and not maxLossReached
 simpleShortCondition = (ultraSellSignal or swingSellSignal or impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort) and strategy.position_size == 0 and not maxLossReached
