@@ -1,0 +1,574 @@
+//@version=5
+strategy("@MAIN-MNQ 3m/5m-FIXED-V72 Early Entry + Candle Color Strict", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+
+// ==================== 🔥🔥🔥 CRITICAL FIXES APPLIED 🔥🔥🔥 ====================
+// FIX 1: STRICT CANDLE COLOR - LONG=GREEN ONLY, SHORT=RED ONLY (NO EXCEPTIONS)
+// FIX 2: EARLY TREND ENTRY - Enter on 1st-2nd candle, NOT 4th-5th
+// FIX 3: DOJI/SMALL BODY FILTER - Block ALL signals on dojis
+// FIX 4: MULTI-CANDLE RUN DETECTION - Capture entire moves from start
+// FIX 5: FILTER HARMONY - Filters work TOGETHER, not against each other
+// ==============================================================================
+
+// ==================== 💰 DAILY PROFIT TARGET ====================
+profitTargetGroup = "💰 Daily Profit Target"
+enableDailyProfitTarget = input.bool(true, "Enable Daily Profit Target", group=profitTargetGroup)
+dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", minval=500, maxval=5000, group=profitTargetGroup)
+
+// ==================== 🎯 INSTRUMENT DETECTION ====================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroFutures = isMYM or isMNQ or isMCL or isMGC or isMES or isM2K
+instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
+
+// Timeframe detection
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+is10min = currentTF == "10" or currentTF == "10m"
+is15min = currentTF == "15" or currentTF == "15m"
+
+// ==================== 🔥🔥🔥 FIX #1: STRICT CANDLE COLOR ENFORCEMENT 🔥🔥🔥 ====================
+strictColorGroup = "🔥 STRICT CANDLE COLOR (CRITICAL FIX)"
+enableStrictCandleColor = input.bool(true, "⚠️ ENFORCE: Long=GREEN, Short=RED (NO EXCEPTIONS)", group=strictColorGroup)
+minBodyRatioStrict = input.float(0.40, "Min Body Ratio for Valid Candle", minval=0.20, maxval=0.70, step=0.05, group=strictColorGroup)
+minBodyATRStrict = input.float(0.15, "Min Body Size (×ATR10)", minval=0.05, maxval=0.50, step=0.05, group=strictColorGroup)
+
+// Core candle calculations
+candleOpen = open
+candleClose = close
+candleHigh = high
+candleLow = low
+candleRange = candleHigh - candleLow
+candleBody = math.abs(candleClose - candleOpen)
+candleBodyRatio = candleRange > 0 ? candleBody / candleRange : 0
+
+// STRICT DEFINITIONS - NO AMBIGUITY
+isTrueGreenCandle = candleClose > candleOpen
+isTrueRedCandle = candleClose < candleOpen
+isDojiCandle = candleBodyRatio < 0.10 or candleBody < syminfo.mintick * 5
+
+// ATR for sizing
+atr10 = ta.atr(10)
+atr14 = ta.atr(14)
+atr20 = ta.atr(20)
+
+// ✅ VALID CANDLE CHECKS - Must pass ALL for entry
+isValidGreenCandle = isTrueGreenCandle and not isDojiCandle and candleBodyRatio >= minBodyRatioStrict and (atr10 <= 0 or candleBody >= atr10 * minBodyATRStrict)
+isValidRedCandle = isTrueRedCandle and not isDojiCandle and candleBodyRatio >= minBodyRatioStrict and (atr10 <= 0 or candleBody >= atr10 * minBodyATRStrict)
+
+// CRITICAL: Final candle direction for entries
+canEnterLongByColor = enableStrictCandleColor ? isValidGreenCandle : true
+canEnterShortByColor = enableStrictCandleColor ? isValidRedCandle : true
+
+// ==================== 🔥🔥🔥 FIX #2: EARLY TREND ENTRY SYSTEM 🔥🔥🔥 ====================
+earlyEntryGroup = "🔥 EARLY TREND ENTRY (1st-2nd Candle)"
+enableEarlyTrendEntry = input.bool(true, "✅ Enable Early Trend Entry (P-1/P0)", group=earlyEntryGroup)
+earlyEntryMinBodyRatio = input.float(0.45, "Early Entry Min Body Ratio", minval=0.30, maxval=0.70, step=0.05, group=earlyEntryGroup)
+earlyEntryVolMult = input.float(1.10, "Early Entry Volume × SMA20", minval=0.80, maxval=2.00, step=0.05, group=earlyEntryGroup)
+earlyEntryATRMult = input.float(0.80, "Early Entry Range × ATR10", minval=0.50, maxval=2.00, step=0.05, group=earlyEntryGroup)
+
+// Volume analysis
+volumeSMA20 = ta.sma(volume, 20)
+volumeSMA50 = ta.sma(volume, 50)
+isAboveAvgVolume = volume > volumeSMA20 * earlyEntryVolMult
+isStrongVolume = volume > volumeSMA20 * 1.50
+
+// Previous candle analysis
+prevCandleBody = math.abs(close[1] - open[1])
+prevCandleRange = high[1] - low[1]
+prevCandleBodyRatio = prevCandleRange > 0 ? prevCandleBody / prevCandleRange : 0
+prevIsGreen = close[1] > open[1]
+prevIsRed = close[1] < open[1]
+prevIsValidBody = prevCandleBodyRatio >= 0.35 and not (prevCandleBodyRatio < 0.10)
+
+// 2nd candle analysis
+prev2CandleBody = math.abs(close[2] - open[2])
+prev2CandleRange = high[2] - low[2]
+prev2IsGreen = close[2] > open[2]
+prev2IsRed = close[2] < open[2]
+
+// ==================== 🚀 P-1: TREND IGNITION (1st-2nd Candle Entry) ====================
+// Detect trend start at the BEGINNING, not the middle
+
+// Condition: Current candle is STRONG and continues direction of previous
+p1IgnitionLong = enableEarlyTrendEntry and 
+     isValidGreenCandle and 
+     prevIsGreen and 
+     prevIsValidBody and
+     candleBodyRatio >= earlyEntryMinBodyRatio and
+     candleRange >= atr10 * earlyEntryATRMult and
+     isAboveAvgVolume and
+     close > close[1] and
+     close[1] > close[2]
+
+p1IgnitionShort = enableEarlyTrendEntry and 
+     isValidRedCandle and 
+     prevIsRed and 
+     prevIsValidBody and
+     candleBodyRatio >= earlyEntryMinBodyRatio and
+     candleRange >= atr10 * earlyEntryATRMult and
+     isAboveAvgVolume and
+     close < close[1] and
+     close[1] < close[2]
+
+// ==================== 🔥 P0: MOMENTUM BREAKOUT (Immediate Entry) ====================
+momentumGroup = "🔥 P0 MOMENTUM BREAKOUT"
+enableMomentumBreakout = input.bool(true, "✅ Enable P0 Momentum Breakout", group=momentumGroup)
+momentumLookback = input.int(5, "Momentum Lookback Bars", minval=3, maxval=10, group=momentumGroup)
+momentumMinPctMove = input.float(0.30, "Min % Price Move", minval=0.10, maxval=1.00, step=0.05, group=momentumGroup)
+momentumMinPointsMNQ = input.float(30.0, "MNQ Min Points Move", minval=20, maxval=100, group=momentumGroup)
+momentumMinPointsMES = input.float(3.0, "MES Min Points Move", minval=1, maxval=20, group=momentumGroup)
+
+// Calculate momentum
+priceChangePct = math.abs((close - close[momentumLookback]) / close[momentumLookback]) * 100
+priceChangePoints = math.abs(close - close[momentumLookback])
+priceDirection = close > close[momentumLookback] ? 1 : close < close[momentumLookback] ? -1 : 0
+
+// Momentum thresholds per instrument
+momentumMinPoints = isMNQ ? momentumMinPointsMNQ : isMES ? momentumMinPointsMES : 20.0
+
+// P0 Momentum conditions
+p0MomentumLong = enableMomentumBreakout and
+     isValidGreenCandle and
+     priceDirection == 1 and
+     (priceChangePct >= momentumMinPctMove or priceChangePoints >= momentumMinPoints) and
+     isAboveAvgVolume
+
+p0MomentumShort = enableMomentumBreakout and
+     isValidRedCandle and
+     priceDirection == -1 and
+     (priceChangePct >= momentumMinPctMove or priceChangePoints >= momentumMinPoints) and
+     isAboveAvgVolume
+
+// ==================== 🔥🔥🔥 FIX #3: CONSECUTIVE CANDLE RUN DETECTION 🔥🔥🔥 ====================
+runDetectionGroup = "🔥 CONSECUTIVE RUN DETECTION (Enter Early)"
+enableRunDetection = input.bool(true, "✅ Detect Consecutive Candle Runs", group=runDetectionGroup)
+runEntryCandle = input.int(2, "Enter on Candle # (1=first, 2=second)", minval=1, maxval=3, group=runDetectionGroup)
+runMinBodyRatio = input.float(0.35, "Run Candle Min Body Ratio", minval=0.20, maxval=0.60, step=0.05, group=runDetectionGroup)
+
+// Count consecutive green candles (from current bar backwards)
+var int greenRunCount = 0
+var int redRunCount = 0
+
+// Reset and count runs
+greenRunCount := 0
+redRunCount := 0
+
+// Check each bar for run
+for i = 0 to 7
+    barBody = math.abs(close[i] - open[i])
+    barRange = high[i] - low[i]
+    barBodyRatio = barRange > 0 ? barBody / barRange : 0
+    barIsGreen = close[i] > open[i]
+    barIsRed = close[i] < open[i]
+    barIsValid = barBodyRatio >= runMinBodyRatio
+    
+    if barIsGreen and barIsValid
+        greenRunCount += 1
+    else
+        break
+
+for i = 0 to 7
+    barBody = math.abs(close[i] - open[i])
+    barRange = high[i] - low[i]
+    barBodyRatio = barRange > 0 ? barBody / barRange : 0
+    barIsGreen = close[i] > open[i]
+    barIsRed = close[i] < open[i]
+    barIsValid = barBodyRatio >= runMinBodyRatio
+    
+    if barIsRed and barIsValid
+        redRunCount += 1
+    else
+        break
+
+// ✅ EARLY RUN ENTRY - Enter on 2nd candle of run, not 4th-5th
+isEarlyRunEntryLong = enableRunDetection and greenRunCount == runEntryCandle and isValidGreenCandle
+isEarlyRunEntryShort = enableRunDetection and redRunCount == runEntryCandle and isValidRedCandle
+
+// ==================== 🔥🔥🔥 FIX #4: TREND CONTINUATION (P2 FIX) 🔥🔥🔥 ====================
+// Problem: P2 was firing on 4th-5th candle
+// Fix: P2 now confirms trend after P-1/P0, NOT as late entry
+
+trendContGroup = "🔥 P2 TREND CONTINUATION (Fixed)"
+enableTrendContinuation = input.bool(true, "✅ Enable P2 Trend Continuation", group=trendContGroup)
+p2MinRunLength = input.int(2, "P2 Min Consecutive Candles", minval=2, maxval=4, group=trendContGroup)
+p2MaxRunLength = input.int(4, "P2 Max Consecutive Candles (avoid late)", minval=3, maxval=6, group=trendContGroup)
+
+// P2: Valid trend continuation - NOT too late
+p2TrendLong = enableTrendContinuation and
+     isValidGreenCandle and
+     greenRunCount >= p2MinRunLength and
+     greenRunCount <= p2MaxRunLength and
+     close > close[1] and
+     close[1] > close[2] and
+     isAboveAvgVolume
+
+p2TrendShort = enableTrendContinuation and
+     isValidRedCandle and
+     redRunCount >= p2MinRunLength and
+     redRunCount <= p2MaxRunLength and
+     close < close[1] and
+     close[1] < close[2] and
+     isAboveAvgVolume
+
+// ==================== 🔥🔥🔥 FIX #5: FILTER HARMONY SYSTEM 🔥🔥🔥 ====================
+// Problem: Filters block each other
+// Solution: Progressive scoring - filters CONTRIBUTE, not BLOCK
+
+harmonyGroup = "🔥 FILTER HARMONY (Work Together)"
+enableFilterHarmony = input.bool(true, "✅ Enable Filter Harmony", group=harmonyGroup)
+minQualityScore = input.float(60.0, "Min Entry Quality Score (%)", minval=40.0, maxval=90.0, step=5.0, group=harmonyGroup)
+
+// Calculate quality score (0-100)
+calculateQualityScore(isLong) =>
+    score = 0.0
+    
+    // 1. Candle Quality (25 points max)
+    if isLong
+        if isValidGreenCandle
+            score += 25.0
+        else if isTrueGreenCandle and not isDojiCandle
+            score += 15.0
+    else
+        if isValidRedCandle
+            score += 25.0
+        else if isTrueRedCandle and not isDojiCandle
+            score += 15.0
+    
+    // 2. Volume Confirmation (20 points max)
+    if isStrongVolume
+        score += 20.0
+    else if isAboveAvgVolume
+        score += 12.0
+    else if volume > volumeSMA20 * 0.8
+        score += 5.0
+    
+    // 3. Trend Alignment (20 points max)
+    ema9 = ta.ema(close, 9)
+    ema21 = ta.ema(close, 21)
+    ema50 = ta.ema(close, 50)
+    if isLong
+        if ema9 > ema21 and ema21 > ema50 and close > ema9
+            score += 20.0
+        else if ema9 > ema21 and close > ema21
+            score += 12.0
+        else if close > ema50
+            score += 5.0
+    else
+        if ema9 < ema21 and ema21 < ema50 and close < ema9
+            score += 20.0
+        else if ema9 < ema21 and close < ema21
+            score += 12.0
+        else if close < ema50
+            score += 5.0
+    
+    // 4. Momentum (20 points max)
+    rsiVal = ta.rsi(close, 7)
+    if isLong
+        if rsiVal > 45 and rsiVal < 70 and close > close[1]
+            score += 20.0
+        else if rsiVal > 40 and close > close[1]
+            score += 10.0
+    else
+        if rsiVal < 55 and rsiVal > 30 and close < close[1]
+            score += 20.0
+        else if rsiVal < 60 and close < close[1]
+            score += 10.0
+    
+    // 5. Run Strength (15 points max)
+    if isLong and greenRunCount >= 2
+        score += math.min(greenRunCount * 5.0, 15.0)
+    else if not isLong and redRunCount >= 2
+        score += math.min(redRunCount * 5.0, 15.0)
+    
+    score
+
+longQualityScore = calculateQualityScore(true)
+shortQualityScore = calculateQualityScore(false)
+
+qualityOKLong = longQualityScore >= minQualityScore
+qualityOKShort = shortQualityScore >= minQualityScore
+
+// ==================== 🎯 PRIORITY SIGNAL HIERARCHY ====================
+priorityGroup = "🎯 PRIORITY SIGNAL HIERARCHY"
+enablePrioritySystem = input.bool(true, "✅ Enable Priority System", group=priorityGroup)
+allowP0 = input.bool(true, "P0: Momentum Breakout 🚀", group=priorityGroup)
+allowP1 = input.bool(true, "P-1/P1: Trend Ignition 🔥", group=priorityGroup)
+allowP2 = input.bool(true, "P2: Trend Continuation 📈", group=priorityGroup)
+allowEarlyRun = input.bool(true, "Early Run Entry (2nd candle)", group=priorityGroup)
+
+// ==================== 🕐 SESSION FILTERS ====================
+sessionGroup = "🕐 Trading Sessions"
+enableTradingHours = input.bool(true, "Enable Trading Hours", group=sessionGroup)
+tradingHoursStart = input.int(400, "Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(2000, "End (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+currentHourET = hour(time, "America/New_York")
+currentMinuteET = minute(time, "America/New_York")
+currentTime = currentHourET * 100 + currentMinuteET
+
+isTradingHours = not enableTradingHours or (currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd)
+
+// ==================== 📊 RISK MANAGEMENT ====================
+riskGroup = "📊 Risk Management"
+enableDailyLossLimit = input.bool(true, "Enable Daily Loss Limit", group=riskGroup)
+maxDailyLossDollars = input.float(450.0, "Max Daily Loss ($)", minval=50, maxval=2000, group=riskGroup)
+maxDailyTrades = input.int(20, "Max Daily Trades", minval=5, maxval=50, group=riskGroup)
+
+// Daily P&L tracking
+var float dailyPnL = 0.0
+var float dayStartNetprofit = na
+var int todayTradeCount = 0
+
+newDayDetected = ta.change(time("D")) != 0
+if newDayDetected or barstate.isfirst
+    dayStartNetprofit := strategy.netprofit
+    dailyPnL := 0.0
+    todayTradeCount := 0
+
+dailyPnL := na(dayStartNetprofit) ? 0.0 : (strategy.netprofit - dayStartNetprofit)
+
+maxLossReached = enableDailyLossLimit and dailyPnL <= -maxDailyLossDollars
+maxTradesReached = todayTradeCount >= maxDailyTrades
+profitTargetReached = enableDailyProfitTarget and dailyPnL >= dailyProfitTarget
+
+// ==================== 📈 STOP LOSS / TAKE PROFIT ====================
+slTpGroup = "📈 Stop Loss / Take Profit"
+useSL = input.bool(true, "Use Stop Loss", group=slTpGroup)
+useTP = input.bool(true, "Use Take Profit", group=slTpGroup)
+
+// Per-instrument settings
+mes_customSL = input.float(14.0, "MES: Stop Loss (points)", group=slTpGroup)
+mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=slTpGroup)
+mnq_customSL_3m = input.float(50.0, "MNQ 3m: Stop Loss (points)", group=slTpGroup)
+mnq_customTP1_3m = input.float(45.0, "MNQ 3m: TP1 (points) - 60%", group=slTpGroup)
+mnq_customSL_5m = input.float(60.0, "MNQ 5m: Stop Loss (points)", group=slTpGroup)
+mnq_customTP1_5m = input.float(60.0, "MNQ 5m: TP1 (points) - 60%", group=slTpGroup)
+
+// Get SL/TP based on instrument and timeframe
+getSLPoints() =>
+    if isMES
+        mes_customSL
+    else if isMNQ and is3min
+        mnq_customSL_3m
+    else if isMNQ and is5min
+        mnq_customSL_5m
+    else
+        atr14 * 2.0
+
+getTPPoints() =>
+    if isMES
+        mes_customTP
+    else if isMNQ and is3min
+        mnq_customTP1_3m
+    else if isMNQ and is5min
+        mnq_customTP1_5m
+    else
+        atr14 * 1.5
+
+slPoints = getSLPoints()
+tpPoints = getTPPoints()
+
+// ==================== ✅ ENTRY LOGIC - FIXED ====================
+var bool tookTradeThisBar = false
+var string entryPriority = "NONE"
+var int lastEntryBar = na
+var int lastEntryDirection = 0
+
+if barstate.isnew
+    tookTradeThisBar := false
+
+// Base conditions
+canEnterNewPosition = strategy.position_size == 0
+canTradeNow = isTradingHours and not maxLossReached and not maxTradesReached and not profitTargetReached
+
+// Dedupe
+barsSinceLastEntry = na(lastEntryBar) ? 999 : (bar_index - lastEntryBar)
+dedupeOK = barsSinceLastEntry >= 2
+
+// ==================== 🔥 SIGNAL SELECTION (Priority Order) ====================
+var bool shouldEnterLong = false
+var bool shouldEnterShort = false
+var string selectedPriority = "NONE"
+
+shouldEnterLong := false
+shouldEnterShort := false
+selectedPriority := "NONE"
+
+if canEnterNewPosition and canTradeNow and dedupeOK and not tookTradeThisBar
+    
+    // P0: MOMENTUM BREAKOUT (Highest Priority - Immediate strong moves)
+    if allowP0 and not shouldEnterLong and not shouldEnterShort
+        if p0MomentumLong and canEnterLongByColor and qualityOKLong
+            shouldEnterLong := true
+            selectedPriority := "P0:MOMENTUM"
+        else if p0MomentumShort and canEnterShortByColor and qualityOKShort
+            shouldEnterShort := true
+            selectedPriority := "P0:MOMENTUM"
+    
+    // P-1/P1: TREND IGNITION (Early entry on 2nd candle of new trend)
+    if allowP1 and not shouldEnterLong and not shouldEnterShort
+        if p1IgnitionLong and canEnterLongByColor and qualityOKLong
+            shouldEnterLong := true
+            selectedPriority := "P1:IGNITION"
+        else if p1IgnitionShort and canEnterShortByColor and qualityOKShort
+            shouldEnterShort := true
+            selectedPriority := "P1:IGNITION"
+    
+    // EARLY RUN ENTRY (2nd candle of consecutive run)
+    if allowEarlyRun and not shouldEnterLong and not shouldEnterShort
+        if isEarlyRunEntryLong and canEnterLongByColor and qualityOKLong
+            shouldEnterLong := true
+            selectedPriority := "P1:EARLY_RUN"
+        else if isEarlyRunEntryShort and canEnterShortByColor and qualityOKShort
+            shouldEnterShort := true
+            selectedPriority := "P1:EARLY_RUN"
+    
+    // P2: TREND CONTINUATION (Only if not too late - max 4 candles)
+    if allowP2 and not shouldEnterLong and not shouldEnterShort
+        if p2TrendLong and canEnterLongByColor and qualityOKLong
+            shouldEnterLong := true
+            selectedPriority := "P2:TREND"
+        else if p2TrendShort and canEnterShortByColor and qualityOKShort
+            shouldEnterShort := true
+            selectedPriority := "P2:TREND"
+
+// ==================== 📊 EXECUTE ENTRIES ====================
+if shouldEnterLong and not tookTradeThisBar
+    strategy.entry("LONG", strategy.long, qty=1, comment=selectedPriority + " Q" + str.tostring(math.round(longQualityScore)))
+    tookTradeThisBar := true
+    lastEntryBar := bar_index
+    lastEntryDirection := 1
+    todayTradeCount += 1
+    entryPriority := selectedPriority
+
+if shouldEnterShort and not tookTradeThisBar
+    strategy.entry("SHORT", strategy.short, qty=1, comment=selectedPriority + " Q" + str.tostring(math.round(shortQualityScore)))
+    tookTradeThisBar := true
+    lastEntryBar := bar_index
+    lastEntryDirection := -1
+    todayTradeCount += 1
+    entryPriority := selectedPriority
+
+// ==================== 📈 EXIT MANAGEMENT ====================
+if strategy.position_size > 0
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice - slPoints
+    takeProfit = entryPrice + tpPoints
+    
+    if useSL and useTP
+        strategy.exit("EXIT_LONG", from_entry="LONG", stop=stopLoss, limit=takeProfit)
+    else if useSL
+        strategy.exit("SL_LONG", from_entry="LONG", stop=stopLoss)
+    else if useTP
+        strategy.exit("TP_LONG", from_entry="LONG", limit=takeProfit)
+
+if strategy.position_size < 0
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice + slPoints
+    takeProfit = entryPrice - tpPoints
+    
+    if useSL and useTP
+        strategy.exit("EXIT_SHORT", from_entry="SHORT", stop=stopLoss, limit=takeProfit)
+    else if useSL
+        strategy.exit("SL_SHORT", from_entry="SHORT", stop=stopLoss)
+    else if useTP
+        strategy.exit("TP_SHORT", from_entry="SHORT", limit=takeProfit)
+
+// ==================== 📊 VISUAL INDICATORS ====================
+// EMA lines
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+
+plot(ema9, "EMA 9", color=color.blue, linewidth=2)
+plot(ema21, "EMA 21", color=color.orange, linewidth=2)
+plot(ema50, "EMA 50", color=color.gray, linewidth=1)
+
+// Entry signals
+plotshape(shouldEnterLong and not tookTradeThisBar[1], "LONG Signal", shape.triangleup, location.belowbar, 
+     color=longQualityScore >= 80 ? color.green : color.lime, size=size.normal,
+     text="L" + str.tostring(math.round(longQualityScore)))
+
+plotshape(shouldEnterShort and not tookTradeThisBar[1], "SHORT Signal", shape.triangledown, location.abovebar,
+     color=shortQualityScore >= 80 ? color.red : color.maroon, size=size.normal,
+     text="S" + str.tostring(math.round(shortQualityScore)))
+
+// Candle color indicator (shows if candle is valid for entry)
+barcolor(isValidGreenCandle ? color.green : isValidRedCandle ? color.red : isDojiCandle ? color.gray : na, title="Candle Quality")
+
+// Run detection background
+bgcolor(greenRunCount >= 2 ? color.new(color.green, 95) : redRunCount >= 2 ? color.new(color.red, 95) : na, title="Run Detection")
+
+// ==================== 📊 PERFORMANCE TABLE ====================
+var table perfTable = table.new(position.top_right, 2, 12, border_width=1)
+
+winRateAll = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+
+if barstate.islast
+    // Header
+    table.cell(perfTable, 0, 0, "🔥 V72 FIXED", text_color=color.white, bgcolor=color.new(color.blue, 50), colspan=2)
+    
+    // Win Rate
+    table.cell(perfTable, 0, 1, "WIN RATE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 1, str.tostring(winRateAll, "#.#") + "%", 
+         text_color=winRateAll >= 80 ? color.green : winRateAll >= 70 ? color.lime : winRateAll >= 60 ? color.yellow : color.red,
+         bgcolor=color.new(color.gray, 85))
+    
+    // Trades
+    table.cell(perfTable, 0, 2, "TRADES", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 2, str.tostring(strategy.closedtrades), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    // Net P&L
+    table.cell(perfTable, 0, 3, "NET P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 3, "$" + str.tostring(strategy.netprofit, "#.##"), 
+         text_color=strategy.netprofit >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    // Daily P&L
+    table.cell(perfTable, 0, 4, "DAILY P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 4, "$" + str.tostring(dailyPnL, "#.##"),
+         text_color=dailyPnL >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    // Long Quality
+    table.cell(perfTable, 0, 5, "LONG Q", text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(perfTable, 1, 5, str.tostring(longQualityScore, "#") + "%",
+         text_color=longQualityScore >= minQualityScore ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    // Short Quality
+    table.cell(perfTable, 0, 6, "SHORT Q", text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(perfTable, 1, 6, str.tostring(shortQualityScore, "#") + "%",
+         text_color=shortQualityScore >= minQualityScore ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    // Green Run
+    table.cell(perfTable, 0, 7, "GREEN RUN", text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(perfTable, 1, 7, str.tostring(greenRunCount), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    // Red Run
+    table.cell(perfTable, 0, 8, "RED RUN", text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(perfTable, 1, 8, str.tostring(redRunCount), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    // Candle Status
+    table.cell(perfTable, 0, 9, "CANDLE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    candleStatus = isValidGreenCandle ? "✅ GREEN" : isValidRedCandle ? "✅ RED" : isDojiCandle ? "⚠️ DOJI" : "❌ INVALID"
+    candleStatusColor = isValidGreenCandle ? color.green : isValidRedCandle ? color.red : color.gray
+    table.cell(perfTable, 1, 9, candleStatus, text_color=candleStatusColor, bgcolor=color.new(color.gray, 85))
+    
+    // Priority
+    table.cell(perfTable, 0, 10, "PRIORITY", text_color=color.white, bgcolor=color.new(color.purple, 70))
+    table.cell(perfTable, 1, 10, selectedPriority, text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    // Status
+    table.cell(perfTable, 0, 11, "STATUS", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    statusText = maxLossReached ? "❌ LOSS LIMIT" : maxTradesReached ? "❌ TRADE LIMIT" : profitTargetReached ? "✅ TARGET HIT" : not isTradingHours ? "⏸️ OFF HOURS" : "✅ READY"
+    statusColor = maxLossReached or maxTradesReached ? color.red : profitTargetReached ? color.green : not isTradingHours ? color.yellow : color.green
+    table.cell(perfTable, 1, 11, statusText, text_color=statusColor, bgcolor=color.new(color.gray, 85))
+
+// ==================== 🔔 ALERTS ====================
+alertcondition(shouldEnterLong and not tookTradeThisBar[1], "LONG Entry", "LONG Signal: {{ticker}} @ {{close}} | Priority: " + selectedPriority)
+alertcondition(shouldEnterShort and not tookTradeThisBar[1], "SHORT Entry", "SHORT Signal: {{ticker}} @ {{close}} | Priority: " + selectedPriority)
