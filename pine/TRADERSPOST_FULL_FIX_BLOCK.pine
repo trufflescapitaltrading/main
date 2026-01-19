@@ -1,0 +1,222 @@
+//@version=5
+// ============================================================
+// TRADERSPOST FULL FIX BLOCK (Copy/Paste into your bot)
+//
+// Fixes:
+// 1) Prevents EXIT alerts when TradersPost/broker is flat (no more “No position open to exit”)
+// 2) Forces contract tickers (prevents MNQ1!/MES1! leaking into webhook)
+// 3) Uses an internal “router state” (tpStateDir/tpStateQty) that advances ONLY when an alert is sent
+//    so your exits/reversals are consistent even if TV strategy state differs from broker state.
+//
+// HOW TO USE (minimal edits):
+// - Paste this block into your script ABOVE your existing TradersPost section.
+// - Then REPLACE your existing “🔔 TRADERSPOST WEBHOOK ALERTS” section with the “UPDATED WEBHOOK SECTION”
+//   at the bottom of this file.
+// ============================================================
+
+// ==================== ✅ ROUTER SETTINGS ====================
+tpFixGroup = "TradersPost Router (FULL FIX)"
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts", group=tpFixGroup)
+alertOnlyMode = input.bool(false, "Alert Only Mode", group=tpFixGroup)
+
+// IMPORTANT: leave AutoSymbol OFF for live, or force contracts below.
+useAutoSymbol = input.bool(false, "Auto-detect symbol from chart", group=tpFixGroup)
+
+// Contract tickers (update contract month!)
+tradersPostSymbolMNQ = input.string("MNQH2026", "TradersPost Symbol - MNQ (contract)", group=tpFixGroup)
+tradersPostSymbolMES = input.string("MESH2026", "TradersPost Symbol - MES (contract)", group=tpFixGroup)
+tradersPostSymbolMYM = input.string("MYMH2026", "TradersPost Symbol - MYM (contract)", group=tpFixGroup)
+tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K (contract)", group=tpFixGroup)
+tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (contract)", group=tpFixGroup)
+tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (contract)", group=tpFixGroup)
+tradersPostSymbolFallback = input.string("MNQH2026", "TradersPost Symbol (fallback)", group=tpFixGroup)
+
+tpStrategyName = input.string("V.70+% 5-Star Scalper", "TradersPost: strategy name", group=tpFixGroup)
+tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group=tpFixGroup)
+
+// Same-direction behavior: when a same-direction entry occurs but a position exists at TradersPost
+tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group=tpFixGroup)
+tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group=tpFixGroup)
+tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group=tpFixGroup)
+
+// FIX #1: hard guard exits when flat
+tpEnableExitGuard = input.bool(true, "✅ Guard EXIT alerts when flat", group=tpFixGroup)
+
+// FIX #2: force contract tickers even if chart is *1!
+tpForceContractTicker = input.bool(true, "✅ Force contract ticker (avoid *1!)", group=tpFixGroup)
+
+// Optional: if you already have an EOD exit time, wire your own isEndOfDay
+tpUseEodClock = input.bool(false, "Use local EOD clock from this block", group=tpFixGroup)
+tpEodTimeET = input.int(1550, "EOD time (ET HHMM)", minval=1500, maxval=1700, group=tpFixGroup)
+
+// ==================== ✅ REQUIRED FLAGS (your script must define these) ====================
+// You already have these in your bot:
+// - instrumentName (string like "MNQ","MES"...)
+// - isMNQ/isMES/isMYM/isM2K/isMCL/isMGC booleans
+// - timeframe.period
+// - entryOK (bool), longCondition (bool), shortCondition (bool)
+// - tookTradeThisBar (bool)
+// - finalContractQty (int)
+// - close/open/high/low
+
+// ==================== ✅ TICKER RESOLUTION (FIXED) ====================
+tpResolvedTicker() =>
+    // Your bot already has instrumentName; we pick the contract symbol by instrument
+    instrumentName == "MNQ" ? tradersPostSymbolMNQ :
+    instrumentName == "MES" ? tradersPostSymbolMES :
+    instrumentName == "MYM" ? tradersPostSymbolMYM :
+    instrumentName == "M2K" ? tradersPostSymbolM2K :
+    instrumentName == "MCL" ? tradersPostSymbolMCL :
+    instrumentName == "MGC" ? tradersPostSymbolMGC :
+    tradersPostSymbolFallback
+
+// If AutoSymbol is ON and chart is MNQ1!, this would leak MNQ1! to TradersPost.
+// ForceContractTicker prevents that.
+tpActualTicker() =>
+    raw = useAutoSymbol ? syminfo.ticker : tpResolvedTicker()
+    tpForceContractTicker ? tpResolvedTicker() : raw
+
+// ==================== ✅ INTERNAL ROUTER STATE (authoritative for alerts) ====================
+// This is NOT strategy.position_size; it’s “what we have told TradersPost”.
+var int tpStateDir = 0    // 1=long, -1=short, 0=flat
+var int tpStateQty = 0
+tpFlat() => tpStateDir == 0 or tpStateQty <= 0
+tpLong() => tpStateDir == 1 and tpStateQty > 0
+tpShort() => tpStateDir == -1 and tpStateQty > 0
+
+// FIX #1: exit guard based on router state
+tpAllowExit() => (not tpEnableExitGuard) or (not tpFlat())
+
+// ==================== ✅ JSON HELPERS ====================
+tpNum(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpNumInt(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpSignalId(action, dir) =>
+    str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
+
+// Optional EOD clock (only if you want to use this block standalone)
+tpNowET = hour(time, "America/New_York") * 100 + minute(time, "America/New_York")
+tpIsEndOfDay = tpUseEodClock ? (tpNowET >= tpEodTimeET) : false
+
+// ============================================================
+// ==================== UPDATED WEBHOOK SECTION ====================
+// Replace your entire “🔔 TRADERSPOST WEBHOOK ALERTS” section with this.
+// ============================================================
+
+// If a reverse signal occurs while a TP position exists, send EXIT first to prevent rejections.
+if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat() and not tookTradeThisBar
+    if (longCondition and tpShort()) or (shortCondition and tpLong())
+        exitDir = tpShort() ? "SHORT" : tpLong() ? "LONG" : "FLAT"
+        exitQty = tpStateQty
+        exitSigId = tpSignalId("exit", exitDir)
+        exitNowMessage = '{' +
+             '"ticker":"' + tpActualTicker() + '",' +
+             '"action":"exit",' +
+             '"quantity":' + tpNumInt(exitQty) + ',' +
+             '"strategy":"' + tpStrategyName + '",' +
+             '"timeframe":"' + timeframe.period + '",' +
+             '"instrument":"' + instrumentName + '",' +
+             '"signal_id":"' + exitSigId + '",' +
+             '"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+        // FIX #1: only send exit if router thinks a position exists
+        if tpAllowExit()
+            alert(exitNowMessage, alert.freq_once_per_bar)
+            tpStateDir := 0
+            tpStateQty := 0
+            tookTradeThisBar := true
+
+// ENTRY: LONG (only if router is flat)
+if entryOK and longCondition and enableTradersPostAlerts and tpFlat()
+    entrySigId = tpSignalId("buy", "LONG")
+    longEntryMessage = '{' +
+         '"ticker":"' + tpActualTicker() + '",' +
+         '"action":"buy",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(longEntryMessage, alert.freq_once_per_bar)
+    tpStateDir := 1
+    tpStateQty := finalContractQty
+    tookTradeThisBar := true
+
+// ENTRY: SHORT (only if router is flat)
+if entryOK and shortCondition and enableTradersPostAlerts and tpFlat() and not tookTradeThisBar
+    entrySigId = tpSignalId("sell", "SHORT")
+    shortEntryMessage = '{' +
+         '"ticker":"' + tpActualTicker() + '",' +
+         '"action":"sell",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(shortEntryMessage, alert.freq_once_per_bar)
+    tpStateDir := -1
+    tpStateQty := finalContractQty
+    tookTradeThisBar := true
+
+// SAME-DIRECTION behavior: “add” instead of re-buy/re-sell when already in position at TP.
+if entryOK and longCondition and enableTradersPostAlerts and tpLong() and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addSigId = tpSignalId("add", "LONG")
+    addLongMessage = '{' +
+         '"ticker":"' + tpActualTicker() + '",' +
+         '"action":"add",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + addSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addLongMessage, alert.freq_once_per_bar)
+    tpStateQty := tpStateQty + finalContractQty
+    tookTradeThisBar := true
+
+if entryOK and shortCondition and enableTradersPostAlerts and tpShort() and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addSigId = tpSignalId("add", "SHORT")
+    addShortMessage = '{' +
+         '"ticker":"' + tpActualTicker() + '",' +
+         '"action":"add",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + addSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addShortMessage, alert.freq_once_per_bar)
+    tpStateQty := tpStateQty + finalContractQty
+    tookTradeThisBar := true
+
+// EOD safety exit: only send if router thinks position exists
+// Wire tpIsEndOfDay to your own isEndOfDay if you already compute it.
+if tpSendEODExitAlert and enableTradersPostAlerts and tpIsEndOfDay and not tpFlat() and not tookTradeThisBar
+    exitSigId = tpSignalId("exit", tpStateDir == 1 ? "LONG" : "SHORT")
+    eodExitMessage = '{' +
+         '"ticker":"' + tpActualTicker() + '",' +
+         '"action":"exit",' +
+         '"quantity":' + tpNumInt(tpStateQty) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + exitSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    if tpAllowExit()
+        alert(eodExitMessage, alert.freq_once_per_bar)
+        tpStateDir := 0
+        tpStateQty := 0
+        tookTradeThisBar := true
+
