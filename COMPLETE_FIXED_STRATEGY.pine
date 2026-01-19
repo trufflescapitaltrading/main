@@ -709,6 +709,41 @@ mnqMomentumUpMove = isMNQ and (close - close[momentumLookback]) >= momentumThres
 mnqMomentumDownMove = isMNQ and (close[momentumLookback] - close) >= momentumThresholdPoints
 hasMomentumOverrideLong = enableMomentumOverride and (momentumUpMove or mnqMomentumUpMove) and candleBull and candleQualityOK
 hasMomentumOverrideShort = enableMomentumOverride and (momentumDownMove or mnqMomentumDownMove) and candleBear and candleQualityOK
+
+// Volume MA for early detection (declared early for P0 use)
+volumeMA = ta.sma(volume, 20)
+
+// ==================== 🚀 P0 ULTRA-EARLY TREND DETECTION (1ST CANDLE) ====================
+// This fires on the FIRST candle of a potential trend - catches moves early!
+p0Group = "🚀 P0 Ultra-Early Detection"
+enableP0UltraEarly = input.bool(true, "Enable P0 Ultra-Early (1st candle entry)", group=p0Group)
+p0VolSpikeMult = input.float(1.3, "P0 Volume Spike Multiplier", minval=1.0, maxval=2.5, step=0.1, group=p0Group)
+p0MinBodyRatio = input.float(0.45, "P0 Min Body Ratio", minval=0.25, maxval=0.70, step=0.05, group=p0Group)
+p0MinATRMove = input.float(0.5, "P0 Min Move (x ATR)", minval=0.2, maxval=1.5, step=0.1, group=p0Group)
+p0RequireHullFlip = input.bool(true, "P0 Require Hull MA direction match", group=p0Group)
+
+// Volume spike detection - key for early entry
+volSpike = volume > volumeMA * p0VolSpikeMult
+volSpikeStrong = volume > volumeMA * (p0VolSpikeMult * 1.3)
+
+// Strong candle detection - the candle itself must be strong
+isStrongBullCandle = candleBull and bodyRatio >= p0MinBodyRatio and bodySize >= atr10 * p0MinATRMove and not isDojiBar
+isStrongBearCandle = candleBear and bodyRatio >= p0MinBodyRatio and bodySize >= atr10 * p0MinATRMove and not isDojiBar
+
+// Hull MA just turned bullish/bearish (slope change)
+hullJustTurnedBull = slopeFast == 1 and slopeFast[1] != 1
+hullJustTurnedBear = slopeFast == -1 and slopeFast[1] != -1
+hullConfirmBull = not p0RequireHullFlip or slopeFast == 1
+hullConfirmBear = not p0RequireHullFlip or slopeFast == -1
+
+// P0 ULTRA-EARLY signals - fires on 1st strong candle with volume spike
+hasP0UltraEarlyLong = enableP0UltraEarly and isStrongBullCandle and volSpike and hullConfirmBull and canTradeNow
+hasP0UltraEarlyShort = enableP0UltraEarly and isStrongBearCandle and volSpike and hullConfirmBear and canTradeNow
+
+// Enhanced P0 with Hull flip (even stronger signal)
+hasP0HullFlipLong = enableP0UltraEarly and isStrongBullCandle and hullJustTurnedBull and volSpike and canTradeNow
+hasP0HullFlipShort = enableP0UltraEarly and isStrongBearCandle and hullJustTurnedBear and volSpike and canTradeNow
+
 maxRunBars = 6
 bullOCStreak = 0
 bearOCStreak = 0
@@ -749,31 +784,33 @@ for i = 0 to maxRunBars - 1
         break
 runUpCloses = math.max(bullOCStreak, upCloseStreak)
 runDownCloses = math.max(bearOCStreak, downCloseStreak)
-volumeMA = ta.sma(volume, 20)
+// volumeMA already declared above for P0 detection
 isStrongVolume = volume > volumeMA * trendOverrideVolMultiplier
 avgRange = ta.atr(14)
 currentRange = high - low
 isStrongRange = currentRange > avgRange * trendOverrideRangeMultiplier
 trendStartGroup = "🔥 P-1 Trend Start"
-enableTrendStart = input.bool(true, "Enable P-1 Trend Start (2nd candle)", group=trendStartGroup)
-trendStartBodyMin = input.float(0.40, "P-1 min body ratio", minval=0.20, maxval=0.80, step=0.01, group=trendStartGroup)
-trendStartVolMult = input.float(1.20, "P-1 volume multiple vs SMA20", minval=1.0, maxval=2.5, step=0.05, group=trendStartGroup)
-trendStartAccel = input.bool(true, "P-1 require acceleration", group=trendStartGroup)
+enableTrendStart = input.bool(true, "Enable P-1 Trend Start (1st-2nd candle)", group=trendStartGroup)
+trendStartBodyMin = input.float(0.35, "P-1 min body ratio", minval=0.20, maxval=0.80, step=0.01, group=trendStartGroup)
+trendStartVolMult = input.float(1.10, "P-1 volume multiple vs SMA20", minval=1.0, maxval=2.5, step=0.05, group=trendStartGroup)
+trendStartAccel = input.bool(false, "P-1 require acceleration (DISABLED for earlier entry)", group=trendStartGroup)
 prevRange = high[1] - low[1]
 prevBody = math.abs(close[1] - open[1])
 prevBodyRatio = prevRange > 0 ? (prevBody / prevRange) : 0.0
-curStrongBull = candleBull and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
-curStrongBear = candleBear and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
-prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
-prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
+curStrongBull = candleBull and not isDojiBar and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
+curStrongBear = candleBear and not isDojiBar and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
+prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin
+prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin
 accelBull = (close - close[1]) > (close[1] - close[2])
 accelBear = (close[1] - close) > (close[2] - close[1])
-hasTrendStartLong = enableTrendStart and (runUpCloses == 2) and curStrongBull and prevStrongBull and (not trendStartAccel or accelBull)
-hasTrendStartShort = enableTrendStart and (runDownCloses == 2) and curStrongBear and prevStrongBear and (not trendStartAccel or accelBear)
-hasTrendOverrideBull = enableTrendOverride and (runUpCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar
-hasTrendOverrideBear = enableTrendOverride and (runDownCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar
-hasStrongTrendOverrideBull = enableTrendOverride and (runUpCloses >= 4) and isStrongVolume and isStrongRange and not isDojiBar
-hasStrongTrendOverrideBear = enableTrendOverride and (runDownCloses >= 4) and isStrongVolume and isStrongRange and not isDojiBar
+// P-1 now fires on 1st OR 2nd candle (was only 2nd)
+hasTrendStartLong = enableTrendStart and (runUpCloses >= 1 and runUpCloses <= 2) and curStrongBull and (runUpCloses == 1 or prevStrongBull) and (not trendStartAccel or accelBull)
+hasTrendStartShort = enableTrendStart and (runDownCloses >= 1 and runDownCloses <= 2) and curStrongBear and (runDownCloses == 1 or prevStrongBear) and (not trendStartAccel or accelBear)
+// Trend Override now fires at 2+ candles (was 3+) for earlier entry
+hasTrendOverrideBull = enableTrendOverride and (runUpCloses >= 2) and isStrongVolume and not isDojiBar and candleBull
+hasTrendOverrideBear = enableTrendOverride and (runDownCloses >= 2) and isStrongVolume and not isDojiBar and candleBear
+hasStrongTrendOverrideBull = enableTrendOverride and (runUpCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar and candleBull
+hasStrongTrendOverrideBear = enableTrendOverride and (runDownCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar and candleBear
 priceRangeTrend = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
 trendStrength = priceRangeTrend > 0 ? math.abs(close - close[trendStrengthPeriod]) / priceRangeTrend : 0
 veryStrongTrend = trendStrength > 0.25
@@ -1333,73 +1370,93 @@ if isMES and enableMesHighWinEntryGate
     canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
 if not tookTradeThisBar
     if enablePrioritySystem
+        // ⚡ P0 ULTRA-EARLY: Fires on 1st candle of trend with volume spike - HIGHEST PRIORITY
+        if not shouldEnterLong and not shouldEnterShort and enableP0UltraEarly
+            if canGoLong and hasP0HullFlipLong and candleBull and not isDojiBar
+                shouldEnterLong := true
+                selectedPriority := "P0:HULL_FLIP"
+                entryPriority := "P0:HULL_FLIP"
+            else if canGoShort and hasP0HullFlipShort and candleBear and not isDojiBar
+                shouldEnterShort := true
+                selectedPriority := "P0:HULL_FLIP"
+                entryPriority := "P0:HULL_FLIP"
+            else if canGoLong and hasP0UltraEarlyLong and candleBull and not isDojiBar
+                shouldEnterLong := true
+                selectedPriority := "P0:ULTRA_EARLY"
+                entryPriority := "P0:ULTRA_EARLY"
+            else if canGoShort and hasP0UltraEarlyShort and candleBear and not isDojiBar
+                shouldEnterShort := true
+                selectedPriority := "P0:ULTRA_EARLY"
+                entryPriority := "P0:ULTRA_EARLY"
+        // P-1: Trend Start (1st-2nd candle)
         if not shouldEnterLong and not shouldEnterShort and allowPriorityMinus1
-            if canGoLong and hasTrendStartLong and candleBull and candleConfirmLong
+            if canGoLong and hasTrendStartLong and candleBull and candleConfirmLong and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P-1:TREND_START"
                 entryPriority := "P-1:TREND_START"
-            else if canGoShort and hasTrendStartShort and candleBear and candleConfirmShort
+            else if canGoShort and hasTrendStartShort and candleBear and candleConfirmShort and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P-1:TREND_START"
                 entryPriority := "P-1:TREND_START"
+        // P0: Momentum Override
         if not shouldEnterLong and not shouldEnterShort and allowPriority0
-            if canGoLong and hasMomentumOverrideLong and candleBull and candleConfirmLong
+            if canGoLong and hasMomentumOverrideLong and candleBull and candleConfirmLong and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P0:MOMENTUM"
                 entryPriority := "P0:MOMENTUM"
-            else if canGoShort and hasMomentumOverrideShort and candleBear and candleConfirmShort
+            else if canGoShort and hasMomentumOverrideShort and candleBear and candleConfirmShort and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P0:MOMENTUM"
                 entryPriority := "P0:MOMENTUM"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
-            if canGoLong and earlyTrendLong and candleBull and candleConfirmLong
+            if canGoLong and earlyTrendLong and candleBull and candleConfirmLong and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P1:EARLY_TREND"
                 entryPriority := "P1:EARLY_TREND"
-            else if canGoShort and earlyTrendShort and candleBear and candleConfirmShort
+            else if canGoShort and earlyTrendShort and candleBear and candleConfirmShort and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P1:EARLY_TREND"
                 entryPriority := "P1:EARLY_TREND"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1
-            if canGoLong and tibLong and candleBull and candleConfirmLong
+            if canGoLong and tibLong and candleBull and candleConfirmLong and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P1:IGNITION"
                 entryPriority := "P1:IGNITION"
-            else if canGoShort and tibShort and candleBear and candleConfirmShort
+            else if canGoShort and tibShort and candleBear and candleConfirmShort and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P1:IGNITION"
                 entryPriority := "P1:IGNITION"
-            else if canGoLong and impulseLong and candleBull and candleConfirmLong
+            else if canGoLong and impulseLong and candleBull and candleConfirmLong and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P1:IMPULSE"
                 entryPriority := "P1:IMPULSE"
-            else if canGoShort and impulseShort and candleBear and candleConfirmShort
+            else if canGoShort and impulseShort and candleBear and candleConfirmShort and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P1:IMPULSE"
                 entryPriority := "P1:IMPULSE"
         if not shouldEnterLong and not shouldEnterShort and allowPriority2
-            p2BodyOK = not isDojiBar and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
-            if canGoLong and cpbLong and candleBull and candleConfirmLong and p2BodyOK
+            p2BodyOK = not isDojiBar and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
+            if canGoLong and cpbLong and candleBull and candleConfirmLong and p2BodyOK and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P2:CONTINUATION"
                 entryPriority := "P2:CONTINUATION"
-            else if canGoShort and cpbShort and candleBear and candleConfirmShort and p2BodyOK
+            else if canGoShort and cpbShort and candleBear and candleConfirmShort and p2BodyOK and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P2:CONTINUATION"
                 entryPriority := "P2:CONTINUATION"
-            else if canGoLong and hasStrongTrendOverrideBull and candleBull and candleConfirmLong and p2BodyOK
+            else if canGoLong and hasStrongTrendOverrideBull and candleBull and candleConfirmLong and p2BodyOK and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P2:STRONG_TREND"
                 entryPriority := "P2:STRONG_TREND"
-            else if canGoLong and hasTrendOverrideBull and candleBull and candleConfirmLong and p2BodyOK
+            else if canGoLong and hasTrendOverrideBull and candleBull and candleConfirmLong and p2BodyOK and not isDojiBar
                 shouldEnterLong := true
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
-            else if canGoShort and hasStrongTrendOverrideBear and candleBear and candleConfirmShort and p2BodyOK
+            else if canGoShort and hasStrongTrendOverrideBear and candleBear and candleConfirmShort and p2BodyOK and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P2:STRONG_TREND"
                 entryPriority := "P2:STRONG_TREND"
-            else if canGoShort and hasTrendOverrideBear and candleBear and candleConfirmShort and p2BodyOK
+            else if canGoShort and hasTrendOverrideBear and candleBear and candleConfirmShort and p2BodyOK and not isDojiBar
                 shouldEnterShort := true
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
@@ -1520,9 +1577,15 @@ getActiveQty(baseQty) =>
         qty := m2k_customQty
     qty
 bool allowEntryLong = true
+// ⚠️ STRICT CANDLE COLOR ENFORCEMENT - NO LONGS ON RED CANDLES
+if not candleBull
+    allowEntryLong := false
+// ⚠️ NO LONGS ON DOJI CANDLES
+if isDojiBar
+    allowEntryLong := false
 if require5Star and not fiveStarOK and not hasTrendOverrideBull and not (impulseLong and candleBull) and not hasMomentumOverrideLong
     allowEntryLong := false
-if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0
+if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and candleBull and not isDojiBar
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := 1
         biasLockUntilBar := bar_index + biasLockBars
@@ -1537,9 +1600,15 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
     lastSignalDir := 1
     lastSignalBar := bar_index
 bool allowEntryShort = true
+// ⚠️ STRICT CANDLE COLOR ENFORCEMENT - NO SHORTS ON GREEN CANDLES
+if not candleBear
+    allowEntryShort := false
+// ⚠️ NO SHORTS ON DOJI CANDLES
+if isDojiBar
+    allowEntryShort := false
 if require5Star and not fiveStarOK and not hasTrendOverrideBear and not (impulseShort and candleBear) and not hasMomentumOverrideShort
     allowEntryShort := false
-if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0
+if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and candleBear and not isDojiBar
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
