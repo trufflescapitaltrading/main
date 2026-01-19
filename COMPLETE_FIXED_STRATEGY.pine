@@ -1622,310 +1622,73 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         lastOppositeEntryBar := bar_index
     lastSignalDir := -1
     lastSignalBar := bar_index
-// ==================== ⭐⭐⭐ MJV6 MES PROFIT LOGIC (EXACT) ====================
-if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.position_size != 0
-    float mjvAtr = atr10
-    float futuresTPDistance_mjv = mjvAtr * tpMultiplier
-    float ultraQuickTP_mjv = mjvAtr * (tpMultiplier * 0.5)
-    float futuresStopDistance_mjv = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
-    float entryPrice_mjv = not na(entryPrice) ? entryPrice : strategy.position_avg_price
+// ==================== ⭐⭐⭐ ORIGINAL MJV6 PROFIT LOGIC (EXACT - NO MODIFICATIONS) ====================
+// This is the EXACT profit logic from the original MJV6 script that produced $20k+ MES 3m and $44k+ MES 5m
+// DO NOT ADD CONDITIONAL CHECKS - keep it simple like the original
 
-    // LONG
-    if strategy.position_size > 0 and not exitIssuedThisBar
-        float stopLoss_mjv = entryPrice_mjv - futuresStopDistance_mjv
-        if useTP and useEnhancedTP
-            int tp1Points = math.round((ultraQuickTP_mjv * 0.4) / syminfo.mintick)
-            int tp2Points = math.round((futuresTPDistance_mjv * 0.3) / syminfo.mintick)
-            int tp3Points = math.round((futuresTPDistance_mjv * 0.6) / syminfo.mintick)
-            int tp4Points = math.round((futuresTPDistance_mjv * 1.0) / syminfo.mintick)
-            strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
-            strategy.exit("MJV6_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
-            strategy.exit("MJV6_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
-            strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
-        if quickExitMode and holdingPeriod >= maxHoldingBars
-            strategy.close("LONG", comment="MJV6_TIME_EXIT_LONG")
-            exitIssuedThisBar := true
-            lastExitReason := "MJV6_TIME_EXIT"
-        if useSL and not exitIssuedThisBar
-            if useSmartTrailing and close > entryPrice_mjv + (futuresTPDistance_mjv * trailActivationRatio)
-                float trailDistance = mjvAtr * 0.6
-                strategy.exit("MJV6_TRAIL_L", from_entry="LONG", stop=close - trailDistance)
-            else
-                strategy.exit("MJV6_SL_L", from_entry="LONG", stop=stopLoss_mjv)
+// ATR for profit calculations (using local calculation like original MJV6)
+atr_profit = ta.atr(10)
+futuresStopDistance = atr_profit * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
+futuresTPDistance = atr_profit * tpMultiplier
+ultraQuickTP = atr_profit * (tpMultiplier * 0.5)
 
-    // SHORT
-    if strategy.position_size < 0 and not exitIssuedThisBar
-        float stopLoss_mjv = entryPrice_mjv + futuresStopDistance_mjv
-        if useTP and useEnhancedTP
-            int tp1Points = math.round((ultraQuickTP_mjv * 0.5) / syminfo.mintick)
-            int tp2Points = math.round((futuresTPDistance_mjv * 0.4) / syminfo.mintick)
-            int tp3Points = math.round((futuresTPDistance_mjv * 0.7) / syminfo.mintick)
-            int tp4Points = math.round((futuresTPDistance_mjv * 1.1) / syminfo.mintick)
-            strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
-            strategy.exit("MJV6_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
-            strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
-            strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
-        if quickExitMode and holdingPeriod >= maxHoldingBars
-            strategy.close("SHORT", comment="MJV6_TIME_EXIT_SHORT")
-            exitIssuedThisBar := true
-            lastExitReason := "MJV6_TIME_EXIT"
-        if useSL and not exitIssuedThisBar
-            if useSmartTrailing and close < entryPrice_mjv - (futuresTPDistance_mjv * trailActivationRatio)
-                float trailDistance = mjvAtr * 0.6
-                strategy.exit("MJV6_TRAIL_S", from_entry="SHORT", stop=close + trailDistance)
-            else
-                strategy.exit("MJV6_SL_S", from_entry="SHORT", stop=stopLoss_mjv)
+// LONG POSITIONS - EXACT ORIGINAL MJV6 LOGIC
+if strategy.position_size > 0
+    float entryPriceLong = strategy.position_avg_price
+    float stopLossLong = entryPriceLong - futuresStopDistance
+    
+    // TP Ladder - 60/25/10/5 split (EXACT from original MJV6)
+    int tp1PointsL = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
+    int tp2PointsL = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
+    int tp3PointsL = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
+    int tp4PointsL = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+    
+    strategy.exit("TP1_L", from_entry="LONG", qty_percent=60, profit=tp1PointsL)
+    strategy.exit("TP2_L", from_entry="LONG", qty_percent=25, profit=tp2PointsL)
+    strategy.exit("TP3_L", from_entry="LONG", qty_percent=10, profit=tp3PointsL)
+    strategy.exit("TP4_L", from_entry="LONG", qty_percent=5, profit=tp4PointsL)
+    
+    // Time-based exit
+    if quickExitMode and holdingPeriod >= maxHoldingBars
+        strategy.close("LONG", comment="TIME_EXIT")
+    
+    // Smart trailing OR fixed stop (EXACT from original MJV6)
+    if useSmartTrailing and close > entryPriceLong + (futuresTPDistance * trailActivationRatio)
+        float trailDist = atr_profit * 0.6
+        strategy.exit("TRAIL_L", from_entry="LONG", stop=close - trailDist)
+    else
+        strategy.exit("SL_L", from_entry="LONG", stop=stopLossLong)
 
-// ==================== 📈 V20 PROFIT LOGIC ====================
-if v20Active_profit and strategy.position_size != 0
-    float v20_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float v20_atr = atrMain
-    float v20_tp1Pct = 0.003
-    float v20_tp2Pct = 0.006
-    float v20_tp3Pct = 0.01
-    float v20_slPct = 0.005
+// SHORT POSITIONS - EXACT ORIGINAL MJV6 LOGIC
+if strategy.position_size < 0
+    float entryPriceShort = strategy.position_avg_price
+    float stopLossShort = entryPriceShort + futuresStopDistance
     
-    if strategy.position_size > 0 and not exitIssuedThisBar
-        float tp1Price = v20_entryPrice * (1 + v20_tp1Pct)
-        float tp2Price = v20_entryPrice * (1 + v20_tp2Pct)
-        float tp3Price = v20_entryPrice * (1 + v20_tp3Pct)
-        float slPrice = v20_entryPrice * (1 - v20_slPct)
-        strategy.exit("V20_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("V20_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price, stop=slPrice)
-        strategy.exit("V20_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price, stop=slPrice)
+    // TP Ladder for shorts (EXACT from original MJV6)
+    int tp1PointsS = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+    int tp2PointsS = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+    int tp3PointsS = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+    int tp4PointsS = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
     
-    if strategy.position_size < 0 and not exitIssuedThisBar
-        float tp1Price = v20_entryPrice * (1 - v20_tp1Pct)
-        float tp2Price = v20_entryPrice * (1 - v20_tp2Pct)
-        float tp3Price = v20_entryPrice * (1 - v20_tp3Pct)
-        float slPrice = v20_entryPrice * (1 + v20_slPct)
-        strategy.exit("V20_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("V20_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price, stop=slPrice)
-        strategy.exit("V20_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price, stop=slPrice)
+    strategy.exit("TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1PointsS)
+    strategy.exit("TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2PointsS)
+    strategy.exit("TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3PointsS)
+    strategy.exit("TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4PointsS)
+    
+    // Time-based exit
+    if quickExitMode and holdingPeriod >= maxHoldingBars
+        strategy.close("SHORT", comment="TIME_EXIT")
+    
+    // Smart trailing OR fixed stop (EXACT from original MJV6)
+    if useSmartTrailing and close < entryPriceShort - (futuresTPDistance * trailActivationRatio)
+        float trailDist = atr_profit * 0.6
+        strategy.exit("TRAIL_S", from_entry="SHORT", stop=close + trailDist)
+    else
+        strategy.exit("SL_S", from_entry="SHORT", stop=stopLossShort)
 
-// ==================== 📊 V71 PROFIT LOGIC ====================
-if v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float v71_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float v71_atr = atrMain
-    float v71_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.5
-    float v71_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
-    float v71_tp1Distance = v71_atr * v71_tpMultiplier * 0.5
-    float v71_tp2Distance = v71_atr * v71_tpMultiplier * 0.8
-    float v71_tp3Distance = v71_atr * v71_tpMultiplier * 1.2
-    float v71_slDistance = v71_atr * v71_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = v71_entryPrice + v71_tp1Distance
-        float tp2Price = v71_entryPrice + v71_tp2Distance
-        float tp3Price = v71_entryPrice + v71_tp3Distance
-        float slPrice = v71_entryPrice - v71_slDistance
-        if v71_maxProfitSeen < (close - v71_entryPrice)
-            v71_maxProfitSeen := close - v71_entryPrice
-        if v71_maxProfitSeen >= v71_tp1Distance and not v71_trailingActive
-            v71_trailingActive := true
-            v71_trailingStop := v71_entryPrice + (v71_tp1Distance * 0.3)
-        if v71_trailingActive
-            float newTrail = close - (v71_atr * 0.5)
-            if newTrail > v71_trailingStop
-                v71_trailingStop := newTrail
-            strategy.exit("V71_TRAIL_L", from_entry="LONG", stop=v71_trailingStop)
-        else
-            strategy.exit("V71_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-            strategy.exit("V71_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-            strategy.exit("V71_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = v71_entryPrice - v71_tp1Distance
-        float tp2Price = v71_entryPrice - v71_tp2Distance
-        float tp3Price = v71_entryPrice - v71_tp3Distance
-        float slPrice = v71_entryPrice + v71_slDistance
-        if v71_maxProfitSeen < (v71_entryPrice - close)
-            v71_maxProfitSeen := v71_entryPrice - close
-        if v71_maxProfitSeen >= v71_tp1Distance and not v71_trailingActive
-            v71_trailingActive := true
-            v71_trailingStop := v71_entryPrice - (v71_tp1Distance * 0.3)
-        if v71_trailingActive
-            float newTrail = close + (v71_atr * 0.5)
-            if newTrail < v71_trailingStop
-                v71_trailingStop := newTrail
-            strategy.exit("V71_TRAIL_S", from_entry="SHORT", stop=v71_trailingStop)
-        else
-            strategy.exit("V71_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-            strategy.exit("V71_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-            strategy.exit("V71_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
-
-// ==================== 📊 MNQ KENYA PROFIT LOGIC ====================
-kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
-if kenyaActive and strategy.position_size != 0 and not exitIssuedThisBar
-    float kenya_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float kenya_atr = atr10
-    float kenya_tp1Distance = kenya_atr * 0.8
-    float kenya_tp2Distance = kenya_atr * 1.2
-    float kenya_tp3Distance = kenya_atr * 1.8
-    float kenya_slDistance = kenya_atr * 1.0
-    
-    if strategy.position_size > 0
-        float tp1 = kenya_entryPrice + kenya_tp1Distance
-        float tp2 = kenya_entryPrice + kenya_tp2Distance
-        float tp3 = kenya_entryPrice + kenya_tp3Distance
-        float sl = kenya_entryPrice - kenya_slDistance
-        strategy.exit("KENYA_TP1_L", from_entry="LONG", qty_percent=60, limit=tp1, stop=sl)
-        strategy.exit("KENYA_TP2_L", from_entry="LONG", qty_percent=25, limit=tp2)
-        strategy.exit("KENYA_TP3_L", from_entry="LONG", qty_percent=15, limit=tp3)
-    
-    if strategy.position_size < 0
-        float tp1 = kenya_entryPrice - kenya_tp1Distance
-        float tp2 = kenya_entryPrice - kenya_tp2Distance
-        float tp3 = kenya_entryPrice - kenya_tp3Distance
-        float sl = kenya_entryPrice + kenya_slDistance
-        strategy.exit("KENYA_TP1_S", from_entry="SHORT", qty_percent=60, limit=tp1, stop=sl)
-        strategy.exit("KENYA_TP2_S", from_entry="SHORT", qty_percent=25, limit=tp2)
-        strategy.exit("KENYA_TP3_S", from_entry="SHORT", qty_percent=15, limit=tp3)
-
-// ==================== 📊 MYM PROFIT LOGIC ====================
-if isMYM and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float mym_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mym_atr = atrMain
-    float mym_tpMultiplier = is1min ? 1.3 : is3min ? 1.5 : is5min ? 1.7 : 1.5
-    float mym_slMultiplier = is1min ? 1.1 : is3min ? 1.3 : is5min ? 1.5 : 1.3
-    float mym_tp1Distance = mym_atr * mym_tpMultiplier * 0.6
-    float mym_tp2Distance = mym_atr * mym_tpMultiplier * 1.0
-    float mym_tp3Distance = mym_atr * mym_tpMultiplier * 1.5
-    float mym_slDistance = mym_atr * mym_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = mym_entryPrice + mym_tp1Distance
-        float tp2Price = mym_entryPrice + mym_tp2Distance
-        float tp3Price = mym_entryPrice + mym_tp3Distance
-        float slPrice = mym_entryPrice - mym_slDistance
-        strategy.exit("MYM_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MYM_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-        strategy.exit("MYM_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = mym_entryPrice - mym_tp1Distance
-        float tp2Price = mym_entryPrice - mym_tp2Distance
-        float tp3Price = mym_entryPrice - mym_tp3Distance
-        float slPrice = mym_entryPrice + mym_slDistance
-        strategy.exit("MYM_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MYM_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-        strategy.exit("MYM_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
-
-// ==================== 📊 MNQ PROFIT LOGIC (NON-KENYA) ====================
-if isMNQ and not kenyaActive and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float mnq_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mnq_atr = atrMain
-    float mnq_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.5
-    float mnq_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
-    float mnq_tp1Distance = mnq_atr * mnq_tpMultiplier * 0.5
-    float mnq_tp2Distance = mnq_atr * mnq_tpMultiplier * 0.9
-    float mnq_tp3Distance = mnq_atr * mnq_tpMultiplier * 1.4
-    float mnq_slDistance = mnq_atr * mnq_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = mnq_entryPrice + mnq_tp1Distance
-        float tp2Price = mnq_entryPrice + mnq_tp2Distance
-        float tp3Price = mnq_entryPrice + mnq_tp3Distance
-        float slPrice = mnq_entryPrice - mnq_slDistance
-        strategy.exit("MNQ_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MNQ_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-        strategy.exit("MNQ_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = mnq_entryPrice - mnq_tp1Distance
-        float tp2Price = mnq_entryPrice - mnq_tp2Distance
-        float tp3Price = mnq_entryPrice - mnq_tp3Distance
-        float slPrice = mnq_entryPrice + mnq_slDistance
-        strategy.exit("MNQ_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MNQ_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-        strategy.exit("MNQ_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
-
-// ==================== 📊 MCL PROFIT LOGIC ====================
-if isMCL and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float mcl_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mcl_atr = atrMain
-    float mcl_tpMultiplier = is1min ? 1.4 : is3min ? 1.6 : is5min ? 1.8 : 1.6
-    float mcl_slMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.4
-    float mcl_tp1Distance = mcl_atr * mcl_tpMultiplier * 0.6
-    float mcl_tp2Distance = mcl_atr * mcl_tpMultiplier * 1.0
-    float mcl_tp3Distance = mcl_atr * mcl_tpMultiplier * 1.5
-    float mcl_slDistance = mcl_atr * mcl_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = mcl_entryPrice + mcl_tp1Distance
-        float tp2Price = mcl_entryPrice + mcl_tp2Distance
-        float tp3Price = mcl_entryPrice + mcl_tp3Distance
-        float slPrice = mcl_entryPrice - mcl_slDistance
-        strategy.exit("MCL_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MCL_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-        strategy.exit("MCL_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = mcl_entryPrice - mcl_tp1Distance
-        float tp2Price = mcl_entryPrice - mcl_tp2Distance
-        float tp3Price = mcl_entryPrice - mcl_tp3Distance
-        float slPrice = mcl_entryPrice + mcl_slDistance
-        strategy.exit("MCL_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MCL_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-        strategy.exit("MCL_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
-
-// ==================== 📊 MGC PROFIT LOGIC ====================
-if isMGC and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float mgc_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float mgc_atr = atrMain
-    float mgc_tpMultiplier = is1min ? 1.3 : is3min ? 1.5 : is5min ? 1.7 : 1.5
-    float mgc_slMultiplier = is1min ? 1.1 : is3min ? 1.3 : is5min ? 1.5 : 1.3
-    float mgc_tp1Distance = mgc_atr * mgc_tpMultiplier * 0.5
-    float mgc_tp2Distance = mgc_atr * mgc_tpMultiplier * 0.9
-    float mgc_tp3Distance = mgc_atr * mgc_tpMultiplier * 1.4
-    float mgc_slDistance = mgc_atr * mgc_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = mgc_entryPrice + mgc_tp1Distance
-        float tp2Price = mgc_entryPrice + mgc_tp2Distance
-        float tp3Price = mgc_entryPrice + mgc_tp3Distance
-        float slPrice = mgc_entryPrice - mgc_slDistance
-        strategy.exit("MGC_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MGC_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-        strategy.exit("MGC_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = mgc_entryPrice - mgc_tp1Distance
-        float tp2Price = mgc_entryPrice - mgc_tp2Distance
-        float tp3Price = mgc_entryPrice - mgc_tp3Distance
-        float slPrice = mgc_entryPrice + mgc_slDistance
-        strategy.exit("MGC_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("MGC_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-        strategy.exit("MGC_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
-
-// ==================== 📊 M2K PROFIT LOGIC ====================
-if isM2K and not v20Active_profit and not v71Active_profit and strategy.position_size != 0 and not exitIssuedThisBar
-    float m2k_entryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
-    float m2k_atr = atrMain
-    float m2k_tpMultiplier = is1min ? 1.2 : is3min ? 1.4 : is5min ? 1.6 : 1.4
-    float m2k_slMultiplier = is1min ? 1.0 : is3min ? 1.2 : is5min ? 1.4 : 1.2
-    float m2k_tp1Distance = m2k_atr * m2k_tpMultiplier * 0.5
-    float m2k_tp2Distance = m2k_atr * m2k_tpMultiplier * 0.9
-    float m2k_tp3Distance = m2k_atr * m2k_tpMultiplier * 1.3
-    float m2k_slDistance = m2k_atr * m2k_slMultiplier
-    
-    if strategy.position_size > 0
-        float tp1Price = m2k_entryPrice + m2k_tp1Distance
-        float tp2Price = m2k_entryPrice + m2k_tp2Distance
-        float tp3Price = m2k_entryPrice + m2k_tp3Distance
-        float slPrice = m2k_entryPrice - m2k_slDistance
-        strategy.exit("M2K_TP1_L", from_entry="LONG", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("M2K_TP2_L", from_entry="LONG", qty_percent=30, limit=tp2Price)
-        strategy.exit("M2K_TP3_L", from_entry="LONG", qty_percent=20, limit=tp3Price)
-    
-    if strategy.position_size < 0
-        float tp1Price = m2k_entryPrice - m2k_tp1Distance
-        float tp2Price = m2k_entryPrice - m2k_tp2Distance
-        float tp3Price = m2k_entryPrice - m2k_tp3Distance
-        float slPrice = m2k_entryPrice + m2k_slDistance
-        strategy.exit("M2K_TP1_S", from_entry="SHORT", qty_percent=50, limit=tp1Price, stop=slPrice)
-        strategy.exit("M2K_TP2_S", from_entry="SHORT", qty_percent=30, limit=tp2Price)
-        strategy.exit("M2K_TP3_S", from_entry="SHORT", qty_percent=20, limit=tp3Price)
+// NOTE: All other profit logic sections (V20, V71, Kenya, MYM, MNQ, MCL, MGC, M2K) have been REMOVED
+// The ORIGINAL MJV6 PROFIT LOGIC above handles ALL instruments with ONE simple, clean profit system
+// This is EXACTLY how the original MJV6 script worked - no conflicting exit orders
 // ==================== 🚨 EXIT CONTROLS ====================
 // Pre-TP1 Profit Lock
 if enablePreTP1ProfitLock and strategy.position_size != 0 and not exitIssuedThisBar
