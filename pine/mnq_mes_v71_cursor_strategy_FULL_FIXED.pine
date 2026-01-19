@@ -101,6 +101,20 @@ mesMinConfluenceScore = input.int(5, "MES: Min confluence score (0-7)", minval=0
 mesMinMtfDirectionalPct = input.int(67, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
 mesRestrictToPminus1P1P2 = input.bool(true, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
 
+// ==================== 🎯 FILTER HARMONY (Make filters cooperate) ====================
+filterHarmonyGroup = "🎯 Filter Harmony (Quality Scoring)"
+enableFilterHarmony = input.bool(true, "✅ Enable Filter Harmony (recommended)", group=filterHarmonyGroup, tooltip="Replaces many hard-block gates with a unified 0–100 quality score so filters work together instead of blocking each other. Keeps only true safety limits as hard stops.")
+fhMinQuality = input.float(70.0, "Min quality to enter (%)", minval=40.0, maxval=95.0, step=1.0, group=filterHarmonyGroup)
+fhStrongOverrideFactor = input.float(0.85, "Strong-signal threshold factor", minval=0.60, maxval=0.95, step=0.01, group=filterHarmonyGroup, tooltip="Strong signals can enter at MinQuality × factor (ex: 70%×0.85=59.5%)")
+fhTieTolerance = input.float(5.0, "Tie tolerance (%)", minval=0.0, maxval=20.0, step=1.0, group=filterHarmonyGroup, tooltip="If long/short quality are within this %, prefer trend-aligned / momentum side.")
+fhGrayZonePenalty = input.float(10.0, "Gray-zone penalty (points)", minval=0.0, maxval=30.0, step=1.0, group=filterHarmonyGroup)
+fhAllowSwingInGrayZone = input.bool(true, "Allow swing signals in gray zone if quality high", group=filterHarmonyGroup)
+
+// Strategy Tester fix: if you set Alert Only Mode = ON, TradingView strategy tester shows no trades.
+// This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
+backtestGroup = "🧪 Backtest / Live Mode"
+forceStrategyOrdersForBacktest = input.bool(true, "✅ Force strategy orders in backtest (even if Alert Only Mode)", group=backtestGroup)
+
 // ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
@@ -379,6 +393,8 @@ tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (Updat
 tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Update contract month!)")
 useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
 alertOnlyMode = input.bool(false, "Alert Only Mode")
+// Effective alert-only flag (keeps strategy tester working)
+alertOnlyMode_eff = alertOnlyMode and not forceStrategyOrdersForBacktest
 tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state (required for Alert Only Mode)", group="TradersPost Router")
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
@@ -1537,12 +1553,17 @@ profitTargetReached = enableDailyProfitTarget and dailyPnL >= dailyProfitTarget
 var bool tookTradeThisBar = false
 var string entryPriority = "NONE"
 var string activeSignalType = "NONE"
+// Filter Harmony debug (shown in Data Window)
+var float fhQualityLong_dbg = na
+var float fhQualityShort_dbg = na
 // Exit arbitration + diagnostics (prevents multiple conflicting closes per bar).
 var bool exitIssuedThisBar = false
 var string lastExitReason = "NONE"
 if barstate.isnew
     tookTradeThisBar := false
     exitIssuedThisBar := false
+    fhQualityLong_dbg := na
+    fhQualityShort_dbg := na
 
 bool canEnterNewPosition = strategy.position_size == 0
 maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades
@@ -1583,31 +1604,70 @@ mandatoryShortOK = (htfBearStructure and emaStackBear and vwapSlopeDown and atrE
 trendOnlyLongGate = (not enableMandatoryTrendOnly) or mandatoryLongOK or strictBypassLong
 trendOnlyShortGate = (not enableMandatoryTrendOnly) or mandatoryShortOK or strictBypassShort
 
-canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
-canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
+// FILTER HARMONY: soften “hard block” gates by allowing strong setups to flow through,
+// then let the unified quality score decide the final entry.
+if enableFilterHarmony
+    fhStrongLong = strictBypassLong or bypassLong or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBull
+    fhStrongShort = strictBypassShort or bypassShort or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBear
 
-canGoLong := canGoLong and trendOnlyLongGate
-canGoShort := canGoShort and trendOnlyShortGate
+    fhRegimeLongOK = (not enableTrendOnly) or trendRegimeOK or fhStrongLong
+    fhRegimeShortOK = (not enableTrendOnly) or trendRegimeOK or fhStrongShort
+    fhBiasLongOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == 1 or fhStrongLong
+    fhBiasShortOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == -1 or fhStrongShort
+    fhCooldownLongOK = oppCooldownOK or fhStrongLong
+    fhCooldownShortOK = oppCooldownOK or fhStrongShort
 
-// MTF filter mode gates (directional).
-canGoLong := canGoLong and mtfLongOK
-canGoShort := canGoShort and mtfShortOK
+    fhVolLongOK = volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong)) or fhStrongLong
+    fhVolShortOK = volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort)) or fhStrongShort
+    fhHtfLongOK = htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong)) or fhStrongLong
+    fhHtfShortOK = htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort)) or fhStrongShort
+
+    fhStrictLongOK = (not enableStrictEntryFilter) or v71_strictEntryOK or fhStrongLong
+    fhStrictShortOK = (not enableStrictEntryFilter) or v71_strictEntryOK or fhStrongShort
+
+    fhMandatoryLongOK = (not enableMandatoryTrendOnly) or mandatoryLongOK or fhStrongLong
+    fhMandatoryShortOK = (not enableMandatoryTrendOnly) or mandatoryShortOK or fhStrongShort
+
+    fhMtfLongOK = (not enableMTF or mtfMode != "Filter") or mtfLongOK or fhStrongLong
+    fhMtfShortOK = (not enableMTF or mtfMode != "Filter") or mtfShortOK or fhStrongShort
+
+    canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and strengthGateLongOK and fhStrictLongOK and fhMandatoryLongOK and fhMtfLongOK
+    canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and strengthGateShortOK and fhStrictShortOK and fhMandatoryShortOK and fhMtfShortOK
+else
+    canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
+    canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
+
+    canGoLong := canGoLong and trendOnlyLongGate
+    canGoShort := canGoShort and trendOnlyShortGate
+
+    // MTF filter mode gates (directional).
+    canGoLong := canGoLong and mtfLongOK
+    canGoShort := canGoShort and mtfShortOK
 
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE (MES-only) ====================
+// In Filter Harmony mode, these become *quality inputs* (soft influence) instead of hard blocks
+// so you don’t get “no trades” in strategy tester / extended sessions.
+bool mesSessionOK = true
+bool mesConfluenceOK = true
+bool mesMtfOK_Long = true
+bool mesMtfOK_Short = true
+bool mesMandatoryOK_Long = true
+bool mesMandatoryOK_Short = true
 if isMES and enableMesHighWinEntryGate
     // Avoid "no trades" if user disables session filters globally.
-    bool mesSessionOK = (not mesOnlyRegularSession) or (not enableSessionFilters) or isRegularSession
-    bool mesConfluenceOK = totalConfluenceScore >= mesMinConfluenceScore
-    bool mesMtfOK_Long = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctLong >= mesMinMtfDirectionalPct)
-    bool mesMtfOK_Short = (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctShort >= mesMinMtfDirectionalPct)
+    mesSessionOK := (not mesOnlyRegularSession) or (not enableSessionFilters) or isRegularSession
+    mesConfluenceOK := totalConfluenceScore >= mesMinConfluenceScore
+    mesMtfOK_Long := (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctLong >= mesMinMtfDirectionalPct)
+    mesMtfOK_Short := (not enableMTF or mtfMode != "Filter") or (mtfDirectionalPctShort >= mesMinMtfDirectionalPct)
     // Force "Mandatory Trend-Only" structure (no bypass) for MES when enabled.
     // Fail-safe: if HTF pivots haven't formed yet, don't block all trading.
     bool mesHtfStructureReady = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLastLow) and not na(htfPrevLow)
-    bool mesMandatoryOK_Long = (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryLongOK
-    bool mesMandatoryOK_Short = (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryShortOK
+    mesMandatoryOK_Long := (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryLongOK
+    mesMandatoryOK_Short := (not mesForceMandatoryTrend) or (not mesHtfStructureReady) or mandatoryShortOK
 
-    canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
-    canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
+    if not enableFilterHarmony
+        canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
+        canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
 
 if not tookTradeThisBar
     if enablePrioritySystem
@@ -1735,7 +1795,8 @@ if not tookTradeThisBar
         selectedPriority := "NO_PRIORITY"
 
     // MES: optionally restrict entries to the highest-quality priority tiers only.
-    if isMES and enableMesHighWinEntryGate and mesRestrictToPminus1P1P2
+    // In Filter Harmony mode this is handled by the quality score (soft), not a hard block.
+    if (not enableFilterHarmony) and isMES and enableMesHighWinEntryGate and mesRestrictToPminus1P1P2
         bool mesPriorityAllowed =
              (selectedPriority == "P-1:TREND_START") or
              (selectedPriority == "P1:EARLY_TREND") or
@@ -1748,6 +1809,136 @@ if not tookTradeThisBar
             shouldEnterLong := false
             shouldEnterShort := false
             selectedPriority := "MES_BLOCKED"
+
+    // ==================== 🎯 FILTER HARMONY OVERRIDE (quality scoring) ====================
+    // After priority selection (or raw/no-priority), compute a unified quality score and allow the best side.
+    if enableFilterHarmony and not tookTradeThisBar
+        fhRawLong = (hasTrendStartLong or hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or tibLong or cpbLong or ultraBuySignal or swingBuySignal)
+        fhRawShort = (hasTrendStartShort or hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or tibShort or cpbShort or ultraSellSignal or swingSellSignal)
+
+        fhStrongLong2 = strictBypassLong or bypassLong or impulseLong or hasMomentumOverrideLong or hasStrongTrendOverrideBull or tibLong or cpbLong or contBypassLong
+        fhStrongShort2 = strictBypassShort or bypassShort or impulseShort or hasMomentumOverrideShort or hasStrongTrendOverrideBear or tibShort or cpbShort or contBypassShort
+
+        // Tier scoring (uses your existing tier flags + generic confirms)
+        fhPatternScoreLong =
+             (tier1Bull ? 18.0 : tier2Bull ? 14.0 : tier3Bull ? 10.0 : tier4Bull ? 6.0 : genericBullConfirm ? 9.0 : 0.0)
+        fhPatternScoreShort =
+             (tier1Bear ? 18.0 : tier2Bear ? 14.0 : tier3Bear ? 10.0 : tier4Bear ? 6.0 : genericBearConfirm ? 9.0 : 0.0)
+
+        // Trend/regime score (directional)
+        fhTrendBase = veryStrongTrend ? 20.0 : strongTrend ? 16.0 : moderateTrend ? 10.0 : 0.0
+        fhTrendLong = fhTrendBase + (trendAlignedLong ? 10.0 : 0.0) + (atrExpandingNow ? 4.0 : 0.0) + (not isChoppy ? 4.0 : 0.0)
+        fhTrendShort = fhTrendBase + (trendAlignedShort ? 10.0 : 0.0) + (atrExpandingNow ? 4.0 : 0.0) + (not isChoppy ? 4.0 : 0.0)
+
+        // Signal-line score (don’t hard-block; strong signals can compensate)
+        fhSignalLong = signalAllowsLong ? 14.0 : (fhStrongLong2 ? 8.0 : 0.0)
+        fhSignalShort = signalAllowsShort ? 14.0 : (fhStrongShort2 ? 8.0 : 0.0)
+
+        // Confluence (scaled)
+        fhReqConfl = requiredConfluence > 0 ? requiredConfluence : 1
+        fhConflLong = math.min(14.0, (totalConfluenceScore / fhReqConfl) * 14.0)
+        fhConflShort = math.min(14.0, (totalConfluenceScore / fhReqConfl) * 14.0)
+
+        // Stars (scaled to 14)
+        fhStarMax = 7.0
+        fhStarLong = math.min(14.0, (math.min(starScore, fhStarMax) / fhStarMax) * 14.0)
+        fhStarShort = fhStarLong
+
+        // HTF/MTF health
+        fhHtfLong = (htfConfirmLongOK ? 6.0 : (fhStrongLong2 ? 4.0 : 0.0))
+        fhHtfShort = (htfConfirmShortOK ? 6.0 : (fhStrongShort2 ? 4.0 : 0.0))
+        fhMtfLong = (mtfLongOK ? 4.0 : (fhStrongLong2 ? 2.0 : 0.0))
+        fhMtfShort = (mtfShortOK ? 4.0 : (fhStrongShort2 ? 2.0 : 0.0))
+
+        // Router “advisory” (bias/cooldown get points; strong signals can ignore)
+        fhBiasLong = allowLongByBias ? 6.0 : (fhStrongLong2 ? 3.0 : 0.0)
+        fhBiasShort = allowShortByBias ? 6.0 : (fhStrongShort2 ? 3.0 : 0.0)
+        fhCooldownLong = cooldownOK ? 4.0 : (fhStrongLong2 ? 2.0 : 0.0)
+        fhCooldownShort = cooldownOK ? 4.0 : (fhStrongShort2 ? 2.0 : 0.0)
+
+        // Candle confirmation (keep it meaningful but not absolute)
+        fhCandleLong = candleConfirmLong ? 8.0 : (fhStrongLong2 ? 4.0 : 0.0)
+        fhCandleShort = candleConfirmShort ? 8.0 : (fhStrongShort2 ? 4.0 : 0.0)
+
+        // MES gate becomes soft inputs in harmony mode
+        fhMesLong = (not isMES or not enableMesHighWinEntryGate) ? 6.0 :
+             (mesSessionOK ? 2.0 : 0.0) + (mesConfluenceOK ? 2.0 : 0.0) + (mesMtfOK_Long ? 1.0 : 0.0) + (mesMandatoryOK_Long ? 1.0 : 0.0)
+        fhMesShort = (not isMES or not enableMesHighWinEntryGate) ? 6.0 :
+             (mesSessionOK ? 2.0 : 0.0) + (mesConfluenceOK ? 2.0 : 0.0) + (mesMtfOK_Short ? 1.0 : 0.0) + (mesMandatoryOK_Short ? 1.0 : 0.0)
+
+        // Gray zone penalty (unless strong / allowed swing)
+        fhGrayPenaltyLong = (isSignalGrayZone and not fhStrongLong2 and not (fhAllowSwingInGrayZone and swingBuySignal)) ? fhGrayZonePenalty : 0.0
+        fhGrayPenaltyShort = (isSignalGrayZone and not fhStrongShort2 and not (fhAllowSwingInGrayZone and swingSellSignal)) ? fhGrayZonePenalty : 0.0
+
+        fhQualityLong = math.max(0.0, math.min(100.0,
+             fhTrendLong + fhSignalLong + fhConflLong + fhStarLong + fhPatternScoreLong + fhCandleLong + fhHtfLong + fhMtfLong + fhBiasLong + fhCooldownLong + fhMesLong - fhGrayPenaltyLong))
+        fhQualityShort = math.max(0.0, math.min(100.0,
+             fhTrendShort + fhSignalShort + fhConflShort + fhStarShort + fhPatternScoreShort + fhCandleShort + fhHtfShort + fhMtfShort + fhBiasShort + fhCooldownShort + fhMesShort - fhGrayPenaltyShort))
+        fhQualityLong_dbg := fhQualityLong
+        fhQualityShort_dbg := fhQualityShort
+
+        // Eligibility (threshold + strong-signal discount)
+        fhMinLong = fhMinQuality
+        fhMinShort = fhMinQuality
+        fhOkLong = fhQualityLong >= fhMinLong or (fhStrongLong2 and fhQualityLong >= (fhMinLong * fhStrongOverrideFactor))
+        fhOkShort = fhQualityShort >= fhMinShort or (fhStrongShort2 and fhQualityShort >= (fhMinShort * fhStrongOverrideFactor))
+
+        // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
+        fhCandidateLong = canGoLong and fhRawLong and longBarOK
+        fhCandidateShort = canGoShort and fhRawShort and shortBarOK
+
+        fhAllowLong = fhCandidateLong and fhOkLong
+        fhAllowShort = fhCandidateShort and fhOkShort
+
+        // Decide side: pick higher quality; if tied, prefer aligned / momentum / impulse.
+        if fhAllowLong or fhAllowShort
+            float qDiff = math.abs(fhQualityLong - fhQualityShort)
+            bool preferLong = (trendAlignedLong and not trendAlignedShort) or hasMomentumOverrideLong or impulseLong
+            bool preferShort = (trendAlignedShort and not trendAlignedLong) or hasMomentumOverrideShort or impulseShort
+
+            bool takeLong =
+                 fhAllowLong and (not fhAllowShort or fhQualityLong > fhQualityShort + fhTieTolerance or (qDiff <= fhTieTolerance and preferLong and not preferShort))
+            bool takeShort =
+                 fhAllowShort and (not fhAllowLong or fhQualityShort > fhQualityLong + fhTieTolerance or (qDiff <= fhTieTolerance and preferShort and not preferLong))
+
+            // If still ambiguous, take the higher raw quality.
+            if fhAllowLong and fhAllowShort and not takeLong and not takeShort
+                takeLong := fhQualityLong >= fhQualityShort
+                takeShort := not takeLong
+
+            if takeLong
+                shouldEnterLong := true
+                shouldEnterShort := false
+                // Choose a sensible priority label for logs/alerts.
+                selectedPriority :=
+                     impulseLong ? "P1:IMPULSE" :
+                     tibLong ? "P1:IGNITION" :
+                     cpbLong ? "P2:CONTINUATION" :
+                     hasStrongTrendOverrideBull ? "P2:STRONG_TREND" :
+                     hasTrendOverrideBull ? "P2:TREND" :
+                     hasTrendStartLong ? "P-1:TREND_START" :
+                     hasMomentumOverrideLong ? "P0:MOMENTUM" :
+                     earlyTrendLong ? "P1:EARLY_TREND" :
+                     swingBuySignal ? "P7:SWING" :
+                     "HARMONY"
+                entryPriority := selectedPriority
+            else if takeShort
+                shouldEnterLong := false
+                shouldEnterShort := true
+                selectedPriority :=
+                     impulseShort ? "P1:IMPULSE" :
+                     tibShort ? "P1:IGNITION" :
+                     cpbShort ? "P2:CONTINUATION" :
+                     hasStrongTrendOverrideBear ? "P2:STRONG_TREND" :
+                     hasTrendOverrideBear ? "P2:TREND" :
+                     hasTrendStartShort ? "P-1:TREND_START" :
+                     hasMomentumOverrideShort ? "P0:MOMENTUM" :
+                     earlyTrendShort ? "P1:EARLY_TREND" :
+                     swingSellSignal ? "P7:SWING" :
+                     "HARMONY"
+                entryPriority := selectedPriority
+
+        // (Plots are declared in global scope; we only update *_dbg vars here.)
 
 var int lastLongSignalBar = na
 var int lastShortSignalBar = na
@@ -1897,7 +2088,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
     int tradeQty = getActiveQty(finalContractQty)
-    if not alertOnlyMode
+    if not alertOnlyMode_eff
         strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriority)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
@@ -1918,7 +2109,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
     int tradeQtyS = getActiveQty(finalContractQty)
-    if not alertOnlyMode
+    if not alertOnlyMode_eff
         strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriority)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
@@ -2558,7 +2749,7 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
     lastExitReason := "MAX_HOLD"
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
-tpUseSim = tpSimulateBrokerPosition or alertOnlyMode
+tpUseSim = tpSimulateBrokerPosition or alertOnlyMode_eff
 // IMPORTANT: Treat qty<=0 as flat (prevents “exit when flat” rejections).
 tpFlat = tpUseSim ? (tpPosDir == 0 or tpPosQty <= 0) : (strategy.position_size == 0)
 tpLong = tpUseSim ? (tpPosDir == 1 and tpPosQty > 0) : (strategy.position_size > 0)
@@ -2801,6 +2992,10 @@ bgcolor(choppyBgColor, title="Choppy Market")
 bgcolor(profitTargetReached ? color.new(color.green, 95) : na, title="Profit Target Reached")
 optimalSessionBg = isOptimalSession ? color.new(color.green, 97) : na
 bgcolor(isOptimalSession ? optimalSessionBg : na, title="Optimal Session")
+
+// Filter Harmony debug (Data Window only)
+plot(fhQualityLong_dbg, "FH Quality Long", color=color.new(color.green, 0), display=display.data_window)
+plot(fhQualityShort_dbg, "FH Quality Short", color=color.new(color.red, 0), display=display.data_window)
 
 // ==================== 📊 PERFORMANCE METRICS TABLE ====================
 var table perfTable = table.new(position.top_right, 2, 14, border_width=1)
