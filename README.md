@@ -8,6 +8,7 @@ This repo contains a **drop-in patch** to fix the most common causes of:
 ## Files
 
 - `pine/TRADE_FIRING_FIX_PATCH.pine`: Patch sections to paste into your script.
+- `pine/@MAIN-MNQ_3m5m_BOT_V71_FIXED.pine`: Full bot file with entry-firing fixes applied.
 
 ## What this fixes (the big one)
 
