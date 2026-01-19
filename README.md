@@ -24,6 +24,9 @@ Common causes:
   - repaired entry/exit IDs so strategy tester exits work
   - fixed time/session + pivot compile issues
   - fully fixed TradersPost routing (exit guard + forced contract tickers)
+- `pine/mnq_mes_v71_cursor_strategy_FULL_FIXED.pine`: the **full 2832‑line MNQ/MES multi‑TF bot** (includes **MES MJV6 profit logic**) with additional audit fixes:
+  - forces contract tickers (avoids `MNQ1!`/`MES1!` in webhooks)
+  - blocks duplicate/zero‑qty EXIT alerts (prevents TradersPost/TopstepX “No position open to exit” rejections)
 
 ## How to use
 
