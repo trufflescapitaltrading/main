@@ -1,0 +1,617 @@
+//@version=5
+strategy("MJV6 Micro Futures Ultra Strategy (MNQ/MCL/MGC) - FIXED (TP Exit Guard + Compile Repairs)", overlay=true, initial_capital=25000, default_qty_type=strategy.cash, default_qty_value=1000, pyramiding=0, calc_on_order_fills=true, calc_on_every_tick=true)
+
+// ============================================================
+// FIX SUMMARY (what was repaired vs the pasted script)
+// - Replaced invalid `hour`/`minute` usage with hour(time, "America/New_York")
+// - Fixed pivot logic (`ph`/`pl`) to use `not na()` (no bool-on-float errors)
+// - Prevented divide-by-zero in trendStrength
+// - Reworked entry/exit IDs to be consistent (strategy tester exits now work)
+// - Added a FULL TradersPost router with:
+//     - exit-when-flat guard (prevents “No position open to exit” rejections)
+//     - forced contract tickers (prevents MNQ1!/MES1! leaking into webhooks)
+//     - per-bar de-dupe to avoid double alerts
+// ============================================================
+
+// === INSTRUMENT DETECTION & OPTIMIZATION ===
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMicroFutures = isMNQ or isMCL or isMGC
+instrumentName = isMNQ ? "MNQ" : isMCL ? "MCL" : isMGC ? "MGC" : "UNKNOWN"
+
+// Instrument-specific multipliers for trade frequency - REDUCED for manageable backtesting
+mnqMultiplier = input.float(1.8, "MNQ Trade Multiplier", minval=1.2, maxval=3.0)
+mclMultiplier = input.float(1.6, "MCL Trade Multiplier", minval=1.2, maxval=2.5)
+mgcMultiplier = input.float(1.4, "MGC Trade Multiplier", minval=1.0, maxval=2.2)
+
+// === ULTRA TRADING INPUTS ===
+hullSrc = input.source(close, "Hull Source")
+baseHullMain = input.int(25, "Base Hull MA (Main)", minval=15, maxval=40)
+baseHullFast = input.int(9, "Base Hull MA (Fast)", minval=6, maxval=15)
+baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22)
+
+// Dynamic Hull periods based on instrument
+hullPeriodMain = isMNQ ? math.round(baseHullMain * 0.7) : isMCL ? math.round(baseHullMain * 0.9) : isMGC ? baseHullMain : baseHullMain
+hullPeriodFast = isMNQ ? math.round(baseHullFast * 0.8) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : baseHullFast
+hullPeriodSignal = isMNQ ? math.round(baseHullSignal * 0.8) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : baseHullSignal
+
+// Envelope
+baseEnvLength = input.int(12, "Base Envelope Period", minval=8, maxval=20)
+baseEnvDev = input.float(0.8, "Base Envelope Deviation %", minval=0.5, maxval=1.5)
+envLength = isMNQ ? math.round(baseEnvLength * 0.9) : isMCL ? baseEnvLength : isMGC ? math.round(baseEnvLength * 1.1) : baseEnvLength
+envDev = isMNQ ? baseEnvDev * 0.85 : isMCL ? baseEnvDev * 1.0 : isMGC ? baseEnvDev * 0.95 : baseEnvDev
+
+// SuperTrend
+basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4)
+baseAtrFactor = input.float(2.2, "Base ATR Factor", minval=1.8, maxval=3.0)
+baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12)
+pivotPeriod = basePivotPeriod
+atrFactor = isMNQ ? baseAtrFactor * 0.95 : isMCL ? baseAtrFactor * 1.05 : isMGC ? baseAtrFactor : baseAtrFactor
+atrPeriod = isMNQ ? math.round(baseAtrPeriod * 0.9) : isMCL ? baseAtrPeriod : isMGC ? math.round(baseAtrPeriod * 1.1) : baseAtrPeriod
+
+// Risk
+baseRiskPercent = input.float(0.6, "Base Risk per Trade (%)", minval=0.2, maxval=2.0)
+instrumentRiskMultiplier = isMNQ ? 1.3 : isMCL ? 1.1 : isMGC ? 1.0 : 1.0
+adjustedRiskPercent = baseRiskPercent * instrumentRiskMultiplier
+
+useTP = input.bool(true, "Use Take Profit Levels")
+useSL = input.bool(true, "Use Stop Loss")
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0)
+maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5.0, maxval=25.0)
+
+// === ULTRA MODE CONTROLS ===
+ultraMode = input.bool(true, "Enable Ultra Trading Mode")
+microScalping = input.bool(true, "Enable Micro Scalping")
+instantSignals = input.bool(true, "Enable Instant Signals")
+minimalFilters = input.bool(true, "Minimal Signal Filters")
+
+// Trade frequency
+baseTradeFrequency = input.float(1.3, "Base Trade Frequency", minval=1.0, maxval=2.5)
+tradeFrequencyBoost = isMNQ ? baseTradeFrequency * mnqMultiplier : isMCL ? baseTradeFrequency * mclMultiplier : isMGC ? baseTradeFrequency * mgcMultiplier : baseTradeFrequency
+
+allowMultiplePositions = input.bool(false, "Allow Multiple Positions")
+baseMaxTrades = input.int(1, "Base Max Concurrent Trades", minval=1, maxval=2)
+maxConcurrentTrades = isMNQ ? baseMaxTrades + 1 : baseMaxTrades
+
+// === FUTURES-SPECIFIC SCALPING ===
+enableScalping = input.bool(true, "Enable Scalping Mode")
+scalpingTimeframe = input.string("1m", "Scalping Timeframe", options=["1m", "2m", "3m", "5m"])
+mnqScalpMultiplier = input.float(2.2, "MNQ Scalp Multiplier", minval=1.5, maxval=3.5)
+mclScalpMultiplier = input.float(1.8, "MCL Scalp Multiplier", minval=1.2, maxval=3.0)
+mgcScalpMultiplier = input.float(1.6, "MGC Scalp Multiplier", minval=1.2, maxval=2.8)
+scalpingMultiplier = isMNQ ? mnqScalpMultiplier : isMCL ? mclScalpMultiplier : isMGC ? mgcScalpMultiplier : 1.8
+
+quickExitMode = input.bool(true, "Quick Exit Mode")
+baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50)
+maxHoldingBars = isMNQ ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : baseMaxHolding
+
+// === SESSION-BASED OPTIMIZATION ===
+enableSessionFilters = input.bool(true, "Enable Session Filters")
+preMarketStart = input.int(600, "Pre-Market Start (ET)", minval=0, maxval=2359)
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
+afterHoursEnd = input.int(1700, "After Hours End (ET)", minval=0, maxval=2359)
+
+curHourET = hour(time, "America/New_York")
+curMinET = minute(time, "America/New_York")
+currentTimeET = curHourET * 100 + curMinET
+
+isPreMarket = enableSessionFilters and currentTimeET >= preMarketStart and currentTimeET < regularSessionStart
+isRegularSession = enableSessionFilters and currentTimeET >= regularSessionStart and currentTimeET <= regularSessionEnd
+isAfterHours = enableSessionFilters and currentTimeET > regularSessionEnd and currentTimeET <= afterHoursEnd
+
+sessionMultiplier =
+     not enableSessionFilters ? 1.0 :
+     isRegularSession ? 1.1 :
+     (isPreMarket or isAfterHours) ? 0.7 : 0.5
+
+// === MICRO SIGNAL DETECTION ===
+enableMicroSignals = input.bool(true, "Enable Micro Signals")
+mnqNoiseThreshold = input.float(0.015, "MNQ Noise Threshold %", minval=0.005, maxval=0.05)
+mclNoiseThreshold = input.float(0.025, "MCL Noise Threshold %", minval=0.01, maxval=0.08)
+mgcNoiseThreshold = input.float(0.02, "MGC Noise Threshold %", minval=0.008, maxval=0.06)
+priceNoiseThreshold = isMNQ ? mnqNoiseThreshold : isMCL ? mclNoiseThreshold : isMGC ? mgcNoiseThreshold : 0.02
+
+baseVolumeThreshold = input.float(0.6, "Base Volume Threshold", minval=0.3, maxval=1.2)
+volumeThreshold = isMNQ ? baseVolumeThreshold * 0.8 : isMCL ? baseVolumeThreshold * 1.1 : isMGC ? baseVolumeThreshold : baseVolumeThreshold
+
+baseMomentumSensitivity = input.float(1.8, "Base Momentum Sensitivity", minval=1.0, maxval=3.5)
+momentumSensitivity = isMNQ ? baseMomentumSensitivity * 1.3 : isMCL ? baseMomentumSensitivity * 1.1 : isMGC ? baseMomentumSensitivity : baseMomentumSensitivity
+
+positionSizingMode = input.string("Dynamic", "Position Sizing Mode", options=["Fixed", "Dynamic", "Pyramid"])
+pyramidLevels = input.int(2, "Pyramid Levels", minval=1, maxval=4)
+pyramidScale = input.float(0.6, "Pyramid Scale Factor", minval=0.4, maxval=0.8)
+
+// === FUTURES TIMEFRAME OPTIMIZATION ===
+autoTimeframeOptimization = input.bool(true, "Auto Timeframe Optimization")
+baseTfMultiplier1m = input.float(1.8, "Base 1m TF Multiplier", minval=1.2, maxval=3.0)
+baseTfMultiplier2m = input.float(1.6, "Base 2m TF Multiplier", minval=1.0, maxval=2.5)
+baseTfMultiplier3m = input.float(1.4, "Base 3m TF Multiplier", minval=1.0, maxval=2.2)
+baseTfMultiplier5m = input.float(1.2, "Base 5m TF Multiplier", minval=1.0, maxval=2.0)
+
+tfMultiplier1m = isMNQ ? baseTfMultiplier1m * 1.1 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.9 : baseTfMultiplier1m
+tfMultiplier2m = isMNQ ? baseTfMultiplier2m * 1.05 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.95 : baseTfMultiplier2m
+tfMultiplier3m = isMNQ ? baseTfMultiplier3m : isMCL ? baseTfMultiplier3m * 0.95 : isMGC ? baseTfMultiplier3m * 0.9 : baseTfMultiplier3m
+tfMultiplier5m = isMNQ ? baseTfMultiplier5m : isMCL ? baseTfMultiplier5m * 0.95 : isMGC ? baseTfMultiplier5m * 0.9 : baseTfMultiplier5m
+
+// === ENHANCED PROFIT OPTIMIZATION ===
+useDynamicSizing = input.bool(true, "Use Dynamic Position Sizing")
+baseVolatilityMultiplier = input.float(2.2, "Base Volatility Multiplier", minval=1.5, maxval=4.0)
+volatilityMultiplier = isMNQ ? baseVolatilityMultiplier * 1.2 : isMCL ? baseVolatilityMultiplier * 1.1 : isMGC ? baseVolatilityMultiplier : baseVolatilityMultiplier
+baseWinRateBoost = input.float(1.8, "Base Win Rate Boost", minval=1.2, maxval=3.0)
+winRateBoost = isMNQ ? baseWinRateBoost * 1.1 : isMCL ? baseWinRateBoost : isMGC ? baseWinRateBoost * 0.95 : baseWinRateBoost
+
+useMarketRegime = input.bool(true, "Use Market Regime Detection")
+baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12)
+baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12)
+trendStrengthPeriod = isMNQ ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : baseTrendPeriod
+volatilityPeriod = isMNQ ? baseVolPeriod : isMCL ? math.round(baseVolPeriod * 1.1) : isMGC ? math.round(baseVolPeriod * 1.2) : baseVolPeriod
+
+useUltraShorts = input.bool(true, "Ultra Short Trading")
+baseShortVolumeThreshold = input.float(0.7, "Base Short Volume Threshold", minval=0.4, maxval=1.5)
+shortVolumeThreshold = isMNQ ? baseShortVolumeThreshold * 0.9 : isMCL ? baseShortVolumeThreshold * 1.1 : isMGC ? baseShortVolumeThreshold : baseShortVolumeThreshold
+baseShortMomentumThreshold = input.float(22, "Base Short Momentum", minval=15, maxval=40)
+shortMomentumThreshold = isMNQ ? baseShortMomentumThreshold * 0.9 : isMCL ? baseShortMomentumThreshold : isMGC ? baseShortMomentumThreshold * 1.1 : baseShortMomentumThreshold
+
+useVolumeFilter = input.bool(false, "Use Volume Filter")
+baseVolumePeriod = input.int(6, "Base Volume Period", minval=4, maxval=12)
+volumePeriod = isMNQ ? baseVolumePeriod : isMCL ? math.round(baseVolumePeriod * 1.1) : isMGC ? math.round(baseVolumePeriod * 1.2) : baseVolumePeriod
+volumeMultiplier = volumeThreshold
+
+useMomentumFilter = input.bool(false, "Use Momentum Filter")
+baseRsiPeriod = input.int(6, "Base RSI Period", minval=4, maxval=10)
+rsiPeriod = isMNQ ? baseRsiPeriod : isMCL ? math.round(baseRsiPeriod * 1.1) : isMGC ? math.round(baseRsiPeriod * 1.2) : baseRsiPeriod
+rsiOverbought = input.float(78, "RSI Overbought", minval=70, maxval=85)
+rsiOversold = input.float(22, "RSI Oversold", minval=15, maxval=30)
+stochPeriod = rsiPeriod
+
+useEnhancedTP = input.bool(true, "Use Enhanced Take Profit")
+baseTpMultiplier = input.float(1.0, "Base TP Multiplier", minval=0.6, maxval=2.0)
+tpMultiplier = isMNQ ? baseTpMultiplier * 0.9 : isMCL ? baseTpMultiplier * 1.1 : isMGC ? baseTpMultiplier : baseTpMultiplier
+
+useAdaptiveTP = input.bool(true, "Use Adaptive TP Levels")
+useSmartTrailing = input.bool(true, "Use Smart Trailing Stop")
+baseTrailActivation = input.float(0.7, "Base Trail Activation", minval=0.4, maxval=1.2)
+trailActivationRatio = isMNQ ? baseTrailActivation : isMCL ? baseTrailActivation * 1.1 : isMGC ? baseTrailActivation * 1.2 : baseTrailActivation
+
+// === HULL MOVING AVERAGES ===
+hma(src, len) =>
+    l = math.max(len, 2)
+    ta.wma(2 * ta.wma(src, math.round(l / 2)) - ta.wma(src, l), math.round(math.sqrt(l)))
+
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+
+adaptiveHullMain = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodMain * 0.7) : is2min ? math.round(hullPeriodMain * 0.8) : is3min ? math.round(hullPeriodMain * 0.85) : is5min ? math.round(hullPeriodMain * 0.9) : hullPeriodMain) : hullPeriodMain
+adaptiveHullFast = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodFast * 0.8) : is2min ? math.round(hullPeriodFast * 0.85) : is3min ? math.round(hullPeriodFast * 0.9) : hullPeriodFast) : hullPeriodFast
+adaptiveHullSignal = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodSignal * 0.8) : is2min ? math.round(hullPeriodSignal * 0.85) : is3min ? math.round(hullPeriodSignal * 0.9) : hullPeriodSignal) : hullPeriodSignal
+
+hullMain = hma(hullSrc, adaptiveHullMain)
+hullFast = hma(hullSrc, adaptiveHullFast)
+hullSignal = hma(hullSrc, adaptiveHullSignal)
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+slopeSignal = hullSignal > hullSignal[1] ? 1 : hullSignal < hullSignal[1] ? -1 : 0
+
+hullAnyBullish = slopeMain == 1 or slopeFast == 1
+hullAnyBearish = slopeMain == -1 or slopeFast == -1
+hullMicroTurn = slopeFast != slopeFast[1]
+hullAcceleration = (slopeMain == slopeFast) and (slopeFast == slopeSignal)
+
+// === ENVELOPE ===
+adaptiveEnvLength = autoTimeframeOptimization ? (is1min ? math.round(envLength * 0.8) : is2min ? math.round(envLength * 0.85) : is3min ? math.round(envLength * 0.9) : envLength) : envLength
+adaptiveEnvDev = autoTimeframeOptimization ? (is1min ? envDev * 0.9 : is2min ? envDev * 0.95 : is3min ? envDev * 0.98 : envDev) : envDev
+smaBasis = ta.sma(close, math.max(adaptiveEnvLength, 2))
+upperEnv = smaBasis * (1 + adaptiveEnvDev / 100)
+lowerEnv = smaBasis * (1 - adaptiveEnvDev / 100)
+
+microBreakoutUp = close > upperEnv * 1.001
+microBreakoutDn = close < lowerEnv * 0.999
+insideEnvelope = close < upperEnv and close > lowerEnv
+envelopeTouch = (close >= upperEnv * 1.0005) or (close <= lowerEnv * 0.9995)
+
+// === SUPER TREND ===
+ph = ta.pivothigh(pivotPeriod, pivotPeriod)
+pl = ta.pivotlow(pivotPeriod, pivotPeriod)
+
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrSuperTrend = ta.atr(atrPeriod)
+upBand = na(center) ? close - atrFactor * atrSuperTrend : center - atrFactor * atrSuperTrend
+dnBand = na(center) ? close + atrFactor * atrSuperTrend : center + atrFactor * atrSuperTrend
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+
+trendChange = trend != trend[1]
+bullishTrendStart = trend == 1 and trend[1] == -1
+bearishTrendStart = trend == -1 and trend[1] == 1
+
+// === MARKET REGIME DETECTION ===
+priceHigh = ta.highest(high, trendStrengthPeriod)
+priceLow = ta.lowest(low, trendStrengthPeriod)
+priceRange = priceHigh - priceLow
+trendStrength = priceRange > 0 ? math.abs(close - close[trendStrengthPeriod]) / priceRange : 0.0
+strongTrend = trendStrength > 0.15
+rangingMarket = trendStrength < 0.08
+moderateTrend = not strongTrend and not rangingMarket
+
+currentVol = ta.atr(volatilityPeriod)
+avgVol = ta.sma(ta.atr(volatilityPeriod), volatilityPeriod)
+highVolatility = currentVol > avgVol * 1.1
+normalVolatility = not highVolatility
+
+// === ENHANCED INDICATORS ===
+volumeMA = ta.sma(volume, volumePeriod)
+volumeConfirm = not useVolumeFilter or volume > volumeMA * volumeMultiplier
+normalVolume = volume >= volumeMA * 0.5
+
+rsi = ta.rsi(close, rsiPeriod)
+stoch = ta.stoch(close, high, low, stochPeriod)
+stochK = ta.sma(stoch, 3)
+
+momentumBullish = not useMomentumFilter or rsi > 30
+momentumBearish = not useMomentumFilter or rsi < 70
+momentumNeutral = rsi > 20 and rsi < 80
+
+microMomentumBull = rsi > rsi[1] or stochK > stochK[1]
+microMomentumBear = rsi < rsi[1] or stochK < stochK[1]
+momentumAcceleration = (rsi > rsi[1]) and (rsi[1] > rsi[2])
+
+priceUp = close > close[1]
+priceDown = close < close[1]
+microRange = ta.highest(high, 3) - ta.lowest(low, 3)
+lowVolatilityBar = microRange < ta.atr(5) * 0.5
+
+// === ULTRA SIGNAL LOGIC ===
+microBuySignal = (priceUp and slopeFast == 1 and slopeMain == 1) or (close > smaBasis and trend == 1 and hullAnyBullish) or microBreakoutUp
+microSellSignal = (priceDown and slopeFast == -1 and slopeMain == -1) or (close < smaBasis and trend == -1 and hullAnyBearish) or microBreakoutDn
+
+instantBuySignal = instantSignals and ((hullMicroTurn and slopeFast == 1 and trend == 1) or (trendChange and trend == 1 and hullAnyBullish) or (envelopeTouch and slopeMain == 1))
+instantSellSignal = instantSignals and ((hullMicroTurn and slopeFast == -1 and trend == -1) or (trendChange and trend == -1 and hullAnyBearish) or (envelopeTouch and slopeMain == -1))
+
+scalpBuySignal = enableScalping and ((microMomentumBull and priceUp and slopeMain == 1) or (close > upperEnv and trend == 1) or (hullAcceleration and trend == 1))
+scalpSellSignal = enableScalping and ((microMomentumBear and priceDown and slopeMain == -1) or (close < lowerEnv and trend == -1) or (hullAcceleration and trend == -1))
+
+strongBuySignal = (hullAnyBullish and trend == 1 and momentumBullish and slopeMain == 1)
+strongSellSignal = (hullAnyBearish and trend == -1 and momentumBearish and slopeMain == -1)
+
+ultraBuySignal = strongBuySignal or (microBuySignal and momentumBullish) or (instantBuySignal and slopeMain == 1) or (scalpBuySignal and strongTrend)
+ultraSellSignal = strongSellSignal or (microSellSignal and momentumBearish) or (instantSellSignal and slopeMain == -1) or (scalpSellSignal and strongTrend)
+
+// === POSITION MANAGEMENT ===
+var int longPositions = 0
+var int shortPositions = 0
+var int totalPositions = 0
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    longPositions += 1
+    totalPositions += 1
+else if strategy.position_size < 0 and strategy.position_size[1] == 0
+    shortPositions += 1
+    totalPositions += 1
+else if strategy.position_size == 0 and strategy.position_size[1] != 0
+    if strategy.position_size[1] > 0
+        longPositions := math.max(0, longPositions - 1)
+    else
+        shortPositions := math.max(0, shortPositions - 1)
+    totalPositions := longPositions + shortPositions
+
+newDay = ta.change(time("D")) != 0
+if newDay
+    longPositions := 0
+    shortPositions := 0
+    totalPositions := 0
+
+// === DYNAMIC POSITION SIZING ===
+atr = ta.atr(10)
+baseStopDistance = atr * (is1min ? 1.4 : is3min ? 1.6 : 1.8)
+
+timeframeMultiplier =
+     autoTimeframeOptimization ?
+        (is1min ? tfMultiplier1m * scalpingMultiplier * sessionMultiplier :
+         is2min ? tfMultiplier2m * sessionMultiplier :
+         is3min ? tfMultiplier3m * sessionMultiplier :
+         is5min ? tfMultiplier5m * sessionMultiplier : 1.0 * sessionMultiplier)
+     : (1.0 * sessionMultiplier)
+
+var float riskMultiplier = 1.0
+if useDynamicSizing
+    if strongTrend and normalVolatility
+        riskMultiplier := math.min(volatilityMultiplier * winRateBoost * timeframeMultiplier, 3.5)
+    else if moderateTrend and ultraMode
+        riskMultiplier := 1.4 * timeframeMultiplier
+    else if rangingMarket
+        riskMultiplier := 1.8 * timeframeMultiplier
+    else
+        riskMultiplier := 1.2 * timeframeMultiplier
+
+effectiveRiskPercent = math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5)
+
+riskAmountDollars = strategy.equity * effectiveRiskPercent / 100
+futuresStopDistance = atr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6)
+stopDistanceDollars = math.max(futuresStopDistance * syminfo.pointvalue, 1.0)
+maxPositionValue = strategy.equity * maxPositionSize / 100
+
+minPositionSize = math.max(strategy.initial_capital * 0.003, 75)
+basePositionSizeRaw = math.max(riskAmountDollars / stopDistanceDollars, minPositionSize)
+basePositionSize = math.min(basePositionSizeRaw, maxPositionValue)
+
+pyramidPositionSize = (positionSizingMode == "Pyramid" and strategy.position_size != 0) ? (basePositionSize * pyramidScale) : basePositionSize
+finalPositionSize = math.min(pyramidPositionSize, strategy.equity * 0.18)
+
+// === ENTRY CONDITIONS ===
+canEnterLong = totalPositions < maxConcurrentTrades or not allowMultiplePositions
+canEnterShort = totalPositions < maxConcurrentTrades or not allowMultiplePositions
+
+// Daily PnL (safe) computed from day-start netprofit
+var float dayStartNetprofit = na
+if barstate.isfirst or newDay
+    dayStartNetprofit := strategy.netprofit
+dailyPnL = na(dayStartNetprofit) ? 0.0 : (strategy.netprofit - dayStartNetprofit)
+maxLossReached = dailyPnL < -(strategy.initial_capital * maxDailyLoss / 100)
+
+sessionAdjustedSignal = not enableSessionFilters or (isRegularSession or isPreMarket or isAfterHours)
+ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal
+ultraSellCondition = ultraSellSignal and sessionAdjustedSignal
+
+// With pyramiding=0 by default, fixed IDs keep exits consistent in strategy tester.
+longCondition = ultraBuyCondition and canEnterLong and not maxLossReached and (strategy.position_size == 0 or allowMultiplePositions)
+shortCondition = ultraSellCondition and canEnterShort and not maxLossReached and (strategy.position_size == 0 or allowMultiplePositions)
+
+if longCondition
+    strategy.entry("LONG", strategy.long, qty=finalPositionSize)
+
+if shortCondition
+    strategy.entry("SHORT", strategy.short, qty=finalPositionSize)
+
+// === ULTRA EXIT MANAGEMENT (kept same structure; repaired IDs) ===
+var int entryBar = na
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryBar := na
+
+holdingPeriod = (strategy.position_size != 0 and not na(entryBar)) ? (bar_index - entryBar) : 0
+maxHoldingReached = quickExitMode and holdingPeriod >= maxHoldingBars
+
+futuresTPDistance = atr * tpMultiplier
+ultraQuickTP = atr * (tpMultiplier * 0.5)
+
+if strategy.position_size > 0
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice - futuresStopDistance
+
+    if useEnhancedTP and useTP
+        tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+        strategy.exit("TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
+
+    if maxHoldingReached
+        strategy.close("LONG", comment="TIME_EXIT_L")
+
+    if useSL
+        if useSmartTrailing and close > entryPrice + (futuresTPDistance * trailActivationRatio)
+            trailDistance = atr * 0.6
+            strategy.exit("TRAIL_L", from_entry="LONG", stop=close - trailDistance)
+        else
+            strategy.exit("SL_L", from_entry="LONG", stop=stopLoss)
+
+if strategy.position_size < 0
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice + futuresStopDistance
+
+    if useEnhancedTP and useTP
+        tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+        strategy.exit("TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
+
+    if maxHoldingReached
+        strategy.close("SHORT", comment="TIME_EXIT_S")
+
+    if useSL
+        if useSmartTrailing and close < entryPrice - (futuresTPDistance * trailActivationRatio)
+            trailDistance = atr * 0.6
+            strategy.exit("TRAIL_S", from_entry="SHORT", stop=close + trailDistance)
+        else
+            strategy.exit("SL_S", from_entry="SHORT", stop=stopLoss)
+
+// ============================================================
+// 🔔 TRADERSPOST WEBHOOK ALERTS (FULL FIX)
+// - Exit guard prevents exit-only alerts when flat
+// - Forced contract tickers prevents *1! symbols in webhooks
+// - Uses router state synchronized to actual strategy entries by default
+// ============================================================
+
+tpGroup = "TradersPost (FULL FIX)"
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts", group=tpGroup)
+tpAlertOnlyMode = input.bool(false, "Alert-only mode (strategy state ignored)", group=tpGroup)
+tpStrategyName = input.string("MJV6", "TradersPost strategy name", group=tpGroup)
+tpNumericFormat = input.string("strings", "Numeric format", options=["strings", "numbers"], group=tpGroup)
+tpSameDirectionBehavior = input.string("ignore", "Same-direction signal behavior", options=["ignore", "add"], group=tpGroup)
+tpExitOnReverseSignal = input.bool(true, "Exit on reverse before new entry", group=tpGroup)
+tpEnableExitGuard = input.bool(true, "✅ Guard EXIT when flat", group=tpGroup)
+tpForceContractTicker = input.bool(true, "✅ Force contract ticker", group=tpGroup)
+
+// Contracts (update when rolling)
+tpMNQ = input.string("MNQH2026", "MNQ contract ticker", group=tpGroup)
+tpMCL = input.string("MCLH2026", "MCL contract ticker", group=tpGroup)
+tpMGC = input.string("MGCH2026", "MGC contract ticker", group=tpGroup)
+
+// IMPORTANT: this strategy sizes by CASH; for live futures routing you must pick contract qty.
+tpOrderQtyContracts = input.int(1, "Order quantity (contracts)", minval=1, maxval=50, group=tpGroup)
+
+tpNum(x) => tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpNumInt(x) => tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpSignalId(action, dir) => str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
+
+tpResolvedTicker() =>
+    instrumentName == "MNQ" ? tpMNQ :
+    instrumentName == "MCL" ? tpMCL :
+    instrumentName == "MGC" ? tpMGC :
+    syminfo.ticker
+
+tpActualTicker() =>
+    tpForceContractTicker ? tpResolvedTicker() : syminfo.ticker
+
+// Router state: what we believe TradersPost holds (authoritative for exit guard)
+var int tpStateDir = 0  // 1 long, -1 short, 0 flat
+var int tpStateQty = 0
+
+tpFlat() => tpStateDir == 0 or tpStateQty <= 0
+tpLong() => tpStateDir == 1 and tpStateQty > 0
+tpShort() => tpStateDir == -1 and tpStateQty > 0
+tpAllowExit() => (not tpEnableExitGuard) or (not tpFlat())
+
+// Deduplicate multiple alerts per bar
+var bool tpSentThisBar = false
+if barstate.isnew
+    tpSentThisBar := false
+
+// Default sync mode (recommended): update router state from actual strategy fills
+if not tpAlertOnlyMode
+    if strategy.position_size > 0 and strategy.position_size[1] == 0
+        tpStateDir := 1
+        tpStateQty := tpOrderQtyContracts
+    else if strategy.position_size < 0 and strategy.position_size[1] == 0
+        tpStateDir := -1
+        tpStateQty := tpOrderQtyContracts
+    else if strategy.position_size == 0 and strategy.position_size[1] != 0
+        tpStateDir := 0
+        tpStateQty := 0
+
+// Alert-only mode: update router state based on signals sent
+tpBuyMsg(qty) =>
+    '{' +
+    '"ticker":"' + tpActualTicker() + '",' +
+    '"action":"buy",' +
+    '"quantity":' + tpNumInt(qty) + ',' +
+    '"strategy":"' + tpStrategyName + '",' +
+    '"timeframe":"' + timeframe.period + '",' +
+    '"instrument":"' + instrumentName + '",' +
+    '"signal_id":"' + tpSignalId("buy","LONG") + '",' +
+    '"timestamp":"' + str.tostring(time) + '"' +
+    '}'
+tpSellMsg(qty) =>
+    '{' +
+    '"ticker":"' + tpActualTicker() + '",' +
+    '"action":"sell",' +
+    '"quantity":' + tpNumInt(qty) + ',' +
+    '"strategy":"' + tpStrategyName + '",' +
+    '"timeframe":"' + timeframe.period + '",' +
+    '"instrument":"' + instrumentName + '",' +
+    '"signal_id":"' + tpSignalId("sell","SHORT") + '",' +
+    '"timestamp":"' + str.tostring(time) + '"' +
+    '}'
+tpExitMsg(qty, dir) =>
+    '{' +
+    '"ticker":"' + tpActualTicker() + '",' +
+    '"action":"exit",' +
+    '"quantity":' + tpNumInt(qty) + ',' +
+    '"strategy":"' + tpStrategyName + '",' +
+    '"timeframe":"' + timeframe.period + '",' +
+    '"instrument":"' + instrumentName + '",' +
+    '"signal_id":"' + tpSignalId("exit", dir) + '",' +
+    '"timestamp":"' + str.tostring(time) + '"' +
+    '}'
+
+// In alert-only mode, we emit alerts based on entry signals.
+if tpAlertOnlyMode and enableTradersPostAlerts and not tpSentThisBar
+    // Reverse protection: exit first if opposite signal while in position
+    if tpExitOnReverseSignal and ((longCondition and tpShort()) or (shortCondition and tpLong()))
+        if tpAllowExit()
+            alert(tpExitMsg(tpStateQty, tpShort() ? "SHORT" : "LONG"), alert.freq_once_per_bar)
+            tpStateDir := 0
+            tpStateQty := 0
+            tpSentThisBar := true
+
+    // Long entry
+    if not tpSentThisBar and longCondition and tpFlat()
+        alert(tpBuyMsg(tpOrderQtyContracts), alert.freq_once_per_bar)
+        tpStateDir := 1
+        tpStateQty := tpOrderQtyContracts
+        tpSentThisBar := true
+
+    // Short entry
+    if not tpSentThisBar and shortCondition and tpFlat()
+        alert(tpSellMsg(tpOrderQtyContracts), alert.freq_once_per_bar)
+        tpStateDir := -1
+        tpStateQty := tpOrderQtyContracts
+        tpSentThisBar := true
+
+    // Same-direction “add”
+    if not tpSentThisBar and tpSameDirectionBehavior == "add"
+        if longCondition and tpLong()
+            addMsg = str.replace(tpBuyMsg(tpOrderQtyContracts), '"action":"buy"', '"action":"add"')
+            alert(addMsg, alert.freq_once_per_bar)
+            tpStateQty += tpOrderQtyContracts
+            tpSentThisBar := true
+        else if shortCondition and tpShort()
+            addMsg = str.replace(tpSellMsg(tpOrderQtyContracts), '"action":"sell"', '"action":"add"')
+            alert(addMsg, alert.freq_once_per_bar)
+            tpStateQty += tpOrderQtyContracts
+            tpSentThisBar := true
+
+// In normal (strategy-synced) mode, emit EXIT alerts only when the strategy actually exits
+// AND router says a position exists (exit guard).
+if (not tpAlertOnlyMode) and enableTradersPostAlerts and not tpSentThisBar
+    if strategy.position_size == 0 and strategy.position_size[1] != 0
+        // strategy just went flat
+        prevDir = strategy.position_size[1] > 0 ? "LONG" : "SHORT"
+        if tpAllowExit()
+            alert(tpExitMsg(tpOrderQtyContracts, prevDir), alert.freq_once_per_bar)
+        tpSentThisBar := true
+
+// === PLOTS ===
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull MA Main")
+plot(hullFast, color=color.gray, title="Hull MA Fast")
+plot(upperEnv, color=color.orange, title="Envelope Upper")
+plot(lowerEnv, color=color.orange, title="Envelope Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+
+bgcolor(ultraMode ? color.new(color.red, 98) : na, title="Ultra Mode")
+bgcolor(microScalping ? color.new(color.yellow, 98) : na, title="Micro Scalping")
+bgcolor(isMNQ ? color.new(color.blue, 98) : isMCL ? color.new(color.orange, 98) : isMGC ? color.new(color.yellow, 98) : na, title="Futures Type")
+bgcolor(isRegularSession ? color.new(color.green, 98) : isPreMarket ? color.new(color.purple, 98) : isAfterHours ? color.new(color.gray, 98) : na, title="Session")
+
+plotshape(longCondition and scalpBuySignal, location=location.belowbar, color=color.lime, style=shape.triangleup, text="SCALP", size=size.small)
+plotshape(longCondition and instantBuySignal, location=location.belowbar, color=color.yellow, style=shape.labelup, text="INSTANT", size=size.small)
+plotshape(longCondition and microBuySignal, location=location.belowbar, color=color.aqua, style=shape.arrowup, text="MICRO", size=size.tiny)
+
+plotshape(shortCondition and scalpSellSignal, location=location.abovebar, color=color.red, style=shape.triangledown, text="SCALP", size=size.small)
+plotshape(shortCondition and instantSellSignal, location=location.abovebar, color=color.orange, style=shape.labeldown, text="INSTANT", size=size.small)
+plotshape(shortCondition and microSellSignal, location=location.abovebar, color=color.fuchsia, style=shape.arrowdown, text="MICRO", size=size.tiny)
+
+plot(totalPositions, "Total Positions", color=color.new(color.blue, 80), display=display.data_window)
+plot(effectiveRiskPercent, "Effective Risk %", color=color.new(color.orange, 80), display=display.data_window)
+plot(timeframeMultiplier, "TF Multiplier", color=color.new(color.aqua, 80), display=display.data_window)
+plot(holdingPeriod, "Holding Period", color=color.new(color.purple, 80), display=display.data_window)
+plot(finalPositionSize, "Position Size", color=color.new(color.yellow, 80), display=display.data_window)
+plot(tradeFrequencyBoost, "Trade Frequency", color=color.new(color.lime, 80), display=display.data_window)
+plot(sessionMultiplier, "Session Multiplier", color=color.new(color.maroon, 80), display=display.data_window)
+plot(isMNQ ? 1 : isMCL ? 2 : isMGC ? 3 : 0, "Instrument", color=color.new(color.white, 80), display=display.data_window)
+

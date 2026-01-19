@@ -19,6 +19,11 @@ Common causes:
 - `pine/traderspost_exit_guard.pine`: a **drop‑in module** that:
   - prevents sending `action:"exit"` when you’re flat (using either strategy position or your simulated TP position state)
   - optionally forces `ticker` to your configured futures contract (ex: `MNQH2026`) instead of `MNQ1!`
+- `pine/TRADERSPOST_FULL_FIX_BLOCK.pine`: a **copy/paste router block** you can drop into larger bots to fully fix TradersPost routing (exit guard + forced contract tickers + router state).
+- `pine/MJV6_Micro_Futures_Ultra_Strategy_FIXED.pine`: a **complete, compiling strategy** based on your pasted MJV6 snippet, with:
+  - repaired entry/exit IDs so strategy tester exits work
+  - fixed time/session + pivot compile issues
+  - fully fixed TradersPost routing (exit guard + forced contract tickers)
 
 ## How to use
 
