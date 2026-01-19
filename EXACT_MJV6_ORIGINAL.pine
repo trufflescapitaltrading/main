@@ -1,0 +1,496 @@
+//@version=5
+strategy("MJV6 Micro Equity Futures Ultra Strategy (MYM/M2K/MES)", overlay=true, initial_capital=25000, default_qty_type=strategy.cash, default_qty_value=1000)
+// === INSTRUMENT DETECTION & OPTIMIZATION ===
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isMicroFutures = isMYM or isM2K or isMES
+// Instrument-specific multipliers for trade frequency - Tuned for equity micros (M2K high vol like MNQ, MYM mid like MCL, MES stable like MGC)
+m2kMultiplier = input.float(1.8, "M2K Trade Multiplier", minval=1.2, maxval=3.0)
+mymMultiplier = input.float(1.6, "MYM Trade Multiplier", minval=1.2, maxval=2.5)
+mesMultiplier = input.float(1.4, "MES Trade Multiplier", minval=1.0, maxval=2.2)
+// === ULTRA TRADING INPUTS ===
+// Hull MAs - Instrument-optimized for BALANCED signals (less overwhelming)
+hullSrc = input.source(close, "Hull Source")
+baseHullMain = input.int(25, "Base Hull MA (Main)", minval=15, maxval=40) // Increased for less signals
+baseHullFast = input.int(9, "Base Hull MA (Fast)", minval=6, maxval=15) // Increased for stability
+baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22) // Increased for confirmation
+// Dynamic Hull periods based on instrument
+hullPeriodMain = isM2K ? math.round(baseHullMain * 0.7) : isMYM ? math.round(baseHullMain * 0.9) : isMES ? baseHullMain : baseHullMain
+hullPeriodFast = isM2K ? math.round(baseHullFast * 0.8) : isMYM ? math.round(baseHullFast * 0.9) : isMES ? baseHullFast : baseHullFast
+hullPeriodSignal = isM2K ? math.round(baseHullSignal * 0.8) : isMYM ? math.round(baseHullSignal * 0.9) : isMES ? baseHullSignal : baseHullSignal
+// Envelope - Instrument-specific sensitivity - BALANCED for quality signals
+baseEnvLength = input.int(12, "Base Envelope Period", minval=8, maxval=20) // Increased for smoother signals
+baseEnvDev = input.float(0.8, "Base Envelope Deviation %", minval=0.5, maxval=1.5) // Increased for quality breakouts
+// Optimized envelope for each instrument - LESS sensitive for manageable trades
+envLength = isM2K ? math.round(baseEnvLength * 0.9) : isMYM ? baseEnvLength : isMES ? math.round(baseEnvLength * 1.1) : baseEnvLength
+envDev = isM2K ? baseEnvDev * 0.85 : isMYM ? baseEnvDev * 1.0 : isMES ? baseEnvDev * 0.95 : baseEnvDev
+// SuperTrend - BALANCED responsiveness for quality signals
+basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4) // Increased for stability
+baseAtrFactor = input.float(2.2, "Base ATR Factor", minval=1.8, maxval=3.0) // Increased for less noise
+baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12) // Increased for smoother ATR
+// Instrument-optimized SuperTrend - LESS aggressive
+pivotPeriod = basePivotPeriod
+atrFactor = isM2K ? baseAtrFactor * 0.95 : isMYM ? baseAtrFactor * 1.05 : isMES ? baseAtrFactor : baseAtrFactor
+atrPeriod = isM2K ? math.round(baseAtrPeriod * 0.9) : isMYM ? baseAtrPeriod : isMES ? math.round(baseAtrPeriod * 1.1) : baseAtrPeriod
+// Micro Futures Risk Management - Higher capital for better leverage
+baseRiskPercent = input.float(0.6, "Base Risk per Trade (%)", minval=0.2, maxval=2.0)
+instrumentRiskMultiplier = isM2K ? 1.3 : isMYM ? 1.1 : isMES ? 1.0 : 1.0
+adjustedRiskPercent = baseRiskPercent * instrumentRiskMultiplier
+useTP = input.bool(true, "Use Take Profit Levels")
+useSL = input.bool(true, "Use Stop Loss")
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=2.0, maxval=8.0)
+maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5.0, maxval=25.0)
+// === ULTRA MODE CONTROLS ===
+ultraMode = input.bool(true, "Enable Ultra Trading Mode")
+microScalping = input.bool(true, "Enable Micro Scalping")
+instantSignals = input.bool(true, "Enable Instant Signals")
+minimalFilters = input.bool(true, "Minimal Signal Filters")
+// Dynamic trade frequency based on instrument volatility - REDUCED for manageable backtesting
+baseTradeFrequency = input.float(1.3, "Base Trade Frequency", minval=1.0, maxval=2.5) // Significantly reduced
+tradeFrequencyBoost = isM2K ? baseTradeFrequency * m2kMultiplier : isMYM ? baseTradeFrequency * mymMultiplier : isMES ? baseTradeFrequency * mesMultiplier : baseTradeFrequency
+allowMultiplePositions = input.bool(false, "Allow Multiple Positions") // Disabled for simplicity
+baseMaxTrades = input.int(1, "Base Max Concurrent Trades", minval=1, maxval=2) // Reduced to 1-2 max
+maxConcurrentTrades = isM2K ? baseMaxTrades + 1 : isMYM ? baseMaxTrades : isMES ? baseMaxTrades : baseMaxTrades
+// === FUTURES-SPECIFIC SCALPING ===
+enableScalping = input.bool(true, "Enable Scalping Mode")
+scalpingTimeframe = input.string("1m", "Scalping Timeframe", options=["1m", "2m", "3m", "5m"])
+// Instrument-specific scalping multipliers - REDUCED for manageable testing
+m2kScalpMultiplier = input.float(2.2, "M2K Scalp Multiplier", minval=1.5, maxval=3.5) // Significantly reduced
+mymScalpMultiplier = input.float(1.8, "MYM Scalp Multiplier", minval=1.2, maxval=3.0) // Reduced
+mesScalpMultiplier = input.float(1.6, "MES Scalp Multiplier", minval=1.2, maxval=2.8) // Reduced
+scalpingMultiplier = isM2K ? m2kScalpMultiplier : isMYM ? mymScalpMultiplier : isMES ? mesScalpMultiplier : 1.8
+quickExitMode = input.bool(true, "Quick Exit Mode")
+baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50) // Increased for longer holds
+maxHoldingBars = isM2K ? baseMaxHolding : isMYM ? math.round(baseMaxHolding * 1.2) : isMES ? math.round(baseMaxHolding * 1.4) : baseMaxHolding
+// === SESSION-BASED OPTIMIZATION ===
+enableSessionFilters = input.bool(true, "Enable Session Filters")
+// US equity futures sessions (adjusted pre-market for Globex overnight)
+preMarketStart = input.int(1800, "Pre-Market Start (ET)", minval=0, maxval=2359) // Extended to 6PM ET
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
+afterHoursEnd = input.int(1700, "After Hours End (ET)", minval=0, maxval=2359)
+// Current time in ET (approximate)
+currentTime = math.round(hour * 100 + minute)
+isPreMarket = enableSessionFilters and currentTime >= preMarketStart and currentTime < regularSessionStart
+isRegularSession = enableSessionFilters and currentTime >= regularSessionStart and currentTime <= regularSessionEnd
+isAfterHours = enableSessionFilters and currentTime > regularSessionEnd and currentTime <= afterHoursEnd
+// Session-based trade frequency adjustments - MORE restrictive for manageable trades
+sessionMultiplier = if not enableSessionFilters
+    1.0
+else if isRegularSession
+    1.1 // Slightly higher frequency during regular hours (reduced from 1.3)
+else if isPreMarket or isAfterHours
+    0.7 // Lower frequency in extended hours (reduced from 0.9)
+else
+    0.5 // Much reduced frequency outside main sessions
+// === MICRO SIGNAL DETECTION ===
+enableMicroSignals = input.bool(true, "Enable Micro Signals")
+// Instrument-specific noise thresholds
+m2kNoiseThreshold = input.float(0.015, "M2K Noise Threshold %", minval=0.005, maxval=0.05)
+mymNoiseThreshold = input.float(0.025, "MYM Noise Threshold %", minval=0.01, maxval=0.08)
+mesNoiseThreshold = input.float(0.02, "MES Noise Threshold %", minval=0.008, maxval=0.06)
+priceNoiseThreshold = isM2K ? m2kNoiseThreshold : isMYM ? mymNoiseThreshold : isMES ? mesNoiseThreshold : 0.02
+// Volume thresholds optimized for futures
+baseVolumeThreshold = input.float(0.6, "Base Volume Threshold", minval=0.3, maxval=1.2)
+volumeThreshold = isM2K ? baseVolumeThreshold * 0.8 : isMYM ? baseVolumeThreshold * 1.1 : isMES ? baseVolumeThreshold : baseVolumeThreshold
+// Momentum sensitivity for high-frequency futures
+baseMomentumSensitivity = input.float(1.8, "Base Momentum Sensitivity", minval=1.0, maxval=3.5)
+momentumSensitivity = isM2K ? baseMomentumSensitivity * 1.3 : isMYM ? baseMomentumSensitivity * 1.1 : isMES ? baseMomentumSensitivity : baseMomentumSensitivity
+// Multi-Position Management for Futures
+positionSizingMode = input.string("Dynamic", "Position Sizing Mode", options=["Fixed", "Dynamic", "Pyramid"])
+pyramidLevels = input.int(2, "Pyramid Levels", minval=1, maxval=4) // Reduced for futures
+pyramidScale = input.float(0.6, "Pyramid Scale Factor", minval=0.4, maxval=0.8)
+// === FUTURES TIMEFRAME OPTIMIZATION ===
+autoTimeframeOptimization = input.bool(true, "Auto Timeframe Optimization")
+// Aggressive multipliers for micro futures - SIGNIFICANTLY REDUCED
+baseTfMultiplier1m = input.float(1.8, "Base 1m TF Multiplier", minval=1.2, maxval=3.0) // Massively reduced
+baseTfMultiplier2m = input.float(1.6, "Base 2m TF Multiplier", minval=1.0, maxval=2.5) // Reduced
+baseTfMultiplier3m = input.float(1.4, "Base 3m TF Multiplier", minval=1.0, maxval=2.2) // Reduced
+baseTfMultiplier5m = input.float(1.2, "Base 5m TF Multiplier", minval=1.0, maxval=2.0) // Reduced
+// Instrument-specific timeframe multipliers - MUCH LESS aggressive
+tfMultiplier1m = isM2K ? baseTfMultiplier1m * 1.1 : isMYM ? baseTfMultiplier1m : isMES ? baseTfMultiplier1m * 0.9 : baseTfMultiplier1m
+tfMultiplier2m = isM2K ? baseTfMultiplier2m * 1.05 : isMYM ? baseTfMultiplier2m : isMES ? baseTfMultiplier2m * 0.95 : baseTfMultiplier2m
+tfMultiplier3m = isM2K ? baseTfMultiplier3m : isMYM ? baseTfMultiplier3m * 0.95 : isMES ? baseTfMultiplier3m * 0.9 : baseTfMultiplier3m
+tfMultiplier5m = isM2K ? baseTfMultiplier5m : isMYM ? baseTfMultiplier5m * 0.95 : isMES ? baseTfMultiplier5m * 0.9 : baseTfMultiplier5m
+// === ENHANCED PROFIT OPTIMIZATION ===
+useDynamicSizing = input.bool(true, "Use Dynamic Position Sizing")
+// Futures-optimized volatility handling
+baseVolatilityMultiplier = input.float(2.2, "Base Volatility Multiplier", minval=1.5, maxval=4.0)
+volatilityMultiplier = isM2K ? baseVolatilityMultiplier * 1.2 : isMYM ? baseVolatilityMultiplier * 1.1 : isMES ? baseVolatilityMultiplier : baseVolatilityMultiplier
+baseWinRateBoost = input.float(1.8, "Base Win Rate Boost", minval=1.2, maxval=3.0)
+winRateBoost = isM2K ? baseWinRateBoost * 1.1 : isMYM ? baseWinRateBoost : isMES ? baseWinRateBoost * 0.95 : baseWinRateBoost
+// Market Regime Detection - Futures-optimized
+useMarketRegime = input.bool(true, "Use Market Regime Detection")
+baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12)
+baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12)
+trendStrengthPeriod = isM2K ? baseTrendPeriod : isMYM ? math.round(baseTrendPeriod * 1.2) : isMES ? math.round(baseTrendPeriod * 1.3) : baseTrendPeriod
+volatilityPeriod = isM2K ? baseVolPeriod : isMYM ? math.round(baseVolPeriod * 1.1) : isMES ? math.round(baseVolPeriod * 1.2) : baseVolPeriod
+// Futures-specific short trading
+useUltraShorts = input.bool(true, "Ultra Short Trading")
+baseShortVolumeThreshold = input.float(0.7, "Base Short Volume Threshold", minval=0.4, maxval=1.5)
+shortVolumeThreshold = isM2K ? baseShortVolumeThreshold * 0.9 : isMYM ? baseShortVolumeThreshold * 1.1 : isMES ? baseShortVolumeThreshold : baseShortVolumeThreshold
+baseShortMomentumThreshold = input.float(22, "Base Short Momentum", minval=15, maxval=40)
+shortMomentumThreshold = isM2K ? baseShortMomentumThreshold * 0.9 : isMYM ? baseShortMomentumThreshold : isMES ? baseShortMomentumThreshold * 1.1 : baseShortMomentumThreshold
+// Volume Filter - Minimal for futures liquidity
+useVolumeFilter = input.bool(false, "Use Volume Filter")
+baseVolumePeriod = input.int(6, "Base Volume Period", minval=4, maxval=12)
+volumePeriod = isM2K ? baseVolumePeriod : isMYM ? math.round(baseVolumePeriod * 1.1) : isMES ? math.round(baseVolumePeriod * 1.2) : baseVolumePeriod
+volumeMultiplier = volumeThreshold
+// Momentum Confirmation - Futures-optimized
+useMomentumFilter = input.bool(false, "Use Momentum Filter")
+baseRsiPeriod = input.int(6, "Base RSI Period", minval=4, maxval=10)
+rsiPeriod = isM2K ? baseRsiPeriod : isMYM ? math.round(baseRsiPeriod * 1.1) : isMES ? math.round(baseRsiPeriod * 1.2) : baseRsiPeriod
+rsiOverbought = input.float(78, "RSI Overbought", minval=70, maxval=85)
+rsiOversold = input.float(22, "RSI Oversold", minval=15, maxval=30)
+stochPeriod = rsiPeriod
+// Take Profit Strategy - Ultra fast for futures
+useEnhancedTP = input.bool(true, "Use Enhanced Take Profit")
+baseTpMultiplier = input.float(1.0, "Base TP Multiplier", minval=0.6, maxval=2.0)
+tpMultiplier = isM2K ? baseTpMultiplier * 0.9 : isMYM ? baseTpMultiplier * 1.1 : isMES ? baseTpMultiplier : baseTpMultiplier
+useAdaptiveTP = input.bool(true, "Use Adaptive TP Levels")
+useSmartTrailing = input.bool(true, "Use Smart Trailing Stop")
+baseTrailActivation = input.float(0.7, "Base Trail Activation", minval=0.4, maxval=1.2)
+trailActivationRatio = isM2K ? baseTrailActivation : isMYM ? baseTrailActivation * 1.1 : isMES ? baseTrailActivation * 1.2 : baseTrailActivation
+// === HULL MOVING AVERAGES ===
+hma(src, len) => ta.wma(2 * ta.wma(src, math.round(len / 2)) - ta.wma(src, len), math.round(math.sqrt(len)))
+// Timeframe Detection with futures-specific support
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+isLowerTF = is1min or is2min or is3min or is5min
+// Ultra-adaptive Hull Periods for futures - LESS aggressive adaptation
+adaptiveHullMain = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodMain * 0.7) // Less aggressive on 1m (was 0.4)
+    else if is2min
+        math.round(hullPeriodMain * 0.8) // Less aggressive (was 0.5)
+    else if is3min
+        math.round(hullPeriodMain * 0.85) // Less aggressive (was 0.6)
+    else if is5min
+        math.round(hullPeriodMain * 0.9) // Less aggressive (was 0.8)
+    else
+        hullPeriodMain
+else
+    hullPeriodMain
+adaptiveHullFast = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodFast * 0.8) // Less aggressive (was 0.5)
+    else if is2min
+        math.round(hullPeriodFast * 0.85) // Less aggressive (was 0.6)
+    else if is3min
+        math.round(hullPeriodFast * 0.9) // Less aggressive (was 0.7)
+    else
+        hullPeriodFast
+else
+    hullPeriodFast
+adaptiveHullSignal = if autoTimeframeOptimization
+    if is1min
+        math.round(hullPeriodSignal * 0.8) // Less aggressive (was 0.5)
+    else if is2min
+        math.round(hullPeriodSignal * 0.85) // Less aggressive (was 0.6)
+    else if is3min
+        math.round(hullPeriodSignal * 0.9) // Less aggressive (was 0.7)
+    else
+        hullPeriodSignal
+else
+    hullPeriodSignal
+hullMain = hma(hullSrc, adaptiveHullMain)
+hullFast = hma(hullSrc, adaptiveHullFast)
+hullSignal = hma(hullSrc, adaptiveHullSignal)
+// Ultra-sensitive Hull Slopes
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+slopeSignal = hullSignal > hullSignal[1] ? 1 : hullSignal < hullSignal[1] ? -1 : 0
+// Micro patterns for ultra trading
+hullAnyBullish = slopeMain == 1 or slopeFast == 1 // Any bullish signal
+hullAnyBearish = slopeMain == -1 or slopeFast == -1 // Any bearish signal
+hullMicroTurn = slopeFast != slopeFast[1] // Immediate turns
+hullAcceleration = (slopeMain == slopeFast) and (slopeFast == slopeSignal) // Strong acceleration
+// === ENVELOPE ===
+// Ultra-sensitive envelope for futures - LESS sensitive for quality signals
+adaptiveEnvLength = if autoTimeframeOptimization
+    if is1min
+        math.round(envLength * 0.8) // Less aggressive (was 0.6)
+    else if is2min
+        math.round(envLength * 0.85) // Less aggressive (was 0.7)
+    else if is3min
+        math.round(envLength * 0.9) // Less aggressive (was 0.8)
+    else
+        envLength
+else
+    envLength
+adaptiveEnvDev = if autoTimeframeOptimization
+    if is1min
+        envDev * 0.9 // Less tight on 1m for quality signals (was 0.7)
+    else if is2min
+        envDev * 0.95 // Less aggressive (was 0.8)
+    else if is3min
+        envDev * 0.98 // Less aggressive (was 0.9)
+    else
+        envDev
+else
+    envDev
+smaBasis = ta.sma(close, adaptiveEnvLength)
+upperEnv = smaBasis * (1 + adaptiveEnvDev / 100)
+lowerEnv = smaBasis * (1 - adaptiveEnvDev / 100)
+// Micro breakout patterns - STRICTER for quality signals
+microBreakoutUp = close > upperEnv * 1.001 // Actually breaking out (was 0.998)
+microBreakoutDn = close < lowerEnv * 0.999 // Actually breaking down (was 1.002)
+insideEnvelope = close < upperEnv and close > lowerEnv
+envelopeTouch = (close >= upperEnv * 1.0005) or (close <= lowerEnv * 0.9995) // Stricter touch detection
+// === SUPER TREND ===
+ph = ta.pivothigh(pivotPeriod, pivotPeriod)
+pl = ta.pivotlow(pivotPeriod, pivotPeriod)
+var float center = na
+lastpp = ph ? ph : pl ? pl : na
+if lastpp and not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2 // Faster response
+else if na(center)
+    center := close
+atrSuperTrend = ta.atr(atrPeriod)
+upBand = na(center) ? close - atrFactor * atrSuperTrend : center - atrFactor * atrSuperTrend
+dnBand = na(center) ? close + atrFactor * atrSuperTrend : center + atrFactor * atrSuperTrend
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+// Micro trend changes
+trendChange = trend != trend[1]
+bullishTrendStart = trend == 1 and trend[1] == -1
+bearishTrendStart = trend == -1 and trend[1] == 1
+// === MARKET REGIME DETECTION ===
+priceRange = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
+trendStrength = math.abs(close - close[trendStrengthPeriod]) / priceRange
+strongTrend = trendStrength > 0.12 // Slightly loosened for equities
+rangingMarket = trendStrength < 0.08 // Much lower
+moderateTrend = not strongTrend and not rangingMarket
+// Ultra-responsive volatility
+currentVol = ta.atr(volatilityPeriod)
+avgVol = ta.sma(ta.atr(volatilityPeriod), volatilityPeriod)
+highVolatility = currentVol > avgVol * 1.1 // Lower threshold
+normalVolatility = not highVolatility
+// === ENHANCED INDICATORS ===
+// Minimal volume requirements
+volumeMA = ta.sma(volume, volumePeriod)
+volumeConfirm = not useVolumeFilter or volume > volumeMA * volumeMultiplier
+normalVolume = volume >= volumeMA * 0.5 // Very low bar
+// Ultra-lenient momentum
+rsi = ta.rsi(close, rsiPeriod)
+stoch = ta.stoch(close, high, low, stochPeriod)
+stochK = ta.sma(stoch, 3)
+momentumBullish = not useMomentumFilter or rsi > 30 // Very lenient
+momentumBearish = not useMomentumFilter or rsi < 70 // Very lenient
+momentumNeutral = rsi > 20 and rsi < 80 // Ultra-wide neutral
+// Micro momentum patterns
+microMomentumBull = rsi > rsi[1] or stochK > stochK[1] // Any upward movement
+microMomentumBear = rsi < rsi[1] or stochK < stochK[1] // Any downward movement
+momentumAcceleration = (rsi > rsi[1]) and (rsi[1] > rsi[2])
+// Price action micro patterns
+priceUp = close > close[1]
+priceDown = close < close[1]
+microRange = ta.highest(high, 3) - ta.lowest(low, 3)
+lowVolatilityBar = microRange < ta.atr(5) * 0.5
+// === ULTRA SIGNAL LOGIC ===
+// STRONGER signal requirements to reduce trade frequency
+// Micro base signals - REQUIRE CONFIRMATION
+microBuySignal = (priceUp and slopeFast == 1 and slopeMain == 1) or (close > smaBasis and trend == 1 and hullAnyBullish) or microBreakoutUp
+microSellSignal = (priceDown and slopeFast == -1 and slopeMain == -1) or (close < smaBasis and trend == -1 and hullAnyBearish) or microBreakoutDn
+// Instant signals for ultra mode - REQUIRE MORE CONFIRMATION
+instantBuySignal = instantSignals and ((hullMicroTurn and slopeFast == 1 and trend == 1) or (trendChange and trend == 1 and hullAnyBullish) or (envelopeTouch and slopeMain == 1))
+instantSellSignal = instantSignals and ((hullMicroTurn and slopeFast == -1 and trend == -1) or (trendChange and trend == -1 and hullAnyBearish) or (envelopeTouch and slopeMain == -1))
+// Scalping signals - STRICTER REQUIREMENTS
+scalpBuySignal = enableScalping and ((microMomentumBull and priceUp and slopeMain == 1) or (close > upperEnv and trend == 1) or (hullAcceleration and trend == 1))
+scalpSellSignal = enableScalping and ((microMomentumBear and priceDown and slopeMain == -1) or (close < lowerEnv and trend == -1) or (hullAcceleration and trend == -1))
+// MUCH STRICTER main signals - require multiple confirmations
+strongBuySignal = (hullAnyBullish and trend == 1 and momentumBullish and slopeMain == 1)
+strongSellSignal = (hullAnyBearish and trend == -1 and momentumBearish and slopeMain == -1)
+// Final ultra signals with MUCH HIGHER bar for entry
+ultraBuySignal = strongBuySignal or (microBuySignal and momentumBullish) or (instantBuySignal and slopeMain == 1) or (scalpBuySignal and strongTrend)
+ultraSellSignal = strongSellSignal or (microSellSignal and momentumBearish) or (instantSellSignal and slopeMain == -1) or (scalpSellSignal and strongTrend)
+// === POSITION MANAGEMENT ===
+// Count current positions
+var int longPositions = 0
+var int shortPositions = 0
+var int totalPositions = 0
+// Update position counts
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    longPositions := longPositions + 1
+    totalPositions := totalPositions + 1
+else if strategy.position_size < 0 and strategy.position_size[1] == 0
+    shortPositions := shortPositions + 1
+    totalPositions := totalPositions + 1
+else if strategy.position_size == 0 and strategy.position_size[1] != 0
+    if strategy.position_size[1] > 0
+        longPositions := math.max(0, longPositions - 1)
+    else
+        shortPositions := math.max(0, shortPositions - 1)
+    totalPositions := longPositions + shortPositions
+// Reset daily counters
+if dayofweek != dayofweek[1]
+    longPositions := 0
+    shortPositions := 0
+    totalPositions := 0
+// === DYNAMIC POSITION SIZING ===
+atr = ta.atr(10) // Increased from 6 for more stable ATR
+baseStopDistance = atr * (is1min ? 1.4 : is3min ? 1.6 : 1.8) // Wider stops for quality trades
+// Timeframe-specific multipliers for futures
+timeframeMultiplier = if autoTimeframeOptimization
+    if is1min
+        tfMultiplier1m * scalpingMultiplier * sessionMultiplier
+    else if is2min
+        tfMultiplier2m * sessionMultiplier
+    else if is3min
+        tfMultiplier3m * sessionMultiplier
+    else if is5min
+        tfMultiplier5m * sessionMultiplier
+    else
+        1.0 * sessionMultiplier
+else
+    1.0 * sessionMultiplier
+// Ultra-dynamic position sizing for futures - REDUCED multipliers
+var float riskMultiplier = 1.0
+if useDynamicSizing
+    if strongTrend and normalVolatility
+        riskMultiplier := math.min(volatilityMultiplier * winRateBoost * timeframeMultiplier, 3.5) // Reduced cap
+    else if moderateTrend and ultraMode
+        riskMultiplier := 1.4 * timeframeMultiplier // Reduced from 1.8
+    else if rangingMarket
+        riskMultiplier := 1.8 * timeframeMultiplier // Reduced from 2.5
+    else
+        riskMultiplier := 1.2 * timeframeMultiplier
+effectiveRiskPercent = math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5) // Reduced cap
+// Micro position sizing optimized for futures margin
+riskAmountDollars = strategy.equity * effectiveRiskPercent / 100
+futuresStopDistance = atr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6) // Wider stops for less trades
+stopDistanceDollars = futuresStopDistance * syminfo.pointvalue
+maxPositionValue = strategy.equity * maxPositionSize / 100
+// Adjusted minimum position for futures
+minPositionSize = math.max(strategy.initial_capital * 0.003, 75) // Higher minimum for futures
+basePositionSizeRaw = math.max(riskAmountDollars / stopDistanceDollars, minPositionSize)
+basePositionSize = math.min(basePositionSizeRaw, maxPositionValue)
+// Pyramid position sizing
+pyramidPositionSize = if positionSizingMode == "Pyramid" and strategy.position_size != 0
+    basePositionSize * pyramidScale
+else
+    basePositionSize
+// Final position size optimized for futures leverage
+finalPositionSize = math.min(pyramidPositionSize, strategy.equity * 0.18) // Higher for futures margin efficiency
+// === ENTRY CONDITIONS ===
+// Enhanced position management for futures
+canEnterLong = totalPositions < maxConcurrentTrades or not allowMultiplePositions
+canEnterShort = totalPositions < maxConcurrentTrades or not allowMultiplePositions
+// Daily loss protection with higher tolerance for futures
+var float dailyPnL = 0.0
+if dayofweek != dayofweek[1]
+    dailyPnL := 0.0
+dailyPnL += strategy.netprofit - strategy.netprofit[1]
+maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
+// Futures-optimized entry conditions with session awareness
+sessionAdjustedSignal = not enableSessionFilters or (isRegularSession or isPreMarket or isAfterHours)
+ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal
+ultraSellCondition = ultraSellSignal and sessionAdjustedSignal
+longCondition = ultraBuyCondition and canEnterLong and not maxLossReached and (strategy.position_size == 0 or allowMultiplePositions)
+shortCondition = ultraSellCondition and canEnterShort and not maxLossReached and (strategy.position_size == 0 or allowMultiplePositions)
+// Generate unique entry IDs for futures positions
+entryId = str.tostring(bar_index) + (isMYM ? "_MYM" : isM2K ? "_M2K" : isMES ? "_MES" : "")
+if longCondition
+    strategy.entry("Long_" + entryId, strategy.long, qty=finalPositionSize)
+   
+if shortCondition
+    strategy.entry("Short_" + entryId, strategy.short, qty=finalPositionSize)
+// === ULTRA EXIT MANAGEMENT ===
+// Holding period exit for scalping
+var int entryBar = na
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+holdingPeriod = bar_index - entryBar
+maxHoldingReached = quickExitMode and holdingPeriod >= maxHoldingBars
+// Futures-optimized profit targets
+futuresTPDistance = atr * tpMultiplier
+ultraQuickTP = atr * (tpMultiplier * 0.5) // Ultra-fast for futures
+if strategy.position_size > 0 // Long positions
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice - futuresStopDistance
+   
+    if useEnhancedTP
+        // Futures-optimized profit taking - very aggressive
+        tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick) // 60% at ultra-quick
+        tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick) // 25% at quick
+        tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick) // 10% medium
+        tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick) // 5% runners
+       
+        // Aggressive profit percentages for futures
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+   
+    // Time-based exit optimized for futures
+    if maxHoldingReached
+        strategy.close("Long_" + str.tostring(entryBar))
+   
+    // Ultra-tight trailing for futures
+    if useSmartTrailing and close > entryPrice + (futuresTPDistance * trailActivationRatio)
+        trailDistance = atr * 0.6 // Very tight for futures
+        strategy.exit("TrailSL", stop=close - trailDistance)
+    else
+        strategy.exit("SL", stop=stopLoss)
+if strategy.position_size < 0 // Short positions
+    entryPrice = strategy.position_avg_price
+    stopLoss = entryPrice + futuresStopDistance
+   
+    if useEnhancedTP
+        // Futures-optimized short profit taking
+        tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+       
+        strategy.exit("TP1", qty_percent=60, profit=tp1Points)
+        strategy.exit("TP2", qty_percent=25, profit=tp2Points)
+        strategy.exit("TP3", qty_percent=10, profit=tp3Points)
+        strategy.exit("TP4", qty_percent=5, profit=tp4Points)
+   
+    // Time-based exit
+    if maxHoldingReached
+        strategy.close("Short_" + str.tostring(entryBar))
+   
+    // Ultra-tight trailing for shorts
+    if useSmartTrailing and close < entryPrice - (futuresTPDistance * trailActivationRatio)
+        trailDistance = atr * 0.6
+        strategy.exit("TrailSL", stop=close + trailDistance)
+    else
+        strategy.exit("SL", stop=stopLoss)
+// === PLOTS ===
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull MA Main")
+plot(hullFast, color=color.gray, title="Hull MA Fast")
+plot(upperEnv, color=color.orange, title="Envelope Upper")
+plot(lowerEnv, color=color.orange, title="Envelope Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+// Futures and session indicators
+bgcolor(ultraMode ? color.new(color.red, 98) : na, title="Ultra Mode")
+bgcolor(microScalping ? color.new(color.yellow, 98) : na, title="Micro Scalping")
+bgcolor(isMYM ? color.new(color.blue, 98) : isM2K ? color.new(color.orange, 98) : isMES ? color.new(color.yellow, 98) : na, title="Futures Type")
+bgcolor(isRegularSession ? color.new(color.green, 98) : isPreMarket ? color.new(color.purple, 98) : isAfterHours ? color.new(color.gray, 98) : na, title="Session")
+// Enhanced signal markers for futures
+plotshape(longCondition and scalpBuySignal, location=location.belowbar, color=color.lime, style=shape.triangleup, text="SCALP", size=size.small)
+plotshape(longCondition and instantBuySignal, location=location.belowbar, color=color.yellow, style=shape.labelup, text="INSTANT", size=size.small)
+plotshape(longCondition and microBuySignal, location=location.belowbar, color=color.aqua, style=shape.arrowup, text="MICRO", size=size.tiny)
+plotshape(shortCondition and scalpSellSignal, location=location.abovebar, color=color.red, style=shape.triangledown, text="SCALP", size=size.small)
+plotshape(shortCondition and instantSellSignal, location=location.abovebar, color=color.orange, style=shape.labeldown, text="INSTANT", size=size.small)
+plotshape(shortCondition and microSellSignal, location=location.abovebar, color=color.fuchsia, style=shape.arrowdown, text="MICRO", size=size.tiny)
+// Futures-specific debug information
+plot(totalPositions, "Total Positions", color=color.new(color.blue, 80), display=display.data_window)
+plot(effectiveRiskPercent, "Effective Risk %", color=color.new(color.orange, 80), display=display.data_window)
+plot(timeframeMultiplier, "TF Multiplier", color=color.new(color.aqua, 80), display=display.data_window)
+plot(holdingPeriod, "Holding Period", color=color.new(color.purple, 80), display=display.data_window)
+plot(finalPositionSize, "Position Size", color=color.new(color.yellow, 80), display=display.data_window)
+plot(tradeFrequencyBoost, "Trade Frequency", color=color.new(color.lime, 80), display=display.data_window)
+plot(sessionMultiplier, "Session Multiplier", color=color.new(color.maroon, 80), display=display.data_window)
+// Instrument identification
+plot(isMYM ? 1 : isM2K ? 2 : isMES ? 3 : 0, "Instrument", color=color.new(color.white, 80), display=display.data_window)
