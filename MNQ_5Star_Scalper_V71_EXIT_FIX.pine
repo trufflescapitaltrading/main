@@ -1,0 +1,408 @@
+//@version=5
+strategy("MNQ V.71+% 5-Star Scalper - EXIT FIX", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+
+// ==================== 🔧 EXIT SIGNAL FIX APPLIED ====================
+// This version fixes the TradersPost exit signal rejections:
+// 1. Exit alerts now properly use simulated state in alert-only mode
+// 2. Added entry confirmation tracking to prevent orphaned exits  
+// 3. Added safety checks for reverse signal and EOD exits
+// ==================================================================
+
+// ==================== 💰 DAILY PROFIT TARGET ====================
+profitTargetGroup = "💰 Daily Profit Target"
+enableDailyProfitTarget = input.bool(true, "Enable Daily Profit Target", group=profitTargetGroup)
+dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", minval=500, maxval=5000, group=profitTargetGroup)
+
+// ==================== 🎯 PRICE MOMENTUM OVERRIDE ====================
+momentumOverrideGroup = "🎯 PRICE MOMENTUM OVERRIDE"
+enableMomentumOverride = input.bool(true, "✅ Enable Price Momentum Override", group=momentumOverrideGroup)
+momentumLookback = input.int(5, "Momentum Lookback Bars", minval=3, maxval=10, group=momentumOverrideGroup)
+momentumThresholdPct = input.float(0.4, "Min Price Move (%)", minval=0.3, maxval=2.0, group=momentumOverrideGroup)
+momentumThresholdPoints = input.float(100.0, "Min Price Move (MNQ points)", minval=50, maxval=300, group=momentumOverrideGroup)
+
+// ==================== 🎯 FIXED SIGNAL LINE SYSTEM ====================
+signalGroup = "🎯 Fixed Signal Line System"
+enableSignalLine = input.bool(true, "✅ Enable Signal Line System", group=signalGroup)
+useSignalLineStrict = input.bool(false, "⚠️ STRICT: Only trade with signal line", group=signalGroup)
+swingPeriod = input.int(3, "BUY/SELL Swing Period", minval=1, maxval=10, group=signalGroup)
+enableSwingSignals = input.bool(true, "Enable BUY/SELL Swing Signals", group=signalGroup)
+swingSignalPriority = input.bool(true, "Add Swing to Priority System", group=signalGroup)
+swingInjectToBase = input.bool(false, "Allow Swing to feed base signals", group=signalGroup)
+grayZoneEnabled = input.bool(true, "Enable Gray Zone", group=signalGroup)
+grayADXThreshold = input.float(20.0, "Gray Zone: ADX Below", minval=10.0, maxval=30.0, group=signalGroup)
+grayATRMultiplier = input.float(0.75, "Gray Zone: ATR Compression", minval=0.4, maxval=1.2, group=signalGroup)
+grayBBWidthThreshold = input.float(0.015, "Gray Zone: BB Width Below", minval=0.005, maxval=0.030, group=signalGroup)
+grayMinFactors = input.int(2, "Gray Zone: Min Factors", minval=2, maxval=6, group=signalGroup)
+
+// ==================== 🎯 INSTRUMENT DETECTION ====================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroFutures = isMYM or isMNQ or isMCL or isMGC or isMES or isM2K
+instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
+
+// ==================== 📊 PER-INSTRUMENT SETTINGS ====================
+perInstGroup = "Per-Instrument Trade Settings"
+mes_useCustom = input.bool(true, "MES: Use Custom SL/TP/Size", group=perInstGroup)
+mes_customSL = input.float(14.0, "MES: Stop Loss (points)", group=perInstGroup)
+mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=perInstGroup)
+mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
+mnq_useCustom3m = input.bool(true, "MNQ 3m: Use 3m Settings", group=perInstGroup)
+mnq_customSL_3m = input.float(50.0, "MNQ 3m: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1_3m = input.float(45.0, "MNQ 3m: TP1 (points) - 60%", group=perInstGroup)
+mnq_customTP2_3m = input.float(70.0, "MNQ 3m: TP2 (points) - 25%", group=perInstGroup)
+mnq_customTP3_3m = input.float(100.0, "MNQ 3m: TP3 (points) - 10%", group=perInstGroup)
+mnq_customTP4_3m = input.float(150.0, "MNQ 3m: TP4 (points) - 5%", group=perInstGroup)
+mnq_customSL = input.float(60.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customTP1 = input.float(60.0, "MNQ: TP1 (points) - 60%", group=perInstGroup)
+mnq_customTP2 = input.float(90.0, "MNQ: TP2 (points) - 25%", group=perInstGroup)
+mnq_customTP3 = input.float(120.0, "MNQ: TP3 (points) - 10%", group=perInstGroup)
+mnq_customTP4 = input.float(180.0, "MNQ: TP4 (points) - 5%", group=perInstGroup)
+mnq_customQty = input.int(1, "MNQ: Position Size", minval=1, maxval=50, group=perInstGroup)
+
+// ==================== 🔔 TRADERSPOST SETTINGS ====================
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts")
+tradersPostSymbol = input.string("MNQH2026", "TradersPost Symbol (Default / fallback)")
+tradersPostSymbolMNQ = input.string("MNQH2026", "TradersPost Symbol - MNQ")
+tradersPostSymbolMES = input.string("MESH2026", "TradersPost Symbol - MES")
+tradersPostSymbolMYM = input.string("MYMH2026", "TradersPost Symbol - MYM")
+tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K")
+tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL")
+tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC")
+useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
+alertOnlyMode = input.bool(false, "Alert Only Mode")
+
+tpRouterGroup = "TradersPost Router"
+tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state", group=tpRouterGroup)
+tpSameDirectionBehavior = input.string("ignore", "When same-direction signal occurs", options=["ignore", "add"], group=tpRouterGroup)
+tpExitOnReverseSignal = input.bool(true, "Send EXIT on reverse signal before new entry", group=tpRouterGroup)
+tpSendEODExitAlert = input.bool(true, "Send EXIT at end-of-day", group=tpRouterGroup)
+tpStrategyName = input.string("V.70+% 5-Star Scalper", "Strategy name", group=tpRouterGroup)
+tpNumericFormat = input.string("strings", "Numeric format", options=["strings", "numbers"], group=tpRouterGroup)
+
+// ==================== 🔧 EXIT SIGNAL SAFETY (NEW) ====================
+exitSafetyGroup = "🔧 Exit Signal Safety (FIX)"
+tpRequireConfirmedEntry = input.bool(true, "Only send EXIT if entry was confirmed sent", group=exitSafetyGroup)
+tpExitCooldownBars = input.int(1, "Min bars after entry before sending EXIT", minval=0, maxval=10, group=exitSafetyGroup)
+tpSuppressOrphanedExits = input.bool(true, "Suppress EXIT signals when no tracked position", group=exitSafetyGroup)
+
+actualTicker = useAutoSymbol ? syminfo.ticker : (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
+
+// ==================== 🕐 SESSION SETTINGS ====================
+sessionGroup = "🌍 Trading Sessions & Times"
+enable24_7Trading = input.bool(true, "✅ Enable 24/7 Trading", group=sessionGroup)
+enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
+tradingHoursStart = input.int(400, "Start (4:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(2000, "End (8:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
+useEndOfDayExits = input.bool(true, "End of Day Exits")
+endOfDayTime = input.int(1550, "End of Day Time (ET)", minval=1500, maxval=1700)
+
+// ==================== CORE VARIABLES ====================
+var int todayTradeCount = 0
+var bool isChoppy = false
+var bool tookTradeThisBar = false
+var bool exitIssuedThisBar = false
+var string lastExitReason = "NONE"
+var string entryPriority = "NONE"
+var string activeSignalType = "NONE"
+
+atr10 = ta.atr(10)
+atrMain = ta.atr(14)
+currentTF = timeframe.period
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+
+// Session detection
+currentHourET = hour(time, "America/New_York")
+currentMinuteET = minute(time, "America/New_York")
+currentTime = currentHourET * 100 + currentMinuteET
+isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
+canTradeNow = enable24_7Trading or isTradingHours
+isEndOfDay = currentTime >= endOfDayTime
+
+// ==================== TRADERSPOST STATE TRACKING ====================
+tpUseSim = tpSimulateBrokerPosition or alertOnlyMode
+
+// TradersPost simulated broker position state
+var int tpPosDir = 0   // 1=long, -1=short, 0=flat
+var int tpPosBar = na
+var int tpPosQty = 0
+
+// 🔧 FIX: Track whether we've actually sent an entry alert
+var bool tpEntrySentConfirmed = false
+var int tpLastEntrySentBar = na
+
+tpFlat = tpUseSim ? (tpPosDir == 0) : (strategy.position_size == 0)
+tpLong = tpUseSim ? (tpPosDir == 1) : (strategy.position_size > 0)
+tpShort = tpUseSim ? (tpPosDir == -1) : (strategy.position_size < 0)
+tpQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size))
+
+// Helper functions
+tpNum(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+
+tpNumInt(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+
+tpSignalId(action, dir) =>
+    str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
+
+// Reset per-bar flags
+if barstate.isnew
+    tookTradeThisBar := false
+    exitIssuedThisBar := false
+
+// ==================== SIMPLIFIED ENTRY CONDITIONS (for demo) ====================
+// In your full strategy, these would be your existing entry conditions
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+rsi = ta.rsi(close, 14)
+
+candleBull = close > open
+candleBear = close < open
+
+simpleLongCondition = candleBull and ema9 > ema21 and rsi > 40 and rsi < 70 and canTradeNow
+simpleShortCondition = candleBear and ema9 < ema21 and rsi < 60 and rsi > 30 and canTradeNow
+
+// Entry conditions (simplified for this fix demo)
+canEnterNewPosition = strategy.position_size == 0
+longCondition = simpleLongCondition and canEnterNewPosition and not tookTradeThisBar
+shortCondition = simpleShortCondition and canEnterNewPosition and not tookTradeThisBar
+
+// ==================== STRATEGY ENTRIES ====================
+if longCondition and strategy.position_size == 0
+    if not alertOnlyMode
+        strategy.entry("LONG", strategy.long, qty=1, comment="LONG ENTRY")
+    tookTradeThisBar := true
+
+if shortCondition and strategy.position_size == 0
+    if not alertOnlyMode
+        strategy.entry("SHORT", strategy.short, qty=1, comment="SHORT ENTRY")
+    tookTradeThisBar := true
+
+// ==================== 🔔 TRADERSPOST WEBHOOK ALERTS (FIXED) ====================
+
+// --- REVERSE SIGNAL EXIT (FIXED) ---
+// If a reverse signal occurs while a broker position exists, optionally send EXIT first
+if tpExitOnReverseSignal and enableTradersPostAlerts and not tpFlat and not tookTradeThisBar
+    // 🔧 FIX: Additional safety - ensure we have a confirmed entry before sending exit
+    bool canSendReverseExit = (not tpRequireConfirmedEntry or tpEntrySentConfirmed) and
+                               (not tpSuppressOrphanedExits or tpPosDir != 0)
+    
+    if canSendReverseExit and ((longCondition and tpShort) or (shortCondition and tpLong))
+        exitDir = tpShort ? "SHORT" : "LONG"
+        exitQty = tpQty
+        exitSigId = tpSignalId("exit", exitDir)
+        exitNowMessage = '{' +
+             '"ticker":"' + actualTicker + '",' +
+             '"action":"exit",' +
+             '"quantity":' + tpNumInt(exitQty) + ',' +
+             '"strategy":"' + tpStrategyName + '",' +
+             '"timeframe":"' + timeframe.period + '",' +
+             '"instrument":"' + instrumentName + '",' +
+             '"signal_id":"' + exitSigId + '",' +
+             '"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+        alert(exitNowMessage, alert.freq_once_per_bar)
+        if tpUseSim
+            tpPosDir := 0
+            tpPosBar := bar_index
+            tpPosQty := 0
+            tpEntrySentConfirmed := false  // 🔧 FIX: Reset confirmation
+        tookTradeThisBar := true
+
+// --- LONG ENTRY ALERT ---
+if longCondition and tpFlat and enableTradersPostAlerts and not tookTradeThisBar
+    float currentSL_pts = isMES ? mes_customSL : (isMNQ and is3min and mnq_useCustom3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (isMNQ and is3min and mnq_useCustom3m ? mnq_customTP1_3m : mnq_customTP1)
+    
+    localSL = close - currentSL_pts
+    localTP1 = close + currentTP1_pts
+    
+    entrySigId = tpSignalId("buy", "LONG")
+    longEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"buy",' +
+         '"quantity":' + tpNumInt(1) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"stop_loss":' + tpNum(localSL) + ',' +
+         '"take_profit":' + tpNum(localTP1) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(longEntryMessage, alert.freq_once_per_bar)
+    
+    if tpUseSim
+        tpPosDir := 1
+        tpPosBar := bar_index
+        tpPosQty := 1
+    
+    // 🔧 FIX: Mark entry as confirmed sent
+    tpEntrySentConfirmed := true
+    tpLastEntrySentBar := bar_index
+    tookTradeThisBar := true
+
+// --- SHORT ENTRY ALERT ---
+if shortCondition and tpFlat and enableTradersPostAlerts and not tookTradeThisBar
+    float currentSL_pts = isMES ? mes_customSL : (isMNQ and is3min and mnq_useCustom3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (isMNQ and is3min and mnq_useCustom3m ? mnq_customTP1_3m : mnq_customTP1)
+    
+    localSL = close + currentSL_pts
+    localTP1 = close - currentTP1_pts
+    
+    entrySigId = tpSignalId("sell", "SHORT")
+    shortEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"sell",' +
+         '"quantity":' + tpNumInt(1) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"stop_loss":' + tpNum(localSL) + ',' +
+         '"take_profit":' + tpNum(localTP1) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(shortEntryMessage, alert.freq_once_per_bar)
+    
+    if tpUseSim
+        tpPosDir := -1
+        tpPosBar := bar_index
+        tpPosQty := 1
+    
+    // 🔧 FIX: Mark entry as confirmed sent
+    tpEntrySentConfirmed := true
+    tpLastEntrySentBar := bar_index
+    tookTradeThisBar := true
+
+// --- MAIN EXIT ALERT (FIXED) ---
+// 🔧 FIXED: Exit alert logic that properly handles alert-only mode
+bool shouldSendExitAlert = false
+int exitQtyMain = 0
+string exitDirMain = "FLAT"
+
+if tpUseSim
+    // In alert-only / simulated mode, check if simulated position should close
+    bool simPosExists = tpPosDir != 0
+    bool strategyWouldClose = strategy.position_size == 0 and strategy.position_size[1] != 0
+    bool isEODClose = useEndOfDayExits and isEndOfDay
+    bool exitWasIssued = exitIssuedThisBar
+    
+    bool simPosJustClosed = simPosExists and (strategyWouldClose or isEODClose or exitWasIssued)
+    
+    // 🔧 FIX: Safety checks
+    bool hasConfirmedEntry = not tpRequireConfirmedEntry or tpEntrySentConfirmed
+    bool pastCooldown = not tpRequireConfirmedEntry or na(tpLastEntrySentBar) or (bar_index - tpLastEntrySentBar) >= tpExitCooldownBars
+    bool notOrphaned = not tpSuppressOrphanedExits or tpPosDir != 0
+    
+    if simPosJustClosed and hasConfirmedEntry and pastCooldown and notOrphaned and enableTradersPostAlerts
+        shouldSendExitAlert := true
+        exitQtyMain := tpPosQty
+        exitDirMain := tpPosDir == 1 ? "LONG" : "SHORT"
+else
+    // Normal mode: use actual strategy position
+    if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
+        shouldSendExitAlert := true
+        exitQtyMain := int(math.abs(strategy.position_size[1]))
+        exitDirMain := strategy.position_size[1] > 0 ? "LONG" : "SHORT"
+
+if shouldSendExitAlert and not tookTradeThisBar
+    exitSigId = tpSignalId("exit", exitDirMain)
+    exitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"quantity":' + tpNumInt(exitQtyMain) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + exitSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(exitMessage, alert.freq_once_per_bar)
+    
+    // Reset simulated state
+    if tpUseSim
+        tpPosDir := 0
+        tpPosBar := bar_index
+        tpPosQty := 0
+        tpEntrySentConfirmed := false  // 🔧 FIX: Reset confirmation
+        tpLastEntrySentBar := na
+    
+    tookTradeThisBar := true
+
+// --- EOD EXIT ALERT (FIXED) ---
+if tpSendEODExitAlert and useEndOfDayExits and isEndOfDay and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and not tookTradeThisBar
+    // 🔧 FIX: Safety check - only send if we have a confirmed entry
+    bool canSendEODExit = (not tpRequireConfirmedEntry or tpEntrySentConfirmed) and
+                          (not tpSuppressOrphanedExits or tpPosDir != 0)
+    
+    if canSendEODExit
+        exitSigId = tpSignalId("exit", tpPosDir == 1 ? "LONG" : "SHORT")
+        eodExitMessage = '{' +
+             '"ticker":"' + actualTicker + '",' +
+             '"action":"exit",' +
+             '"quantity":' + tpNumInt(tpPosQty) + ',' +
+             '"strategy":"' + tpStrategyName + '",' +
+             '"timeframe":"' + timeframe.period + '",' +
+             '"instrument":"' + instrumentName + '",' +
+             '"signal_id":"' + exitSigId + '",' +
+             '"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+        alert(eodExitMessage, alert.freq_once_per_bar)
+        tpPosDir := 0
+        tpPosBar := bar_index
+        tpPosQty := 0
+        tpEntrySentConfirmed := false  // 🔧 FIX: Reset confirmation
+        tookTradeThisBar := true
+
+// ==================== VISUAL INDICATORS ====================
+plot(ema9, "EMA 9", color=color.new(color.blue, 0), linewidth=2)
+plot(ema21, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
+
+// Position state indicator
+bgcolor(tpPosDir == 1 ? color.new(color.green, 95) : tpPosDir == -1 ? color.new(color.red, 95) : na, title="Position State")
+
+// Debug table
+var table debugTable = table.new(position.top_right, 2, 8, border_width=1)
+if barstate.islast
+    table.cell(debugTable, 0, 0, "EXIT FIX STATUS", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 0, "ACTIVE", text_color=color.green, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 1, "Simulated Pos", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 1, tpPosDir == 1 ? "LONG" : tpPosDir == -1 ? "SHORT" : "FLAT", 
+               text_color=tpPosDir != 0 ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 2, "Entry Confirmed", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 2, tpEntrySentConfirmed ? "YES" : "NO", 
+               text_color=tpEntrySentConfirmed ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 3, "Last Entry Bar", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 3, na(tpLastEntrySentBar) ? "N/A" : str.tostring(bar_index - tpLastEntrySentBar) + " ago", 
+               text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 4, "Exit Cooldown", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    cooldownOK = na(tpLastEntrySentBar) or (bar_index - tpLastEntrySentBar) >= tpExitCooldownBars
+    table.cell(debugTable, 1, 4, cooldownOK ? "OK" : "WAIT", 
+               text_color=cooldownOK ? color.green : color.orange, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 5, "Can Send Exit", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    canExit = (not tpRequireConfirmedEntry or tpEntrySentConfirmed) and 
+              (not tpSuppressOrphanedExits or tpPosDir != 0) and cooldownOK
+    table.cell(debugTable, 1, 5, canExit ? "YES" : "BLOCKED", 
+               text_color=canExit ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 6, "Ticker", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 6, actualTicker, text_color=color.white, bgcolor=color.new(color.gray, 85))
+    
+    table.cell(debugTable, 0, 7, "EOD Time", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(debugTable, 1, 7, isEndOfDay ? "YES" : "NO", 
+               text_color=isEndOfDay ? color.orange : color.white, bgcolor=color.new(color.gray, 85))
