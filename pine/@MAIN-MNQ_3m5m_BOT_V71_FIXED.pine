@@ -1686,7 +1686,51 @@ if not tookTradeThisBar
                 shouldEnterShort := true
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
-        // (P3–P7 unchanged from your original; omitted here to keep this file size manageable)
+        if not shouldEnterLong and not shouldEnterShort and allowPriority3
+            if canGoLong and is5Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P3:5STAR"
+                entryPriority := "P3:5STAR"
+            else if canGoShort and is5Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P3:5STAR"
+                entryPriority := "P3:5STAR"
+        if not shouldEnterLong and not shouldEnterShort and allowPriority4
+            if canGoLong and is4Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P4:4STAR"
+                entryPriority := "P4:4STAR"
+            else if canGoShort and is4Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P4:4STAR"
+                entryPriority := "P4:4STAR"
+        if not shouldEnterLong and not shouldEnterShort and allowPriority5
+            if canGoLong and is3Star and ultraBuySignal and candleBull and emaTrendOK_Long and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P5:3STAR"
+                entryPriority := "P5:3STAR"
+            else if canGoShort and is3Star and ultraSellSignal and candleBear and emaTrendOK_Short and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P5:3STAR"
+                entryPriority := "P5:3STAR"
+        if not shouldEnterLong and not shouldEnterShort and allowPriority6
+            if canGoLong and is2Star and ultraBuySignal and candleBull and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P6:2STAR"
+                entryPriority := "P6:2STAR"
+            else if canGoShort and is2Star and ultraSellSignal and candleBear and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P6:2STAR"
+                entryPriority := "P6:2STAR"
+        if not shouldEnterLong and not shouldEnterShort and allowPriority7
+            if canGoLong and swingBuySignal and candleBull and signalAllowsLong and not isSignalGrayZone and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P7:SWING"
+                entryPriority := "P7:SWING"
+            else if canGoShort and swingSellSignal and candleBear and signalAllowsShort and not isSignalGrayZone and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P7:SWING"
+                entryPriority := "P7:SWING"
     else
         // Non-priority mode (not used in your config)
         shouldEnterLong := false
@@ -1750,6 +1794,66 @@ entryOK =
 bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
 bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
 
+// ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
+var string lastBlockReason = "NONE"
+rawLongSignal = (hasTrendStartLong or hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or tibLong or cpbLong or earlyFlipLong or earlyEmaLong or ultraBuySignal or swingBuySignal)
+rawShortSignal = (hasTrendStartShort or hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or tibShort or cpbShort or earlyFlipShort or earlyEmaShort or ultraSellSignal or swingSellSignal)
+if strategy.position_size == 0
+    lastBlockReason := "NONE"
+    if rawLongSignal and not longCondition
+        lastBlockReason :=
+             not canTradeNow ? "TIME" :
+             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
+             maxTradesReached ? "DAILY_TRADES" :
+             maxLossReached ? "DAILY_LOSS" :
+             profitTargetReached ? "DAILY_TARGET" :
+             instrumentRiskLimitReached ? "INSTR_RISK" :
+             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
+             (enableTrendOnly and not routerLongRegimeOK and not bypassLong) ? "TREND_ONLY" :
+             (enableBestSideRouter and not allowLongByBias) ? "BIAS_LOCK" :
+             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "VOL_REGIME" :
+             (not htfConfirmLongOK and not (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "HTF_ALIGN" :
+             (not strengthGateLongOK) ? "STRENGTH" :
+             (not (v71_strictEntryOK or strictBypassLong)) ? "STRICT_FILTER" :
+             (not trendOnlyLongGate) ? "MANDATORY_TREND" :
+             (not mtfLongOK) ? "MTF_FILTER" :
+             (not candleConfirmLong) ? "CANDLE_CONFIRM" :
+             (not dedupeLongOK) ? "DEDUPE" :
+             (not htfCandleColorOK_Long) ? "5M_COLOR" :
+             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
+             "OTHER"
+    else if rawShortSignal and not shortCondition
+        lastBlockReason :=
+             not canTradeNow ? "TIME" :
+             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
+             maxTradesReached ? "DAILY_TRADES" :
+             maxLossReached ? "DAILY_LOSS" :
+             profitTargetReached ? "DAILY_TARGET" :
+             instrumentRiskLimitReached ? "INSTR_RISK" :
+             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
+             (enableTrendOnly and not routerShortRegimeOK and not bypassShort) ? "TREND_ONLY" :
+             (enableBestSideRouter and not allowShortByBias) ? "BIAS_LOCK" :
+             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "VOL_REGIME" :
+             (not htfConfirmShortOK and not (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "HTF_ALIGN" :
+             (not strengthGateShortOK) ? "STRENGTH" :
+             (not (v71_strictEntryOK or strictBypassShort)) ? "STRICT_FILTER" :
+             (not trendOnlyShortGate) ? "MANDATORY_TREND" :
+             (not mtfShortOK) ? "MTF_FILTER" :
+             (not candleConfirmShort) ? "CANDLE_CONFIRM" :
+             (not dedupeShortOK) ? "DEDUPE" :
+             (not htfCandleColorOK_Short) ? "5M_COLOR" :
+             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
+             "OTHER"
+
+if longCondition and strategy.position_size == 0
+    activeSignalType := selectedPriority == "P-1:TREND_START" ? "IGNITION" : selectedPriority == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
+else if shortCondition and strategy.position_size == 0
+    activeSignalType := selectedPriority == "P-1:TREND_START" ? "IGNITION" : selectedPriority == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort ? "MOMENTUM" : impulseShort ? "IMPULSE" : hasTrendOverrideBear ? "TREND" : microSellSignal ? "MICRO" : instantSellSignal ? "INSTANT" : scalpSellSignal ? "SCALP" : strongSellSignal ? "STRONG" : swingSellSignal ? "SWING" : "NORMAL"
+else if strategy.position_size == 0
+    activeSignalType := "NONE"
+
 getActiveQty(baseQty) =>
     int qty = baseQty
     if isMES and mes_useCustom
@@ -1801,18 +1905,732 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         lastOppositeEntryBar := bar_index
     lastSignalDir := -1
     lastSignalBar := bar_index
+// ==================== 🔥 PROFIT SYSTEM (60/25/10/5) ====================
+// V71: Calculate current volatility adjustment factor
+v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
+v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 
-// ============================================================
-// NOTE:
-// Your original script contains extensive profit management and TradersPost alerting.
-// This “complete bot” file focuses on FIXING ENTRY FIRING and EARLY TREND CAPTURE,
-// which were the issues you reported (late entries, wrong candle color, missed runs).
-//
-// If you want, I can also paste the remaining exit/alert blocks into this file,
-// but they are unchanged from your provided code and will make this file extremely large.
-// ============================================================
+// ==================== 🔥 V20 KENYA PERFECT PROFIT MODULE ====================
+canExitNow = strategy.position_size != 0 and not na(entryBar) and (bar_index - entryBar) >= minBarsBeforeExit
+tickValue = syminfo.mintick * syminfo.pointvalue
+slipDolRT_perContract = slippageTicksOneWay * tickValue * 2.0
+commDolRT_perContract = commissionPerContract * 2.0
+feesRT_perContract = commDolRT_perContract + slipDolRT_perContract + extraFeesPerContract
+feesRT_total = (enableFeeModel ? feesRT_perContract : 0.0) * math.max(originalQty, 1)
+feesPoints = (syminfo.pointvalue > 0 ? (feesRT_total / syminfo.pointvalue) : 0.0)
+beTriggerDol = (atrMain * breakevenTrigger) * syminfo.pointvalue
+beTriggerHit = useBreakevenProtection and (currentProfitDollars >= beTriggerDol)
+profitTriggerHit = enablePreTP1ProfitLock and (currentProfitDollars >= preTP1TriggerDollars)
+lockKeepPoints = (syminfo.pointvalue > 0 ? (preTP1KeepDollars / syminfo.pointvalue) : 0.0)
 
-// ==================== 📊 VISUAL INDICATORS (minimal) ====================
+getExitSLPoints() =>
+    float sl = atrMain
+    if isMES
+        sl := mes_customSL
+    else if isMNQ
+        sl := (timeframe.period == "3" and mnq_useCustom3m) ? mnq_customSL_3m : mnq_customSL
+    else if isMYM
+        sl := mym_customSL
+    else if isM2K
+        sl := m2k_customSL
+    else if isMGC
+        sl := mgc_customSL
+    else if isMCL
+        sl := mcl_customSL
+    sl
+exitSL_inst = getExitSLPoints()
+exitSL = slExecutionMode == "ATR" ? futuresStopDistance : slExecutionMode == "Instrument" ? exitSL_inst : math.max(futuresStopDistance, exitSL_inst)
+futuresTPDistance = atrMain * tpMultiplier
+ultraQuickTP = atrMain * (tpMultiplier * 0.5)
+
+is3m_chart_profit = timeframe.period == "3"
+kenyaActive_profit = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart_profit
+v20Active_profit = useV20KenyaPerfectProfit and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit and not (isMES and useMJV6MesProfitLogic)
+
+if v20Active_profit and strategy.position_size > 0
+    float avgPrice = strategy.position_avg_price
+    float localStopLoss = avgPrice - exitSL
+    float trueBE = avgPrice + feesPoints
+    float lockStop = avgPrice + lockKeepPoints
+    if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
+        float protectStopGap = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
+        if open <= protectStopGap and not exitIssuedThisBar
+            strategy.close_all(comment="GAP_STOP_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "GAP_STOP"
+    if useTP and useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+        strategy.exit("V20_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+        strategy.exit("V20_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+        strategy.exit("V20_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+        strategy.exit("V20_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+        if not exitIssuedThisBar
+            strategy.close("LONG", comment="V20_TIME_EXIT_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "V20_TIME_EXIT"
+    if useSL and not exitIssuedThisBar
+        float v20ProtectStop = localStopLoss
+        if enableFeeModel and beTriggerHit and canExitNow
+            v20ProtectStop := math.max(v20ProtectStop, trueBE)
+        if profitTriggerHit and canExitNow
+            float protectStop = enableFeeModel ? math.max(lockStop, trueBE) : lockStop
+            v20ProtectStop := math.max(v20ProtectStop, protectStop)
+        if useSmartTrailing and close > avgPrice + (futuresTPDistance * trailActivationRatio) and canExitNow
+            trailDistance = atrMain * 0.6
+            v20ProtectStop := math.max(v20ProtectStop, close - trailDistance)
+        strategy.exit("V20_PROTECT_L", from_entry="LONG", stop=v20ProtectStop)
+
+if v20Active_profit and strategy.position_size < 0
+    float avgPrice = strategy.position_avg_price
+    float localStopLoss = avgPrice + exitSL
+    float trueBE_S = avgPrice - feesPoints
+    float lockStopS = avgPrice - lockKeepPoints
+    if useSL and enableGapStopProtection and profitTriggerHit and canExitNow
+        float protectStopGapS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
+        if open >= protectStopGapS and not exitIssuedThisBar
+            strategy.close_all(comment="GAP_STOP_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "GAP_STOP"
+    if useTP and useEnhancedTP
+        tp1Points = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
+        tp2Points = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
+        tp3Points = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
+        tp4Points = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+        strategy.exit("V20_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+        strategy.exit("V20_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+        strategy.exit("V20_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+        strategy.exit("V20_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+        if not exitIssuedThisBar
+            strategy.close("SHORT", comment="V20_TIME_EXIT_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "V20_TIME_EXIT"
+    if useSL and not exitIssuedThisBar
+        float v20ProtectStopS = localStopLoss
+        if enableFeeModel and beTriggerHit and canExitNow
+            v20ProtectStopS := math.min(v20ProtectStopS, trueBE_S)
+        if profitTriggerHit and canExitNow
+            float protectStopS = enableFeeModel ? math.min(lockStopS, trueBE_S) : lockStopS
+            v20ProtectStopS := math.min(v20ProtectStopS, protectStopS)
+        if useSmartTrailing and close < avgPrice - (futuresTPDistance * trailActivationRatio) and canExitNow
+            trailDistance = atrMain * 0.6
+            v20ProtectStopS := math.min(v20ProtectStopS, close + trailDistance)
+        strategy.exit("V20_PROTECT_S", from_entry="SHORT", stop=v20ProtectStopS)
+
+// ==================== ✅ MES PROFIT LOGIC (MJV6) ====================
+if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.position_size != 0
+    float mjvAtr = atr10
+    float effectiveTPMult = tpMultiplier * (mesMJV6HighWinProtect ? mesMJV6TPScale : 1.0)
+    float futuresTPDistance_m = mjvAtr * effectiveTPMult
+    float ultraQuickTP_m = mjvAtr * (effectiveTPMult * 0.5)
+    float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
+    float entryPrice_m = not na(entryPrice) ? entryPrice : strategy.position_avg_price
+    float mjvBEOffsetPts = 0.0
+    if mesMJV6HighWinProtect and mesMJV6BEUseFees and enableFeeModel and syminfo.pointvalue > 0
+        float tickValue_m = syminfo.mintick * syminfo.pointvalue
+        float slipDolRT_perContract_m = slippageTicksOneWay * tickValue_m * 2.0
+        float commDolRT_perContract_m = commissionPerContract * 2.0
+        float feesRT_perContract_m = commDolRT_perContract_m + slipDolRT_perContract_m + extraFeesPerContract
+        mjvBEOffsetPts := feesRT_perContract_m / syminfo.pointvalue
+    if strategy.position_size > 0 and not exitIssuedThisBar
+        float stopLoss = entryPrice_m - mjvStopDistance
+        if useTP and useEnhancedTP
+            int tp1Points = math.round((ultraQuickTP_m * 0.4) / syminfo.mintick)
+            int tp2Points = math.round((futuresTPDistance_m * 0.3) / syminfo.mintick)
+            int tp3Points = math.round((futuresTPDistance_m * 0.6) / syminfo.mintick)
+            int tp4Points = math.round((futuresTPDistance_m * 1.0) / syminfo.mintick)
+            strategy.exit("MJV6_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
+            strategy.exit("MJV6_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Points)
+            strategy.exit("MJV6_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
+            strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
+        if quickExitMode and holdingPeriod >= maxHoldingBars
+            strategy.close("LONG", comment="MJV6_TIME_EXIT_LONG")
+            exitIssuedThisBar := true
+            lastExitReason := "MJV6_TIME_EXIT"
+        if useSL and not exitIssuedThisBar
+            float stopPrice = stopLoss
+            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            if useSmartTrailing and close > entryPrice_m + (futuresTPDistance_m * actRatio)
+                float trailDistance = mjvAtr * 0.6
+                stopPrice := close - trailDistance
+            if mesMJV6HighWinProtect and close > entryPrice_m + (futuresTPDistance_m * mesMJV6BETriggerPct)
+                stopPrice := math.max(stopPrice, entryPrice_m + mjvBEOffsetPts)
+            strategy.exit("MJV6_STOP_L", from_entry="LONG", stop=stopPrice)
+    if strategy.position_size < 0 and not exitIssuedThisBar
+        float stopLoss = entryPrice_m + mjvStopDistance
+        if useTP and useEnhancedTP
+            int tp1Points = math.round((ultraQuickTP_m * 0.5) / syminfo.mintick)
+            int tp2Points = math.round((futuresTPDistance_m * 0.4) / syminfo.mintick)
+            int tp3Points = math.round((futuresTPDistance_m * 0.7) / syminfo.mintick)
+            int tp4Points = math.round((futuresTPDistance_m * 1.1) / syminfo.mintick)
+            strategy.exit("MJV6_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
+            strategy.exit("MJV6_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Points)
+            strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
+            strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
+        if quickExitMode and holdingPeriod >= maxHoldingBars
+            strategy.close("SHORT", comment="MJV6_TIME_EXIT_SHORT")
+            exitIssuedThisBar := true
+            lastExitReason := "MJV6_TIME_EXIT"
+        if useSL and not exitIssuedThisBar
+            float stopPrice = stopLoss
+            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            if useSmartTrailing and close < entryPrice_m - (futuresTPDistance_m * actRatio)
+                float trailDistance = mjvAtr * 0.6
+                stopPrice := close + trailDistance
+            if mesMJV6HighWinProtect and close < entryPrice_m - (futuresTPDistance_m * mesMJV6BETriggerPct)
+                stopPrice := math.min(stopPrice, entryPrice_m - mjvBEOffsetPts)
+            strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
+
+// ==================== LEGACY PROFIT SYSTEM (V71/Kenya ladder) ====================
+if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic)
+    localEntryPrice = strategy.position_avg_price
+    bool is3m_chart = timeframe.period == "3"
+    bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
+    bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
+    bool isMnqWinTF = isMNQ and (is3min or is5min)
+    bool isMnq5m = isMNQ and is5min
+    bool isMes3m = isMES and is3m_chart
+    bool isMes5m = isMES and is5min
+    float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
+    float baseTP3 = isMES ? mes_customTP * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
+    float baseTP4 = isMES ? mes_customTP * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
+    float tpMult = (highWinRateMode and isMnq5m and not kenyaActive) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
+    float slMult = (highWinRateMode and isMnq5m and not kenyaActive) ? widerSLMultiplier : 1.0
+    float currentSL = kenyaActive ? baseSL : (baseSL * slMult)
+    float currentTP1 = kenyaActive ? baseTP1 : (baseTP1 * tpMult)
+    float currentTP2 = kenyaActive ? baseTP2 : (baseTP2 * tpMult)
+    float currentTP3 = kenyaActive ? baseTP3 : (baseTP3 * tpMult)
+    float currentTP4 = kenyaActive ? baseTP4 : (baseTP4 * tpMult)
+    v71_tp1Target := currentTP1
+    if kenyaActive
+        localStopLoss = localEntryPrice - currentSL
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        if useTP
+            strategy.exit("KENYA_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
+            strategy.exit("KENYA_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
+            strategy.exit("KENYA_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
+            strategy.exit("KENYA_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
+        if useSL
+            strategy.exit("KENYA_SL_L", from_entry="LONG", stop=localStopLoss)
+    else
+        currentProfitPts = close - localEntryPrice
+        if currentProfitPts > 0
+            v71_profitBarsCount := v71_profitBarsCount + 1
+        else
+            v71_profitBarsCount := 0
+        if currentProfitPts > v71_maxProfitSeen
+            v71_maxProfitSeen := currentProfitPts
+        if not tp1Hit and high >= localEntryPrice + currentTP1
+            tp1Hit := true
+        float beOffsetPoints = 0.0
+        if beAfterTP1UseFees
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPoints := (roundTripFees / safePointValue) + slipPts
+        localStopLoss = localEntryPrice - currentSL
+        localBEStop = localEntryPrice + beOffsetPoints
+        v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
+        if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
+            v71_trailingActive := true
+            v71_newTrailingStop = localEntryPrice + v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
+            if na(v71_trailingStop) or v71_newTrailingStop > v71_trailingStop
+                v71_trailingStop := v71_newTrailingStop
+        v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
+        if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
+            v71_profitLockActive := true
+            v71_lockedProfitLevel := localEntryPrice + currentProfitPts * (profitLockKeepPct / 100.0)
+        float v71_bestStop = localStopLoss
+        if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
+            v71_bestStop := localBEStop
+        if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop > v71_bestStop
+            v71_bestStop := v71_trailingStop
+        if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel > v71_bestStop
+            v71_bestStop := v71_lockedProfitLevel
+        float activeStop = v71_bestStop
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
+        v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
+        bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
+        if math.abs(strategy.position_size) == 1
+            bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+            float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
+            int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
+            float beOffsetPts = 0.0
+            if mnq3mBoosterUseFeesForBE
+                oneWayFees = commissionPerContract + extraFeesPerContract
+                roundTripFees = oneWayFees * 2
+                slipPts = slippageTicksOneWay * syminfo.mintick
+                beOffsetPts := (roundTripFees / safePointValue) + slipPts
+            bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
+            float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
+            int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
+            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
+            int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
+            float boosterBEStop = localEntryPrice + beOffsetPts
+            float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
+            float boosterStop = (currentProfitPts >= boosterBETriggerPts) ? math.max(activeStop, boosterBEStop) : activeStop
+            float mesBEOffsetPts = 0.0
+            if mes3mBoosterUseFeesForBE
+                oneWayFees2 = commissionPerContract + extraFeesPerContract
+                roundTripFees2 = oneWayFees2 * 2
+                slipPts2 = slippageTicksOneWay * syminfo.mintick
+                mesBEOffsetPts := (roundTripFees2 / safePointValue) + slipPts2
+            float mesBEStop = localEntryPrice + mesBEOffsetPts
+            float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
+            float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.max(activeStop, mesBEStop) : activeStop
+            float mes5mBEOffsetPts = 0.0
+            if mes5mUseFeesForBE
+                oneWayFees3 = commissionPerContract + extraFeesPerContract
+                roundTripFees3 = oneWayFees3 * 2
+                slipPts3 = slippageTicksOneWay * syminfo.mintick
+                mes5mBEOffsetPts := (roundTripFees3 / safePointValue) + slipPts3
+            float mes5mBEStop = localEntryPrice + mes5mBEOffsetPts
+            float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
+            float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.max(activeStop, mes5mBEStop) : activeStop
+            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
+            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
+            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
+            if useTP and useSL
+                strategy.exit("V71_TP_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks, stop=finalStop)
+            else if useTP
+                strategy.exit("V71_TP_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("V71_SL_SINGLE_L", from_entry="LONG", qty_percent=100, stop=finalStop)
+        else
+            if useTP
+                strategy.exit("V71_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("V71_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("V71_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("V71_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
+
+if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV6MesProfitLogic)
+    localEntryPrice = strategy.position_avg_price
+    bool is3m_chart = timeframe.period == "3"
+    bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
+    bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
+    bool isMnqWinTF = isMNQ and (is3min or is5min)
+    bool isMnq5m = isMNQ and is5min
+    bool isMes3m = isMES and is3m_chart
+    bool isMes5m = isMES and is5min
+    float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
+    float baseTP3 = isMES ? mes_customTP * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
+    float baseTP4 = isMES ? mes_customTP * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
+    float tpMult = (highWinRateMode and isMnq5m and not kenyaActive) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
+    float slMult = (highWinRateMode and isMnq5m and not kenyaActive) ? widerSLMultiplier : 1.0
+    float currentSL = kenyaActive ? baseSL : (baseSL * slMult)
+    float currentTP1 = kenyaActive ? baseTP1 : (baseTP1 * tpMult)
+    float currentTP2 = kenyaActive ? baseTP2 : (baseTP2 * tpMult)
+    float currentTP3 = kenyaActive ? baseTP3 : (baseTP3 * tpMult)
+    float currentTP4 = kenyaActive ? baseTP4 : (baseTP4 * tpMult)
+    v71_tp1Target := currentTP1
+    if kenyaActive
+        localStopLoss = localEntryPrice + currentSL
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        if useTP
+            strategy.exit("KENYA_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
+            strategy.exit("KENYA_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
+            strategy.exit("KENYA_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
+            strategy.exit("KENYA_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
+        if useSL
+            strategy.exit("KENYA_SL_S", from_entry="SHORT", stop=localStopLoss)
+    else
+        currentProfitPts = localEntryPrice - close
+        if currentProfitPts > 0
+            v71_profitBarsCount := v71_profitBarsCount + 1
+        else
+            v71_profitBarsCount := 0
+        if currentProfitPts > v71_maxProfitSeen
+            v71_maxProfitSeen := currentProfitPts
+        if not tp1Hit and low <= localEntryPrice - currentTP1
+            tp1Hit := true
+        float beOffsetPoints = 0.0
+        if beAfterTP1UseFees
+            oneWayFees = commissionPerContract + extraFeesPerContract
+            roundTripFees = oneWayFees * 2
+            slipPts = slippageTicksOneWay * syminfo.mintick
+            beOffsetPoints := (roundTripFees / safePointValue) + slipPts
+        localStopLoss = localEntryPrice + currentSL
+        localBEStop = localEntryPrice - beOffsetPoints
+        v71_trailingActivationLevel = currentTP1 * (trailingActivationPct / 100.0)
+        if enableAdaptiveTrailing and currentProfitPts >= v71_trailingActivationLevel
+            v71_trailingActive := true
+            v71_newTrailingStop = localEntryPrice - v71_maxProfitSeen * (1.0 - trailingStepPct / 100.0)
+            if na(v71_trailingStop) or v71_newTrailingStop < v71_trailingStop
+                v71_trailingStop := v71_newTrailingStop
+        v71_profitLockLevel = currentTP1 * (profitLockMinPct / 100.0)
+        if enableTimeProfitLock and v71_profitBarsCount >= profitLockBars and currentProfitPts >= v71_profitLockLevel
+            v71_profitLockActive := true
+            v71_lockedProfitLevel := localEntryPrice - currentProfitPts * (profitLockKeepPct / 100.0)
+        float v71_bestStop = localStopLoss
+        if (enableBEAfterTP1 or (highWinRateMode and isMnqWinTF)) and tp1Hit
+            v71_bestStop := localBEStop
+        if v71_trailingActive and not na(v71_trailingStop) and v71_trailingStop < v71_bestStop
+            v71_bestStop := v71_trailingStop
+        if v71_profitLockActive and not na(v71_lockedProfitLevel) and v71_lockedProfitLevel < v71_bestStop
+            v71_bestStop := v71_lockedProfitLevel
+        float activeStop = v71_bestStop
+        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+        v71_quickScalpLevel = currentTP1 * (quickScalpProfitPct / 100.0)
+        v71_quickScalpTicks = math.round(v71_quickScalpLevel / syminfo.mintick)
+        bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
+        if math.abs(strategy.position_size) == 1
+            bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+            float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
+            int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
+            float beOffsetPts = 0.0
+            if mnq3mBoosterUseFeesForBE
+                oneWayFees = commissionPerContract + extraFeesPerContract
+                roundTripFees = oneWayFees * 2
+                slipPts = slippageTicksOneWay * syminfo.mintick
+                beOffsetPts := (roundTripFees / safePointValue) + slipPts
+            bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
+            float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
+            int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
+            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
+            int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
+            float boosterBEStop = localEntryPrice - beOffsetPts
+            float boosterBETriggerPts = boosterTargetPts * mnq3mBoosterBETriggerPctOfTarget
+            float boosterStop = (currentProfitPts >= boosterBETriggerPts) ? math.min(activeStop, boosterBEStop) : activeStop
+            float mesBEOffsetPts = 0.0
+            if mes3mBoosterUseFeesForBE
+                oneWayFees2 = commissionPerContract + extraFeesPerContract
+                roundTripFees2 = oneWayFees2 * 2
+                slipPts2 = slippageTicksOneWay * syminfo.mintick
+                mesBEOffsetPts := (roundTripFees2 / safePointValue) + slipPts2
+            float mesBEStop = localEntryPrice - mesBEOffsetPts
+            float mesBETriggerPts = mesTargetPts * mes3mBoosterBETriggerPctOfTarget
+            float mesStop = (currentProfitPts >= mesBETriggerPts) ? math.min(activeStop, mesBEStop) : activeStop
+            float mes5mBEOffsetPts = 0.0
+            if mes5mUseFeesForBE
+                oneWayFees3 = commissionPerContract + extraFeesPerContract
+                roundTripFees3 = oneWayFees3 * 2
+                slipPts3 = slippageTicksOneWay * syminfo.mintick
+                mes5mBEOffsetPts := (roundTripFees3 / safePointValue) + slipPts3
+            float mes5mBEStop = localEntryPrice - mes5mBEOffsetPts
+            float mes5mBETriggerPts = mes5mTargetPts * mes5mBETriggerPctOfTarget
+            float mes5mStop = (currentProfitPts >= mes5mBETriggerPts) ? math.min(activeStop, mes5mBEStop) : activeStop
+            int baseSingleTargetTicks = v71_useQuickScalp ? v71_quickScalpTicks : ((highWinRateMode and (isMnqWinTF or isMES)) ? tp1Ticks : tp2Ticks)
+            targetTicks = useMnq3mBooster ? boosterTargetTicks : useMes3mBooster ? mesTargetTicks : useMes5mBooster ? mes5mTargetTicks : baseSingleTargetTicks
+            float finalStop = useMnq3mBooster ? boosterStop : useMes3mBooster ? mesStop : useMes5mBooster ? mes5mStop : activeStop
+            if useTP and useSL
+                strategy.exit("V71_TP_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks, stop=finalStop)
+            else if useTP
+                strategy.exit("V71_TP_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("V71_SL_SINGLE_S", from_entry="SHORT", qty_percent=100, stop=finalStop)
+        else
+            if useTP
+                strategy.exit("V71_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("V71_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("V71_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("V71_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("V71_SL_S", from_entry="SHORT", stop=activeStop)
+
+// ==================== 🛡️ SAFETY EXITS ====================
+getBackupSL() =>
+    isMES ? backupSL_MES : isMNQ ? backupSL_MNQ : backupSL_Default
+mesMJV6Active = isMES and useMJV6MesProfitLogic
+if enableBackupSL and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
+    backupSLDistance = getBackupSL()
+    if strategy.position_size > 0
+        backupStopLevel = entryPrice - backupSLDistance
+        if close <= backupStopLevel and not exitIssuedThisBar and currentProfitDollars < 0
+            strategy.close("LONG", comment="BACKUP_SL")
+            exitIssuedThisBar := true
+            lastExitReason := "BACKUP_SL"
+    else if strategy.position_size < 0
+        backupStopLevel = entryPrice + backupSLDistance
+        if close >= backupStopLevel and not exitIssuedThisBar and currentProfitDollars < 0
+            strategy.close("SHORT", comment="BACKUP_SL")
+            exitIssuedThisBar := true
+            lastExitReason := "BACKUP_SL"
+if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclearMaxBars and not exitIssuedThisBar
+    strategy.close_all(comment="NUCLEAR_EXIT")
+    exitIssuedThisBar := true
+    lastExitReason := "NUCLEAR_EXIT"
+
+v71_rsiNow = rsi
+v71_rsiPrev = rsi[momentumFadeBars]
+v71_inProfit = strategy.position_size > 0 ? (close > entryPrice) : strategy.position_size < 0 ? (close < entryPrice) : false
+if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars and not mesMJV6Active
+    if strategy.position_size > 0
+        if v71_rsiNow < v71_rsiPrev - momentumFadeThreshold and v71_rsiNow < 50
+            if not exitIssuedThisBar
+                strategy.close("LONG", comment="V71_MOM_FADE")
+                exitIssuedThisBar := true
+                lastExitReason := "V71_MOM_FADE"
+    else if strategy.position_size < 0
+        if v71_rsiNow > v71_rsiPrev + momentumFadeThreshold and v71_rsiNow > 50
+            if not exitIssuedThisBar
+                strategy.close("SHORT", comment="V71_MOM_FADE")
+                exitIssuedThisBar := true
+                lastExitReason := "V71_MOM_FADE"
+
+strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull and not isDojiBar
+strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear and not isDojiBar
+kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
+if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal and not mesMJV6Active
+    if strategy.position_size > 0 and strongOpposingSell
+        if not exitIssuedThisBar
+            strategy.close("LONG", comment="SIGNAL_REVERSAL_STRONG")
+            exitIssuedThisBar := true
+            lastExitReason := "SIGNAL_REVERSAL"
+    else if strategy.position_size < 0 and strongOpposingBuy
+        if not exitIssuedThisBar
+            strategy.close("SHORT", comment="SIGNAL_REVERSAL_STRONG")
+            exitIssuedThisBar := true
+            lastExitReason := "SIGNAL_REVERSAL"
+
+if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay and not exitIssuedThisBar and not mesMJV6Active
+    strategy.close_all(comment="EOD_EXIT")
+    exitIssuedThisBar := true
+    lastExitReason := "EOD_EXIT"
+if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
+    lossThresholdDollars = (strategy.equity * losingTradeThreshold / 100)
+    if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0 and not exitIssuedThisBar
+        strategy.close_all(comment="LOSING_AUTO")
+        exitIssuedThisBar := true
+        lastExitReason := "LOSING_AUTO"
+if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar and not mesMJV6Active
+    strategy.close_all(comment="MAX_HOLD")
+    exitIssuedThisBar := true
+    lastExitReason := "MAX_HOLD"
+
+// ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
+tpUseSim = tpSimulateBrokerPosition or alertOnlyMode
+tpFlat = tpUseSim ? (tpPosDir == 0 or tpPosQty <= 0) : (strategy.position_size == 0)
+tpLong = tpUseSim ? (tpPosDir == 1 and tpPosQty > 0) : (strategy.position_size > 0)
+tpShort = tpUseSim ? (tpPosDir == -1 and tpPosQty > 0) : (strategy.position_size < 0)
+tpQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size))
+
+tpNum(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpNumInt(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpSession =
+     isLondonSession ? "LONDON" :
+     isNYSession ? "NY" :
+     isAsianSession ? "ASIAN" :
+     isUAESession ? "UAE" : "OTHER"
+tpSignalId(action, dir) =>
+    str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
+
+if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat and not tookTradeThisBar
+    if (longCondition and tpShort) or (shortCondition and tpLong)
+        exitDir = tpShort ? "SHORT" : tpLong ? "LONG" : "FLAT"
+        exitQty = tpQty
+        exitSigId = tpSignalId("exit", exitDir)
+        exitNowMessage = '{' +
+             '"ticker":"' + actualTicker + '",' +
+             '"action":"exit",' +
+             '"quantity":' + tpNumInt(exitQty) + ',' +
+             '"strategy":"' + tpStrategyName + '",' +
+             '"timeframe":"' + timeframe.period + '",' +
+             '"instrument":"' + instrumentName + '",' +
+             '"signal_id":"' + exitSigId + '",' +
+             '"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+        if exitQty > 0
+            alert(exitNowMessage, alert.freq_once_per_bar)
+            if tpUseSim
+                tpPosDir := 0
+                tpPosBar := bar_index
+                tpPosQty := 0
+            tookTradeThisBar := true
+
+if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
+    bool is3m_chart = timeframe.period == "3"
+    bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
+    float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    if useManualDollarOverrides and manualDollarSL > 0
+        currentSL_pts := manualDollarSL / safePointValue
+    if useManualDollarOverrides and manualDollarTP > 0
+        currentTP1_pts := manualDollarTP / safePointValue
+    localSL = close - currentSL_pts
+    localTP1 = close + currentTP1_pts
+    slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
+    tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
+    entrySigId = tpSignalId("buy", "LONG")
+    longEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"buy",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"stop_loss":' + tpNum(localSL) + ',' +
+         '"take_profit":' + tpNum(localTP1) + ',' +
+         (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
+         (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_type":"' + activeSignalType + '",' +
+         '"confluence":' + tpNumInt(totalConfluenceScore) + ',' +
+         '"session":"' + tpSession + '",' +
+         '"signal_price":' + tpNum(close) + ',' +
+         '"mtf_alignment_pct":' + tpNumInt(mtf_alignment_pct) + ',' +
+         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + (candleBull ? "GREEN" : "RED") + '",' +
+         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosDir := 1
+        tpPosBar := bar_index
+        tpPosQty := finalContractQty
+
+if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addSigId = tpSignalId("add", "LONG")
+    addLongMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"add",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + addSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addLongMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosQty := tpPosQty + finalContractQty
+    tookTradeThisBar := true
+
+if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
+    bool is3m_chart = timeframe.period == "3"
+    bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
+    float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    if useManualDollarOverrides and manualDollarSL > 0
+        currentSL_pts := manualDollarSL / safePointValue
+    if useManualDollarOverrides and manualDollarTP > 0
+        currentTP1_pts := manualDollarTP / safePointValue
+    localSL = close + currentSL_pts
+    localTP1 = close - currentTP1_pts
+    slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
+    tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
+    entrySigId = tpSignalId("sell", "SHORT")
+    shortEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"sell",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"stop_loss":' + tpNum(localSL) + ',' +
+         '"take_profit":' + tpNum(localTP1) + ',' +
+         (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
+         (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_type":"' + activeSignalType + '",' +
+         '"confluence":' + tpNumInt(totalConfluenceScore) + ',' +
+         '"session":"' + tpSession + '",' +
+         '"signal_price":' + tpNum(close) + ',' +
+         '"mtf_alignment_pct":' + tpNumInt(mtf_alignment_pct) + ',' +
+         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + (candleBear ? "RED" : "GREEN") + '",' +
+         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
+         '"signal_id":"' + entrySigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosDir := -1
+        tpPosBar := bar_index
+        tpPosQty := finalContractQty
+
+if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
+    addSigId = tpSignalId("add", "SHORT")
+    addShortMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"add",' +
+         '"quantity":' + tpNumInt(finalContractQty) + ',' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + addSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(addShortMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if tpUseSim
+        tpPosQty := tpPosQty + finalContractQty
+    tookTradeThisBar := true
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts and not tookTradeThisBar
+    exitQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size[1]))
+    exitDir = tpUseSim ? (tpPosDir == 1 ? "LONG" : tpPosDir == -1 ? "SHORT" : "FLAT") : (strategy.position_size[1] > 0 ? "LONG" : "SHORT")
+    exitSigId = tpSignalId("exit", exitDir)
+    exitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"quantity":' + tpNumInt(exitQty) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + exitSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    if exitQty > 0
+        alert(exitMessage, alert.freq_once_per_bar)
+        if tpUseSim
+            tpPosDir := 0
+            tpPosBar := bar_index
+            tpPosQty := 0
+        tookTradeThisBar := true
+
+if tpSendEODExitAlert and useEndOfDayExits and isEndOfDay and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and tpPosQty > 0 and not tookTradeThisBar
+    exitSigId = tpSignalId("exit", tpPosDir == 1 ? "LONG" : "SHORT")
+    eodExitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"quantity":' + tpNumInt(tpPosQty) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal_id":"' + exitSigId + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(eodExitMessage, alert.freq_once_per_bar)
+    tpPosDir := 0
+    tpPosBar := bar_index
+    tpPosQty := 0
+    tookTradeThisBar := true
+
+// ==================== 📊 VISUAL INDICATORS ====================
 hullMainColor = slopeMain == 1 ? color.new(color.green, 50) : slopeMain == -1 ? color.new(color.red, 50) : color.new(color.gray, 70)
 hullFastColor = slopeFast == 1 ? color.new(color.lime, 30) : slopeFast == -1 ? color.new(color.orange, 30) : color.new(color.gray, 50)
 plot(hullMain, "Hull Main", color=hullMainColor, linewidth=3)
@@ -1837,4 +2655,42 @@ bgcolor(choppyBgColor, title="Choppy Market")
 bgcolor(profitTargetReached ? color.new(color.green, 95) : na, title="Profit Target Reached")
 optimalSessionBg = isOptimalSession ? color.new(color.green, 97) : na
 bgcolor(isOptimalSession ? optimalSessionBg : na, title="Optimal Session")
+
+// ==================== 📊 PERFORMANCE METRICS TABLE ====================
+var table perfTable = table.new(position.top_right, 2, 14, border_width=1)
+winRateAll = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+targetProgress = dailyProfitTarget > 0 ? (dailyPnL / dailyProfitTarget) * 100 : 0
+if barstate.islast
+    table.cell(perfTable, 0, 0, "🏆 WIN RATE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 0, str.tostring(winRateAll, "#.#") + "%", text_color=winRateAll >= 70 ? color.green : winRateAll >= 60 ? color.yellow : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 1, "TRADES", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 1, str.tostring(strategy.closedtrades), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 2, "NET P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 2, "$" + str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 3, "DAILY P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 3, "$" + str.tostring(dailyPnL, "#.##"), text_color=dailyPnL >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 4, "TARGET", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 4, str.tostring(targetProgress, "#") + "%", text_color=profitTargetReached ? color.green : color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 5, "HTF LONG", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 5, str.tostring(htfAlignLongCount) + "/3", text_color=htfAlignLongCount >= 1 ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 6, "HTF SHORT", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 6, str.tostring(htfAlignShortCount) + "/3", text_color=htfAlignShortCount >= 1 ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 7, "ADX", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 7, str.tostring(adxValue, "#.#"), text_color=adxValue > choppyADXThreshold ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 8, "RSI", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 8, str.tostring(rsi, "#.#"), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 9, "MODE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    modeText = hasMomentumOverrideLong or hasMomentumOverrideShort ? "MOMENTUM" : impulseLong or impulseShort ? "IMPULSE" : hasTrendOverrideBull or hasTrendOverrideBear ? "TREND" : "NORMAL"
+    modeColor = hasMomentumOverrideLong or hasMomentumOverrideShort ? color.yellow : impulseLong or impulseShort ? color.aqua : hasTrendOverrideBull or hasTrendOverrideBear ? color.lime : color.white
+    table.cell(perfTable, 1, 9, modeText, text_color=modeColor, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 10, "V71 OPT", text_color=color.white, bgcolor=color.new(color.purple, 70))
+    v71StatusText = v71_trailingActive ? "TRAIL" : v71_profitLockActive ? "LOCK" : strategy.position_size != 0 ? "ACTIVE" : "READY"
+    v71StatusColor = v71_trailingActive ? color.lime : v71_profitLockActive ? color.aqua : color.white
+    table.cell(perfTable, 1, 10, v71StatusText, text_color=v71StatusColor, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 11, "VOL ADJ", text_color=color.white, bgcolor=color.new(color.purple, 70))
+    table.cell(perfTable, 1, 11, str.tostring(v71_volAdjust, "#.##") + "x", text_color=v71_volAdjust < 1.0 ? color.orange : color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 12, "BLOCK", text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(perfTable, 1, 12, lastBlockReason, text_color=lastBlockReason == "NONE" ? color.green : color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 13, "LAST EXIT", text_color=color.white, bgcolor=color.new(color.orange, 70))
+    table.cell(perfTable, 1, 13, lastExitReason, text_color=color.white, bgcolor=color.new(color.gray, 85))
 
