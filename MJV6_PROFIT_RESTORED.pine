@@ -1628,20 +1628,20 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
 
 // ATR for profit calculations (using local calculation like original MJV6)
 atr_profit = ta.atr(10)
-futuresStopDistance = atr_profit * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
-futuresTPDistance = atr_profit * tpMultiplier
-ultraQuickTP = atr_profit * (tpMultiplier * 0.5)
+mjv6StopDist = atr_profit * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
+mjv6TPDist = atr_profit * tpMultiplier
+mjv6QuickTP = atr_profit * (tpMultiplier * 0.5)
 
 // LONG POSITIONS - EXACT ORIGINAL MJV6 LOGIC
 if strategy.position_size > 0
     float entryPriceLong = strategy.position_avg_price
-    float stopLossLong = entryPriceLong - futuresStopDistance
+    float stopLossLong = entryPriceLong - mjv6StopDist
     
     // TP Ladder - 60/25/10/5 split (EXACT from original MJV6)
-    int tp1PointsL = math.round((ultraQuickTP * 0.4) / syminfo.mintick)
-    int tp2PointsL = math.round((futuresTPDistance * 0.3) / syminfo.mintick)
-    int tp3PointsL = math.round((futuresTPDistance * 0.6) / syminfo.mintick)
-    int tp4PointsL = math.round((futuresTPDistance * 1.0) / syminfo.mintick)
+    int tp1PointsL = math.round((mjv6QuickTP * 0.4) / syminfo.mintick)
+    int tp2PointsL = math.round((mjv6TPDist * 0.3) / syminfo.mintick)
+    int tp3PointsL = math.round((mjv6TPDist * 0.6) / syminfo.mintick)
+    int tp4PointsL = math.round((mjv6TPDist * 1.0) / syminfo.mintick)
     
     strategy.exit("TP1_L", from_entry="LONG", qty_percent=60, profit=tp1PointsL)
     strategy.exit("TP2_L", from_entry="LONG", qty_percent=25, profit=tp2PointsL)
@@ -1653,7 +1653,7 @@ if strategy.position_size > 0
         strategy.close("LONG", comment="TIME_EXIT")
     
     // Smart trailing OR fixed stop (EXACT from original MJV6)
-    if useSmartTrailing and close > entryPriceLong + (futuresTPDistance * trailActivationRatio)
+    if useSmartTrailing and close > entryPriceLong + (mjv6TPDist * trailActivationRatio)
         float trailDist = atr_profit * 0.6
         strategy.exit("TRAIL_L", from_entry="LONG", stop=close - trailDist)
     else
@@ -1662,13 +1662,13 @@ if strategy.position_size > 0
 // SHORT POSITIONS - EXACT ORIGINAL MJV6 LOGIC
 if strategy.position_size < 0
     float entryPriceShort = strategy.position_avg_price
-    float stopLossShort = entryPriceShort + futuresStopDistance
+    float stopLossShort = entryPriceShort + mjv6StopDist
     
     // TP Ladder for shorts (EXACT from original MJV6)
-    int tp1PointsS = math.round((ultraQuickTP * 0.5) / syminfo.mintick)
-    int tp2PointsS = math.round((futuresTPDistance * 0.4) / syminfo.mintick)
-    int tp3PointsS = math.round((futuresTPDistance * 0.7) / syminfo.mintick)
-    int tp4PointsS = math.round((futuresTPDistance * 1.1) / syminfo.mintick)
+    int tp1PointsS = math.round((mjv6QuickTP * 0.5) / syminfo.mintick)
+    int tp2PointsS = math.round((mjv6TPDist * 0.4) / syminfo.mintick)
+    int tp3PointsS = math.round((mjv6TPDist * 0.7) / syminfo.mintick)
+    int tp4PointsS = math.round((mjv6TPDist * 1.1) / syminfo.mintick)
     
     strategy.exit("TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1PointsS)
     strategy.exit("TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2PointsS)
@@ -1680,7 +1680,7 @@ if strategy.position_size < 0
         strategy.close("SHORT", comment="TIME_EXIT")
     
     // Smart trailing OR fixed stop (EXACT from original MJV6)
-    if useSmartTrailing and close < entryPriceShort - (futuresTPDistance * trailActivationRatio)
+    if useSmartTrailing and close < entryPriceShort - (mjv6TPDist * trailActivationRatio)
         float trailDist = atr_profit * 0.6
         strategy.exit("TRAIL_S", from_entry="SHORT", stop=close + trailDist)
     else
