@@ -837,7 +837,23 @@ isDojiBar =
 // ==================== ✅ Candle Quality Gate (ATR-relative) ====================
 minBodyRatioEntry = input.float(0.35, "Min body ratio for ALL entries", minval=0.15, maxval=0.80, step=0.01)
 minBodyAtrEntry = input.float(0.12, "Min body size (×ATR10) for ALL entries", minval=0.03, maxval=0.40, step=0.01)
-candleQualityOK = (not isDojiBar) and (bodyRatio >= minBodyRatioEntry) and (atr10 <= 0 or bodySize >= atr10 * minBodyAtrEntry)
+// Auto-tune candle quality for MNQ/MES 3m/5m:
+// Goal: block dojis/tiny bodies, but still allow legit trend-run candles (prevents “no trades”).
+minBodyRatioEntry_eff =
+     not enableFilterHarmony ? minBodyRatioEntry :
+     isMNQ_3m ? 0.28 :
+     isMNQ_5m ? 0.26 :
+     isMES_3m ? 0.30 :
+     isMES_5m ? 0.32 :
+     minBodyRatioEntry
+minBodyAtrEntry_eff =
+     not enableFilterHarmony ? minBodyAtrEntry :
+     isMNQ_3m ? 0.08 :
+     isMNQ_5m ? 0.07 :
+     isMES_3m ? 0.09 :
+     isMES_5m ? 0.10 :
+     minBodyAtrEntry
+candleQualityOK = (not isDojiBar) and (bodyRatio >= minBodyRatioEntry_eff) and (atr10 <= 0 or bodySize >= atr10 * minBodyAtrEntry_eff)
 avgVolume = ta.sma(volume, 20)
 volumeOK = not requireVolumeConfirmation or volume > avgVolume * 0.8
 minCandleSize = currentATR * minPatternSize
@@ -1767,8 +1783,12 @@ if enableFilterHarmony
     fhMtfLongOK = (not enableMTF or mtfMode != "Filter") or mtfLongOK or fhStrongLong
     fhMtfShortOK = (not enableMTF or mtfMode != "Filter") or mtfShortOK or fhStrongShort
 
-    canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and strengthGateLongOK and fhStrictLongOK and fhMandatoryLongOK and fhMtfLongOK
-    canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and strengthGateShortOK and fhStrictShortOK and fhMandatoryShortOK and fhMtfShortOK
+    // Strength gate can starve trades if set too strict; in Harmony mode treat it as “soft”
+    // when a clearly strong setup exists (impulse/ignition/continuation/override).
+    fhStrengthLongOK = strengthGateLongOK or fhStrongLong
+    fhStrengthShortOK = strengthGateShortOK or fhStrongShort
+    canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and fhStrengthLongOK and fhStrictLongOK and fhMandatoryLongOK and fhMtfLongOK
+    canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and fhStrengthShortOK and fhStrictShortOK and fhMandatoryShortOK and fhMtfShortOK
 else
     canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
     canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
