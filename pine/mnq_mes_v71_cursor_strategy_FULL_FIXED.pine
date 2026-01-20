@@ -125,6 +125,14 @@ kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-revers
 useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
 
+// MNQ 3m expectancy fix:
+// The classic Kenya 60/25/10/5 ladder can go negative at ~50–55% WR because losses are full-size while wins are often partial.
+// This booster is SINGLE-CONTRACT ONLY and is designed to lift MNQ 3m WR + expectancy without changing multi-contract behavior.
+kenyaMnq3mUseSingleBooster = input.bool(true, "MNQ 3m: Kenya SINGLE booster (1 contract)", group=kenyaGroup)
+kenyaMnq3mTargetPctOfTP1 = input.float(0.75, "MNQ 3m booster: target = TP1 × pct", minval=0.40, maxval=1.00, step=0.05, group=kenyaGroup)
+kenyaMnq3mBETriggerPctOfTarget = input.float(0.55, "MNQ 3m booster: move stop to BE after target × pct", minval=0.20, maxval=1.00, step=0.05, group=kenyaGroup)
+kenyaMnq3mUseFeesForBE = input.bool(true, "MNQ 3m booster: BE includes fees/slippage", group=kenyaGroup)
+
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
 enableAdaptiveTrailing = input.bool(true, "✅ Enable Adaptive Trailing Stop", group=winOptGroup)
@@ -2491,11 +2499,11 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
         if useSL and not exitIssuedThisBar
             float stopPrice = stopLoss
             float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
-            if useSmartTrailing and close < entryPrice - (futuresTPDistance * actRatio)
+            if useSmartTrailing and close < mjvEntryPrice - (mjvFuturesTPDistance * actRatio)
                 float trailDistance = mjvAtr * 0.6
                 stopPrice := close + trailDistance
-            if mesMJV6HighWinProtect and close < entryPrice - (futuresTPDistance * mesMJV6BETriggerPct)
-                stopPrice := math.min(stopPrice, entryPrice - mjvBEOffsetPts)
+            if mesMJV6HighWinProtect and close < mjvEntryPrice - (mjvFuturesTPDistance * mesMJV6BETriggerPct)
+                stopPrice := math.min(stopPrice, mjvEntryPrice - mjvBEOffsetPts)
             strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
 
 if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic)
@@ -2527,19 +2535,46 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
     v71_tp1Target := currentTP1
 
     if kenyaActive
-        // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
+        // Kenya ladder exits (exact 60/25/10/5 + fixed SL) by default.
+        // MNQ 3m SINGLE booster (1 contract) improves expectancy at moderate WR by using a smaller target + BE protection.
         localStopLoss = localEntryPrice - currentSL
-        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
-        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
-        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
-        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
-        if useTP
-            strategy.exit("KENYA_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
-            strategy.exit("KENYA_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
-            strategy.exit("KENYA_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
-            strategy.exit("KENYA_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
-        if useSL
-            strategy.exit("KENYA_SL_L", from_entry="LONG", stop=localStopLoss)
+        bool kenyaSingle = math.abs(strategy.position_size) == 1
+        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
+
+        // Fees-aware BE offset (points)
+        float kenyaBEOffsetPts = 0.0
+        if kenyaSingleBooster and kenyaMnq3mUseFeesForBE and enableFeeModel
+            oneWayFeesK = commissionPerContract + extraFeesPerContract
+            roundTripFeesK = oneWayFeesK * 2
+            slipPtsK = slippageTicksOneWay * syminfo.mintick
+            kenyaBEOffsetPts := (roundTripFeesK / safePointValue) + slipPtsK
+
+        if kenyaSingleBooster
+            float targetPts = currentTP1 * kenyaMnq3mTargetPctOfTP1
+            int targetTicks = math.round(targetPts / syminfo.mintick)
+            float curProfitPts = close - localEntryPrice
+            float beTriggerPts = targetPts * kenyaMnq3mBETriggerPctOfTarget
+            float stopNow = localStopLoss
+            if curProfitPts >= beTriggerPts
+                stopNow := math.max(stopNow, localEntryPrice + kenyaBEOffsetPts)
+            if useTP and useSL
+                strategy.exit("KENYA_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks, stop=stopNow)
+            else if useTP
+                strategy.exit("KENYA_SINGLE_L", from_entry="LONG", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("KENYA_SINGLE_L", from_entry="LONG", qty_percent=100, stop=stopNow)
+        else
+            tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+            tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+            tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+            tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+            if useTP
+                strategy.exit("KENYA_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("KENYA_TP2_L", from_entry="LONG", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("KENYA_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("KENYA_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("KENYA_SL_L", from_entry="LONG", stop=localStopLoss)
     else
         // --- V71 logic ---
         currentProfitPts = close - localEntryPrice
@@ -2687,17 +2722,42 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
     // Kenya ladder exits (exact 60/25/10/5 + fixed SL) — no V71/booster logic.
     if kenyaActive
         localStopLoss = localEntryPrice + currentSL
-        tp1Ticks = math.round(currentTP1 / syminfo.mintick)
-        tp2Ticks = math.round(currentTP2 / syminfo.mintick)
-        tp3Ticks = math.round(currentTP3 / syminfo.mintick)
-        tp4Ticks = math.round(currentTP4 / syminfo.mintick)
-        if useTP
-            strategy.exit("KENYA_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
-            strategy.exit("KENYA_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
-            strategy.exit("KENYA_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
-            strategy.exit("KENYA_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
-        if useSL
-            strategy.exit("KENYA_SL_S", from_entry="SHORT", stop=localStopLoss)
+        bool kenyaSingle = math.abs(strategy.position_size) == 1
+        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
+
+        float kenyaBEOffsetPts = 0.0
+        if kenyaSingleBooster and kenyaMnq3mUseFeesForBE and enableFeeModel
+            oneWayFeesK = commissionPerContract + extraFeesPerContract
+            roundTripFeesK = oneWayFeesK * 2
+            slipPtsK = slippageTicksOneWay * syminfo.mintick
+            kenyaBEOffsetPts := (roundTripFeesK / safePointValue) + slipPtsK
+
+        if kenyaSingleBooster
+            float targetPts = currentTP1 * kenyaMnq3mTargetPctOfTP1
+            int targetTicks = math.round(targetPts / syminfo.mintick)
+            float curProfitPts = localEntryPrice - close
+            float beTriggerPts = targetPts * kenyaMnq3mBETriggerPctOfTarget
+            float stopNow = localStopLoss
+            if curProfitPts >= beTriggerPts
+                stopNow := math.min(stopNow, localEntryPrice - kenyaBEOffsetPts)
+            if useTP and useSL
+                strategy.exit("KENYA_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks, stop=stopNow)
+            else if useTP
+                strategy.exit("KENYA_SINGLE_S", from_entry="SHORT", qty_percent=100, profit=targetTicks)
+            else if useSL
+                strategy.exit("KENYA_SINGLE_S", from_entry="SHORT", qty_percent=100, stop=stopNow)
+        else
+            tp1Ticks = math.round(currentTP1 / syminfo.mintick)
+            tp2Ticks = math.round(currentTP2 / syminfo.mintick)
+            tp3Ticks = math.round(currentTP3 / syminfo.mintick)
+            tp4Ticks = math.round(currentTP4 / syminfo.mintick)
+            if useTP
+                strategy.exit("KENYA_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Ticks)
+                strategy.exit("KENYA_TP2_S", from_entry="SHORT", qty_percent=25, profit=tp2Ticks)
+                strategy.exit("KENYA_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Ticks)
+                strategy.exit("KENYA_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Ticks)
+            if useSL
+                strategy.exit("KENYA_SL_S", from_entry="SHORT", stop=localStopLoss)
     else
         // --- V71 logic continues below ---
 
