@@ -916,11 +916,34 @@ prevRange = high[1] - low[1]
 prevBody = math.abs(close[1] - open[1])
 prevBodyRatio = prevRange > 0 ? (prevBody / prevRange) : 0.0
 
-curStrongBull = candleBull and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
-curStrongBear = candleBear and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
+// Auto-tune P-1 thresholds per instrument/timeframe (earlier entries on MNQ/MES 3m/5m)
+trendStartBodyMin_eff =
+     not enableFilterHarmony ? trendStartBodyMin :
+     isMNQ_3m ? 0.34 :
+     isMNQ_5m ? 0.32 :
+     isMES_3m ? 0.36 :
+     isMES_5m ? 0.38 :
+     trendStartBodyMin
+trendStartVolMult_eff =
+     not enableFilterHarmony ? trendStartVolMult :
+     isMNQ_3m ? 1.05 :
+     isMNQ_5m ? 1.00 :
+     isMES_3m ? 1.10 :
+     isMES_5m ? 1.15 :
+     trendStartVolMult
+trendStartPrevVolMult_eff =
+     not enableFilterHarmony ? trendStartPrevVolMult :
+     isMNQ_3m ? 0.95 :
+     isMNQ_5m ? 0.90 :
+     isMES_3m ? 1.00 :
+     isMES_5m ? 1.05 :
+     trendStartPrevVolMult
 
-prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * trendStartPrevVolMult)
-prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * trendStartPrevVolMult)
+curStrongBull = candleBull and candleQualityOK and bodyRatio >= trendStartBodyMin_eff and (volume > volumeMA * trendStartVolMult_eff)
+curStrongBear = candleBear and candleQualityOK and bodyRatio >= trendStartBodyMin_eff and (volume > volumeMA * trendStartVolMult_eff)
+
+prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin_eff and (volume[1] > volumeMA[1] * trendStartPrevVolMult_eff)
+prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin_eff and (volume[1] > volumeMA[1] * trendStartPrevVolMult_eff)
 
 accelBull = (close - close[1]) > (close[1] - close[2])
 accelBear = (close[1] - close) > (close[2] - close[1])
@@ -1090,11 +1113,55 @@ vwapDist = math.abs(close - vwapVal)
 vwapDistOK = (atr10 <= 0) ? true : (vwapDist >= atr10 * tibVwapDistATR)
 breakUp = close > ta.highest(high, tibBreakLookback)[1]
 breakDn = close < ta.lowest(low, tibBreakLookback)[1]
-volOK_TIB = volume >= volumeMA * tibVolMult
-rangeExpOK = avgRange5 > 0 ? (totalRange >= avgRange5 * tibRangeMult) : false
+// Auto-tune TIB/CPB for MNQ/MES 3m/5m to capture runs earlier.
+tibRangeMult_eff =
+     not enableFilterHarmony ? tibRangeMult :
+     isMNQ_3m ? 1.15 :
+     isMNQ_5m ? 1.12 :
+     isMES_3m ? 1.20 :
+     isMES_5m ? 1.25 :
+     tibRangeMult
+tibBodyMin_eff =
+     not enableFilterHarmony ? tibBodyMin :
+     isMNQ_3m ? 0.50 :
+     isMNQ_5m ? 0.48 :
+     isMES_3m ? 0.52 :
+     isMES_5m ? 0.55 :
+     tibBodyMin
+tibRsiDeltaMin_eff =
+     not enableFilterHarmony ? tibRsiDeltaMin :
+     isMNQ_3m ? 0.6 :
+     isMNQ_5m ? 0.5 :
+     isMES_3m ? 0.8 :
+     isMES_5m ? 1.0 :
+     tibRsiDeltaMin
+tibVolMult_eff2 =
+     not enableFilterHarmony ? tibVolMult :
+     isMNQ_3m ? 1.05 :
+     isMNQ_5m ? 1.00 :
+     isMES_3m ? 1.10 :
+     isMES_5m ? 1.15 :
+     tibVolMult
+cpbRetraceATR_eff =
+     not enableFilterHarmony ? cpbRetraceATR :
+     isMNQ_3m ? 0.45 :
+     isMNQ_5m ? 0.50 :
+     isMES_3m ? 0.40 :
+     isMES_5m ? 0.35 :
+     cpbRetraceATR
+cpbReexpandRangeMult_eff =
+     not enableFilterHarmony ? cpbReexpandRangeMult :
+     isMNQ_3m ? 0.85 :
+     isMNQ_5m ? 0.85 :
+     isMES_3m ? 0.90 :
+     isMES_5m ? 0.92 :
+     cpbReexpandRangeMult
 
-tibLong = enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin and rangeExpOK and (rsiDelta >= tibRsiDeltaMin) and breakUp and vwapDistOK and volOK_TIB and trendAlignedLong and canTradeNow
-tibShort = enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin) and breakDn and vwapDistOK and volOK_TIB and trendAlignedShort and canTradeNow
+volOK_TIB = volume >= volumeMA * tibVolMult_eff2
+rangeExpOK = avgRange5 > 0 ? (totalRange >= avgRange5 * tibRangeMult_eff) : false
+
+tibLong = enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta >= tibRsiDeltaMin_eff) and breakUp and vwapDistOK and volOK_TIB and trendAlignedLong and canTradeNow
+tibShort = enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and breakDn and vwapDistOK and volOK_TIB and trendAlignedShort and canTradeNow
 
 var int lastIgnBar = na
 var int lastIgnDir = 0
@@ -1121,8 +1188,8 @@ if barsFromIgn <= cpbMaxBars
 pullbackDepthLong = (atr10 > 0) ? math.max(0.0, (hiSinceIgn - low) / atr10) : 0.0
 pullbackDepthShort = (atr10 > 0) ? math.max(0.0, (high - loSinceIgn) / atr10) : 0.0
 
-cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult) and trendAlignedLong and canTradeNow
-cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult) and trendAlignedShort and canTradeNow
+cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR_eff) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedLong and canTradeNow
+cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR_eff) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedShort and canTradeNow
 
 // Price momentum
 priceChange = close - close[5]
