@@ -654,6 +654,12 @@ is1hour = currentTF == "60" or currentTF == "1h"
 is2hour = currentTF == "120" or currentTF == "2h"
 is4hour = currentTF == "240" or currentTF == "4h"
 
+// Convenience flags used by auto-tuners (must be declared before use).
+isMNQ_3m = isMNQ and is3min
+isMNQ_5m = isMNQ and is5min
+isMES_3m = isMES and is3min
+isMES_5m = isMES and is5min
+
 tfMultiplier1m = isMYM ? baseTfMultiplier1m * 1.05 : isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
 tfMultiplier2m = isMYM ? baseTfMultiplier2m * 1.04 : isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
 tfMultiplier3m = isMYM ? baseTfMultiplier3m * 1.03 : isMNQ ? baseTfMultiplier3m * 1.01 : isMES ? baseTfMultiplier3m * 1.01 : isMCL ? baseTfMultiplier3m * 0.99 : isMGC ? baseTfMultiplier3m * 0.97 : isM2K ? baseTfMultiplier3m * 1.01 : baseTfMultiplier3m
