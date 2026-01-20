@@ -194,7 +194,7 @@ allowPriorityMinus1 = input.bool(true, "P-1: Trend Start (Ignition) 🔥", group
 allowPriority1 = input.bool(true, "P1: Impulse Override 🚀", group=priorityGroup)
 allowPriority1Early = input.bool(true, "P1: Early Trend Start (SuperTrend flip + momentum)", group=priorityGroup)
 allowPriority2 = input.bool(true, "P2: Strong Trend Override 📈", group=priorityGroup)
-allowPriority3 = input.bool(false, "P3: 5-Star Entry", group=priorityGroup)
+allowPriority3 = input.bool(true, "P3: 5-Star Entry", group=priorityGroup)
 allowPriority4 = input.bool(false, "P4: 4-Star Entry", group=priorityGroup)
 allowPriority5 = input.bool(false, "P5: 3-Star Entry", group=priorityGroup)
 allowPriority6 = input.bool(false, "P6: 2-Star Entry", group=priorityGroup)
@@ -1367,7 +1367,9 @@ trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
 trendChange = trend != trend[1]
 
 strongTrend = trendStrength > 0.15
-rangingMarket = trendStrength < 0.08
+// Smarter “range” detector (prevents early trend from being misclassified as range on 3m/5m)
+// Range requires multiple signals of consolidation: low trend strength + low ADX + tight BB + no ATR expansion.
+rangingMarket = (trendStrength < 0.08) and (adxValue < choppyADXThreshold) and isTightBB and (not atrExpandingNow)
 moderateTrend = not strongTrend and not rangingMarket
 
 currentVol = ta.atr(volatilityPeriod)
@@ -1781,8 +1783,10 @@ if enableFilterHarmony
     fhHtfLongOK = htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong)) or fhStrongLong
     fhHtfShortOK = htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort)) or fhStrongShort
 
-    fhStrictLongOK = (not enableStrictEntryFilter) or v71_strictEntryOK or fhStrongLong
-    fhStrictShortOK = (not enableStrictEntryFilter) or v71_strictEntryOK or fhStrongShort
+    // STRICT FILTER (ADX+RSI) becomes “soft” in Filter Harmony mode.
+    // Do NOT hard-block canGoLong/canGoShort here; the quality score already penalizes weak conditions.
+    fhStrictLongOK = true
+    fhStrictShortOK = true
 
     fhMandatoryLongOK = (not enableMandatoryTrendOnly) or mandatoryLongOK or fhStrongLong
     fhMandatoryShortOK = (not enableMandatoryTrendOnly) or mandatoryShortOK or fhStrongShort
@@ -1794,8 +1798,8 @@ if enableFilterHarmony
     // when a clearly strong setup exists (impulse/ignition/continuation/override).
     fhStrengthLongOK = strengthGateLongOK or fhStrongLong
     fhStrengthShortOK = strengthGateShortOK or fhStrongShort
-    canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and fhStrengthLongOK and fhStrictLongOK and fhMandatoryLongOK and fhMtfLongOK
-    canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and fhStrengthShortOK and fhStrictShortOK and fhMandatoryShortOK and fhMtfShortOK
+    canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and fhStrengthLongOK and fhMandatoryLongOK and fhMtfLongOK
+    canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and fhStrengthShortOK and fhMandatoryShortOK and fhMtfShortOK
 else
     canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
     canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
@@ -1879,8 +1883,12 @@ if not tookTradeThisBar
                 selectedPriority := "P1:IMPULSE"
                 entryPriority := "P1:IMPULSE"
         if not shouldEnterLong and not shouldEnterShort and allowPriority2
-            // P2: never fire on doji/small-body candles (prevents “P2 on doji / wrong candle” behavior)
-            p2BodyOK = not isDojiBar and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
+            // P2: never fire on doji/small-body candles.
+            // Use the same auto-tuned confirmation thresholds as the rest of the bot (prevents trade starvation).
+            p2BodyOK =
+                 not isDojiBar and
+                 bodyRatio >= genConfirmBodyRatio_eff and
+                 (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
             if canGoLong and cpbLong and candleBull and candleConfirmLong and p2BodyOK
                 shouldEnterLong := true
                 selectedPriority := "P2:CONTINUATION"
