@@ -1413,9 +1413,31 @@ shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
 
 // Candle confirmation:
 // - Doji/spinning top are *not* treated as confirmations (prevents P1/P2 firing on dojis).
-// - A “strong body” directional candle can confirm even if it’s not one of the named patterns (prevents missing multi-candle runs).
-genericBullConfirm = candleBull and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
-genericBearConfirm = candleBear and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
+// - A “strong body” directional candle can confirm even if it’s not one of the named patterns.
+//   IMPORTANT: the previous generic threshold (0.45 bodyRatio, 0.25×ATR10) was too strict on MNQ/MES 3m/5m
+//   and caused “no P0/P1/P2 trades even though trend/impulse signals exist”.
+confirmGroup = "✅ Candle Confirm (Auto-tuned)"
+autoTuneGenericConfirm = input.bool(true, "Auto-tune generic candle confirm (MNQ/MES 3m/5m)", group=confirmGroup)
+genConfirmBodyRatioInput = input.float(0.45, "Generic confirm: min body ratio (manual)", minval=0.20, maxval=0.80, step=0.01, group=confirmGroup)
+genConfirmAtrMultInput = input.float(0.25, "Generic confirm: min body (×ATR10) (manual)", minval=0.05, maxval=0.60, step=0.01, group=confirmGroup)
+
+genConfirmBodyRatio_eff =
+     (not autoTuneGenericConfirm) ? genConfirmBodyRatioInput :
+     isMNQ_3m ? 0.36 :
+     isMNQ_5m ? 0.34 :
+     isMES_3m ? 0.38 :
+     isMES_5m ? 0.40 :
+     genConfirmBodyRatioInput
+genConfirmAtrMult_eff =
+     (not autoTuneGenericConfirm) ? genConfirmAtrMultInput :
+     isMNQ_3m ? 0.16 :
+     isMNQ_5m ? 0.15 :
+     isMES_3m ? 0.18 :
+     isMES_5m ? 0.20 :
+     genConfirmAtrMultInput
+
+genericBullConfirm = candleBull and bodyRatio >= genConfirmBodyRatio_eff and (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
+genericBearConfirm = candleBear and bodyRatio >= genConfirmBodyRatio_eff and (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
 patternOKLong = ((not enableCandlePatterns) or allowedBullPattern or genericBullConfirm or hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong) and (not isTier4Pattern)
 patternOKShort = ((not enableCandlePatterns) or allowedBearPattern or genericBearConfirm or hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort) and (not isTier4Pattern)
 candleConfirmLong = patternOKLong
@@ -2003,8 +2025,10 @@ if not tookTradeThisBar
         fhTier4Block = isTier4Pattern or (entryTimingMode == "Next Bar Open" and isTier4Pattern[1])
         // Sideways/chop/gray-zone block (trend-only trading):
         fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
-        fhVeryStrongLong = fhStrongLong2 and veryStrongTrend
-        fhVeryStrongShort = fhStrongShort2 and veryStrongTrend
+        // Allow earlier trend entries: “veryStrongTrend” can be too late on 3m/5m.
+        // Use strongTrend OR veryStrongTrend when deciding sideways bypass.
+        fhVeryStrongLong = fhStrongLong2 and (veryStrongTrend or strongTrend)
+        fhVeryStrongShort = fhStrongShort2 and (veryStrongTrend or strongTrend)
         fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongLong : fhStrongLong2)
         fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongShort : fhStrongShort2)
 
