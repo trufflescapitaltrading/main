@@ -1272,9 +1272,12 @@ choppyCount = (isLowADX ? 1 : 0) + (isLowATR ? 1 : 0) + (isTightBB ? 1 : 0)
 isChoppyRaw = choppyCount >= 2
 choppyActiveWhenInPosition = not disableChoppyInPosition
 choppyCheckAllowed = strategy.position_size == 0 or choppyActiveWhenInPosition
-trendBypassAllowed = disableChoppyInTrend and veryStrongTrend
+// Choppy bypass: veryStrongTrend was too late on 3m/5m. Allow strongTrend as well,
+// and allow obvious multi-candle runs to bypass (trend scalping should not be labelled “chop” mid-run).
+trendBypassAllowed = disableChoppyInTrend and (veryStrongTrend or strongTrend)
+runBypassAllowed = (runUpCloses >= 3) or (runDownCloses >= 3)
 overrideBypassAllowed = hasTrendOverrideBull or hasTrendOverrideBear or hasMomentumOverrideLong or hasMomentumOverrideShort or impulseLong or impulseShort or tibLong or tibShort or cpbLong or cpbShort
-isChoppy := enableChoppyFilter and choppyCheckAllowed and isChoppyRaw and not trendBypassAllowed and not overrideBypassAllowed
+isChoppy := enableChoppyFilter and choppyCheckAllowed and isChoppyRaw and not trendBypassAllowed and not runBypassAllowed and not overrideBypassAllowed
 
 // Envelope adaptive
 getAdaptiveEnvDev() =>
@@ -1423,7 +1426,8 @@ requiredConfluence =
      effConfluenceLevel <= 12 ? 6 : 7
 finalConfluenceOK = totalConfluenceScore >= requiredConfluence
 
-bodyStrong = not requireBodyStrength or (atr10 > 0 and bodySize >= atr10 * minBodyPctOfATR)
+// Body strength can unintentionally starve trades. In Harmony mode, allow candleQualityOK to satisfy it.
+bodyStrong = (not requireBodyStrength) or (atr10 > 0 and bodySize >= atr10 * minBodyPctOfATR) or (enableFilterHarmony and candleQualityOK)
 longBarOK = bodyStrong and (not requireCandleDirection or candleBull)
 shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
 
@@ -2121,8 +2125,10 @@ shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
 htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
-htfCandleColorOK_Long = (not require5mCandleColorConfirm) or (not is3min) or htf5mBull
-htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or htf5mBear
+// 3m charts: 5m candle-color confirmation is useful, but it can also block valid early trend entries.
+// Allow strong-signal bypass (impulse/trend override/ignition/continuation) so P0/P1/P2 aren’t starved.
+htfCandleColorOK_Long = (not require5mCandleColorConfirm) or (not is3min) or htf5mBull or strictBypassLong
+htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or htf5mBear or strictBypassShort
 shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
 shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
 
