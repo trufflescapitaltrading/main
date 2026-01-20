@@ -1891,6 +1891,33 @@ if strategy.position_size == 0
              (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
              "OTHER"
 
+// ==================== 🧾 DEBUG LABELS (why trades were missed) ====================
+debugGroup = "🧾 Debug / Diagnostics"
+showDebugLabels = input.bool(false, "Show debug labels (blocked entries + priorities)", group=debugGroup)
+maxDebugLabelsPerDay = input.int(20, "Max debug labels per day", minval=0, maxval=200, group=debugGroup)
+
+var int debugLabelsToday = 0
+if newDayDetected
+    debugLabelsToday := 0
+
+canPrintDebug = showDebugLabels and barstate.isconfirmed and (maxDebugLabelsPerDay == 0 or debugLabelsToday < maxDebugLabelsPerDay)
+
+if canPrintDebug and strategy.position_size == 0 and lastBlockReason != "NONE"
+    debugLabelsToday += 1
+    label.new(bar_index, high,
+         "BLOCKED: " + lastBlockReason,
+         style=label.style_label_down,
+         textcolor=color.white,
+         color=color.new(color.red, 0))
+
+if canPrintDebug and strategy.position_size == 0 and (longCondition or shortCondition)
+    debugLabelsToday += 1
+    label.new(bar_index, low,
+         "ENTRY: " + selectedPriority,
+         style=label.style_label_up,
+         textcolor=color.white,
+         color=color.new(color.green, 0))
+
 if longCondition and strategy.position_size == 0
     activeSignalType := selectedPriority == "P-1:TREND_START" ? "IGNITION" : selectedPriority == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0

@@ -19,3 +19,9 @@ This repo now contains the full TradingView Pine strategy script and a smaller p
 
 - If you want **signals that do not repaint intrabar**, keep `Enter ONLY on bar close` enabled.
 - If you intentionally enable intrabar entries, **expect occasional “color mismatch by close”** in realtime (that is inherent to intrabar logic).
+
+### Debugging missed trades
+
+Turn on `Show debug labels (blocked entries + priorities)` to print:
+- **BLOCKED:** why a signal did *not* become an entry (time window, HTF/MTF filters, candle confirm, etc.)
+- **ENTRY:** which priority actually fired (P-1/P1/P2 label)
