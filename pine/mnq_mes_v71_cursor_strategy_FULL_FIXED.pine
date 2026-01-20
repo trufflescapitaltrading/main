@@ -1406,8 +1406,17 @@ ultraSellSignalBase = (strongSellSignal or (microSellSignal and momentumBearish)
 ultraBuySignalBase := ultraBuySignalBase or (swingInjectToBase and allowPriority7 and swingBuySignal and enableSwingSignals and candleBull)
 ultraSellSignalBase := ultraSellSignalBase or (swingInjectToBase and allowPriority7 and swingSellSignal and enableSwingSignals and candleBear)
 
-signalAllowsLong = not enableSignalLine or (signalTrendUp and (not grayZoneWithBuffer or swingBuySignal)) or hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong or isSignalGrayZone == false
-signalAllowsShort = not enableSignalLine or (signalTrendDown and (not grayZoneWithBuffer or swingSellSignal)) or hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort or isSignalGrayZone == false
+// Signal Line gate (SMA 9/50/180 alignment):
+// NOTE: The prior `or isSignalGrayZone == false` effectively bypassed this gate on most bars.
+// This is now corrected so Signal Line works as intended (with strong-signal overrides).
+signalAllowsLong =
+     (not enableSignalLine) or
+     (signalTrendUp and (not grayZoneWithBuffer or swingBuySignal)) or
+     hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong
+signalAllowsShort =
+     (not enableSignalLine) or
+     (signalTrendDown and (not grayZoneWithBuffer or swingSellSignal)) or
+     hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort
 ultraBuySignalWithSignalLine = ultraBuySignalBase and signalAllowsLong
 ultraSellSignalWithSignalLine = ultraSellSignalBase and signalAllowsShort
 ultraBuySignal = (enableSignalLine and useSignalLineStrict) ? ultraBuySignalWithSignalLine : ultraBuySignalBase
@@ -1463,10 +1472,12 @@ genConfirmAtrMult_eff =
 
 genericBullConfirm = candleBull and bodyRatio >= genConfirmBodyRatio_eff and (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
 genericBearConfirm = candleBear and bodyRatio >= genConfirmBodyRatio_eff and (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
+// Candlestick tiers are a QUALITY ENHANCER, not an entry gate.
+// We still hard-block Tier-4 and dojis via `isTier4Pattern` / `candleQualityOK`.
 patternOKLong = ((not enableCandlePatterns) or allowedBullPattern or genericBullConfirm or hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong) and (not isTier4Pattern)
 patternOKShort = ((not enableCandlePatterns) or allowedBearPattern or genericBearConfirm or hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort) and (not isTier4Pattern)
-candleConfirmLong = patternOKLong
-candleConfirmShort = patternOKShort
+candleConfirmLong = candleQualityOK and (not isTier4Pattern)
+candleConfirmShort = candleQualityOK and (not isTier4Pattern)
 
 var int longPositions = 0
 var int shortPositions = 0
@@ -2041,10 +2052,14 @@ if not tookTradeThisBar
         fhGrayPenaltyLong = (isSignalGrayZone and not fhStrongLong2 and not (fhAllowSwingInGrayZone and swingBuySignal)) ? fhGrayZonePenalty : 0.0
         fhGrayPenaltyShort = (isSignalGrayZone and not fhStrongShort2 and not (fhAllowSwingInGrayZone and swingSellSignal)) ? fhGrayZonePenalty : 0.0
 
+        // 5m congruence bonus (quality enhancer) on 3m charts
+        fh5mBonusLong = (is3min and require5mCandleColorConfirm and htf5mBull) ? 4.0 : 0.0
+        fh5mBonusShort = (is3min and require5mCandleColorConfirm and htf5mBear) ? 4.0 : 0.0
+
         fhQualityLong = math.max(0.0, math.min(100.0,
-             fhTrendLong + fhSignalLong + fhConflLong + fhStarLong + fhPatternScoreLong + fhCandleLong + fhHtfLong + fhMtfLong + fhBiasLong + fhCooldownLong + fhMesLong - fhGrayPenaltyLong))
+             fhTrendLong + fhSignalLong + fhConflLong + fhStarLong + fhPatternScoreLong + fhCandleLong + fhHtfLong + fhMtfLong + fhBiasLong + fhCooldownLong + fhMesLong + fh5mBonusLong - fhGrayPenaltyLong))
         fhQualityShort = math.max(0.0, math.min(100.0,
-             fhTrendShort + fhSignalShort + fhConflShort + fhStarShort + fhPatternScoreShort + fhCandleShort + fhHtfShort + fhMtfShort + fhBiasShort + fhCooldownShort + fhMesShort - fhGrayPenaltyShort))
+             fhTrendShort + fhSignalShort + fhConflShort + fhStarShort + fhPatternScoreShort + fhCandleShort + fhHtfShort + fhMtfShort + fhBiasShort + fhCooldownShort + fhMesShort + fh5mBonusShort - fhGrayPenaltyShort))
         fhQualityLong_dbg := fhQualityLong
         fhQualityShort_dbg := fhQualityShort
 
@@ -2136,12 +2151,14 @@ shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
 htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
-// 3m charts: 5m candle-color confirmation is useful, but it can also block valid early trend entries.
-// Allow strong-signal bypass (impulse/trend override/ignition/continuation) so P0/P1/P2 aren’t starved.
+// 3m charts: 5m candle-color congruence is a HIGH-QUALITY enhancer.
+// - In Filter Harmony mode: it becomes a quality bonus (NOT a hard gate).
+// - Outside Harmony mode: it remains a gate, with strong-signal bypass.
 htfCandleColorOK_Long = (not require5mCandleColorConfirm) or (not is3min) or htf5mBull or strictBypassLong
 htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or htf5mBear or strictBypassShort
-shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
-shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
+if not enableFilterHarmony
+    shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
+    shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
 
 // ==================== 🧷 LTF CONFIRM (Intrabar Safety) ====================
 // Only used when intrabar entries are allowed; prevents "looks wrong-color by close".
