@@ -1,0 +1,202 @@
+//@version=5
+// ============================================================
+// TRADE FIRING FIX PATCH (drop-in sections for your script)
+// Goal: fix "late entries / wrong candle color / missed runs"
+// by correcting order fill timing and adding early trend-start
+// logic that works WITH filters (not against).
+// ============================================================
+//
+// HOW TO USE (important):
+// 1) In your `strategy(...)` header:
+//    - Change `process_orders_on_close=false` to `process_orders_on_close=true`
+//      This is the #1 reason you "see" P1/P2 fire late or on the next candle.
+//
+//    Why: with `process_orders_on_close=false`, a bar-close signal places a market
+//    order that fills on the NEXT bar open (so it will appear late and often on
+//    an opposite-color candle).
+//
+// 2) Replace your `entryOK = ...` block with the "ENTRY GATE FIX" below.
+// 3) Add the "EARLY TREND START (SuperTrend flip + EMA cross)" block AFTER your
+//    SuperTrend variables are defined (after `trend`, `trendChange` exist).
+// 4) Add the priority hook shown below (P1:FLIP / P1:EMA_CROSS) BEFORE your P2
+//    branches so the bot catches the beginning of runs.
+// 5) Optional (recommended): add DI/ADX ignition + Donchian breakout (P1:DI_CROSS / P1:BREAKOUT)
+//    to catch 2–4 candle runs that are often missed when relying on lagging MA alignment.
+//
+// Notes:
+// - This patch does NOT change your profit logic. It fixes entry timing and
+//   trend-start recognition, plus prevents doji/opposite-color misfires.
+// - Keep `enterOnBarClose=true` for clean backtests. Use intrabar only when you
+//   truly want it (Kenya MNQ 3m exception).
+//
+// ============================================================
+// SECTION A) STRATEGY HEADER FIX (MANUAL CHANGE)
+// ============================================================
+// Find your strategy() line and change:
+//   process_orders_on_close=false
+// to:
+//   process_orders_on_close=true
+//
+// Optional (recommended) if you want bar-close behavior:
+//   calc_on_every_tick=true is fine, but if you allow intrabar entries you can
+//   still get "green at entry, red at close" in realtime. For backtesting,
+//   prefer bar-close entries.
+//
+// ============================================================
+// SECTION B) ENTRY GATE FIX (replace your entryOK block)
+// ============================================================
+// Rationale:
+// Your current logic allows intrabar entries for P-1/P1/P2 even when
+// `enterOnBarClose=true`, which can produce “wrong candle” entries in realtime.
+// Also, the *fill timing* bug above makes bar-close signals fill next bar.
+//
+// Paste this block where you currently compute:
+//   isPriorityIntrabar = ...
+//   entryOK = ...
+//
+// Requires you already have:
+// - `enterOnBarClose`, `allowIntrabarForP1P2`
+// - `useKenyaMnq3mProfitLogic`, `kenyaAllowIntrabarEntries`, `isMNQ`
+// - `selectedPriority`
+// - `timeframe.period`
+//
+// ---- BEGIN: ENTRY GATE FIX ----
+isPriorityIntrabar_patch =
+     (selectedPriority == "P-1:TREND_START") or
+     (selectedPriority == "P1:IMPULSE") or
+     (selectedPriority == "P1:IGNITION") or
+     (selectedPriority == "P1:FLIP") or
+     (selectedPriority == "P1:EMA_CROSS") or
+     (selectedPriority == "P2:CONTINUATION") or
+     (selectedPriority == "P2:TREND") or
+     (selectedPriority == "P2:STRONG_TREND")
+
+isMnq3mKenya = (useKenyaMnq3mProfitLogic and kenyaAllowIntrabarEntries and isMNQ and timeframe.period == "3")
+
+// Default: bar-close only when enabled.
+// Exceptions:
+// - Kenya MNQ 3m (if you explicitly want intrabar behavior)
+// - P-1/P1/P2 intrabar (only if allowIntrabarForP1P2 AND you accept realtime intrabar behavior)
+entryOK_patch =
+     (not enterOnBarClose or barstate.isconfirmed) or
+     isMnq3mKenya or
+     (allowIntrabarForP1P2 and isPriorityIntrabar_patch and not enterOnBarClose)
+// ---- END: ENTRY GATE FIX ----
+
+// IMPORTANT:
+// If you want intrabar P-1/P1/P2 *while still keeping enterOnBarClose=true*,
+// you can do that — but then "wrong color by close" is unavoidable sometimes.
+// The patch intentionally forces you to choose: bar-close OR intrabar.
+
+// ============================================================
+// SECTION C) EARLY TREND START (place AFTER SuperTrend vars exist)
+// ============================================================
+// Goal:
+// Catch “beginning of trend” on candle 1–2 instead of 4–5, WITHOUT requiring
+// 9/50/180 alignment (which lags) and WITHOUT firing on dojis.
+//
+// This uses:
+// - SuperTrend flip (fastest structural trend change you already compute)
+// - EMA 9/21 cross (classic early trend start)
+// - Your candleQuality gate (prevents doji/tiny-body firing)
+//
+// Requires you already have:
+// - `trend`, `trendChange`
+// - `emaShort`, `emaMedium`
+// - `candleBull`, `candleBear`, `candleQualityOK`, `isDojiBar`
+// - `canTradeNow`
+//
+// ---- BEGIN: EARLY TREND START ----
+earlyTrendGroup_patch = "⚡ Early Trend Start (Fix Late P1/P2)"
+enableEarlyFlipEntries = input.bool(true, "Enable SuperTrend Flip entries (P1:FLIP)", group=earlyTrendGroup_patch)
+enableEarlyEmaCrossEntries = input.bool(true, "Enable EMA9/EMA21 cross entries (P1:EMA_CROSS)", group=earlyTrendGroup_patch)
+enableEarlyDiCrossEntries = input.bool(true, "Enable ADX/DI ignition entries (P1:DI_CROSS)", group=earlyTrendGroup_patch)
+enableEarlyBreakoutEntries = input.bool(true, "Enable Donchian breakout entries (P1:BREAKOUT)", group=earlyTrendGroup_patch)
+earlyMinBodyRatio = input.float(0.35, "Early entry min body ratio", minval=0.20, maxval=0.70, step=0.01, group=earlyTrendGroup_patch)
+adxLen_early = input.int(14, "DI/ADX length", minval=5, maxval=50, group=earlyTrendGroup_patch)
+adxMin_early = input.float(18.0, "Min ADX (trend strength)", minval=5.0, maxval=40.0, step=0.5, group=earlyTrendGroup_patch)
+donchLen_early = input.int(3, "Breakout lookback bars", minval=2, maxval=10, group=earlyTrendGroup_patch)
+breakoutRangeMult_early = input.float(1.05, "Breakout min range vs avg", minval=0.80, maxval=2.00, step=0.05, group=earlyTrendGroup_patch)
+
+// Extra guard: only take flip/cross if candle is not doji and has real body.
+earlyBodyOK = (not isDojiBar) and candleQualityOK and ((high - low) > 0) and (math.abs(close - open) / (high - low) >= earlyMinBodyRatio)
+
+stFlipUp = enableEarlyFlipEntries and trendChange and trend == 1
+stFlipDn = enableEarlyFlipEntries and trendChange and trend == -1
+
+emaCrossUp = enableEarlyEmaCrossEntries and ta.crossover(emaShort, emaMedium)
+emaCrossDn = enableEarlyEmaCrossEntries and ta.crossunder(emaShort, emaMedium)
+
+earlyFlipLong = stFlipUp and candleBull and earlyBodyOK and canTradeNow
+earlyFlipShort = stFlipDn and candleBear and earlyBodyOK and canTradeNow
+
+earlyEmaLong = emaCrossUp and candleBull and earlyBodyOK and canTradeNow
+earlyEmaShort = emaCrossDn and candleBear and earlyBodyOK and canTradeNow
+
+// ADX/DI ignition (often catches trend start 1–2 bars earlier)
+adx_early = ta.adx(adxLen_early)
+plusDI_early = ta.plus_di(adxLen_early)
+minusDI_early = ta.minus_di(adxLen_early)
+adxRising_early = adx_early > adx_early[1]
+diCrossUp_early = ta.crossover(plusDI_early, minusDI_early)
+diCrossDn_early = ta.crossover(minusDI_early, plusDI_early)
+diIgnitionOK_early = enableEarlyDiCrossEntries and adxRising_early and adx_early >= adxMin_early
+earlyDiLong = diIgnitionOK_early and diCrossUp_early and candleBull and earlyBodyOK and canTradeNow
+earlyDiShort = diIgnitionOK_early and diCrossDn_early and candleBear and earlyBodyOK and canTradeNow
+
+// Donchian breakout (captures fast 2–4 candle runs)
+donchHigh_early = ta.highest(high[1], donchLen_early)
+donchLow_early = ta.lowest(low[1], donchLen_early)
+breakUp_early = enableEarlyBreakoutEntries and not na(donchHigh_early) and close > donchHigh_early
+breakDn_early = enableEarlyBreakoutEntries and not na(donchLow_early) and close < donchLow_early
+breakoutRangeOK_early = (avgRange5 <= 0) ? true : (totalRange >= avgRange5 * breakoutRangeMult_early)
+earlyBreakoutLong = breakUp_early and candleBull and earlyBodyOK and breakoutRangeOK_early and volSurgeNow and canTradeNow
+earlyBreakoutShort = breakDn_early and candleBear and earlyBodyOK and breakoutRangeOK_early and volSurgeNow and canTradeNow
+// ---- END: EARLY TREND START ----
+
+// ============================================================
+// SECTION D) PRIORITY HOOK (insert BEFORE your P2 block)
+// ============================================================
+// In your priority selection block (inside `if enablePrioritySystem`),
+// add this BEFORE your P2 section so the bot can enter earlier than
+// run>=3 / run>=4 logic.
+//
+// ---- BEGIN: PRIORITY HOOK EXAMPLE ----
+// if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
+//     if canGoLong and earlyFlipLong
+//         shouldEnterLong := true
+//         selectedPriority := "P1:FLIP"
+//         entryPriority := "P1:FLIP"
+//     else if canGoShort and earlyFlipShort
+//         shouldEnterShort := true
+//         selectedPriority := "P1:FLIP"
+//         entryPriority := "P1:FLIP"
+// if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
+//     if canGoLong and earlyEmaLong
+//         shouldEnterLong := true
+//         selectedPriority := "P1:EMA_CROSS"
+//         entryPriority := "P1:EMA_CROSS"
+//     else if canGoShort and earlyEmaShort
+//         shouldEnterShort := true
+//         selectedPriority := "P1:EMA_CROSS"
+//         entryPriority := "P1:EMA_CROSS"
+// if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
+//     if canGoLong and earlyDiLong
+//         shouldEnterLong := true
+//         selectedPriority := "P1:DI_CROSS"
+//         entryPriority := "P1:DI_CROSS"
+//     else if canGoShort and earlyDiShort
+//         shouldEnterShort := true
+//         selectedPriority := "P1:DI_CROSS"
+//         entryPriority := "P1:DI_CROSS"
+// if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
+//     if canGoLong and earlyBreakoutLong
+//         shouldEnterLong := true
+//         selectedPriority := "P1:BREAKOUT"
+//         entryPriority := "P1:BREAKOUT"
+//     else if canGoShort and earlyBreakoutShort
+//         shouldEnterShort := true
+//         selectedPriority := "P1:BREAKOUT"
+//         entryPriority := "P1:BREAKOUT"
+// ---- END: PRIORITY HOOK EXAMPLE ----
+
