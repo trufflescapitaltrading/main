@@ -2884,6 +2884,22 @@ tpLong = tpUseSim ? (tpPosDir == 1 and tpPosQty > 0) : (strategy.position_size >
 tpShort = tpUseSim ? (tpPosDir == -1 and tpPosQty > 0) : (strategy.position_size < 0)
 tpQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size))
 
+// Alert frequency must follow entryTimingMode, NOT enterOnBarClose.
+// If we use freq_once_per_bar_close while trying to enter on bar open, the alert will be delayed until the bar closes.
+tpAlertFreq = entryTimingMode == "Bar Close" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
+
+// When using "Next Bar Open", the entry decision is based on the PREVIOUS closed bar.
+tpSigType = entryTimingMode == "Next Bar Open" ? activeSignalType[1] : activeSignalType
+tpSelPrio = entryTimingMode == "Next Bar Open" ? selectedPriority[1] : selectedPriority
+tpConfluence = entryTimingMode == "Next Bar Open" ? totalConfluenceScore[1] : totalConfluenceScore
+tpMtfAlignPct = entryTimingMode == "Next Bar Open" ? mtf_alignment_pct[1] : mtf_alignment_pct
+tpFiveStarOK = entryTimingMode == "Next Bar Open" ? fiveStarOK[1] : fiveStarOK
+tpChoppy = entryTimingMode == "Next Bar Open" ? isChoppy[1] : isChoppy
+tpCandleDir =
+     entryTimingMode == "Next Bar Open" ?
+         (candleBull[1] ? "GREEN" : candleBear[1] ? "RED" : "NEUTRAL") :
+         (candleBull ? "GREEN" : candleBear ? "RED" : "NEUTRAL")
+
 tpNum(x) =>
     tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
 
@@ -2951,20 +2967,20 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
-         '"signal_type":"' + activeSignalType + '",' +
-         '"confluence":' + tpNumInt(totalConfluenceScore) + ',' +
+         '"signal_type":"' + tpSigType + '",' +
+         '"confluence":' + tpNumInt(tpConfluence) + ',' +
          '"session":"' + tpSession + '",' +
          '"signal_price":' + tpNum(close) + ',' +
-         '"mtf_alignment_pct":' + tpNumInt(mtf_alignment_pct) + ',' +
-         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
-         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
-         '"candleDirection":"' + (candleBull ? "GREEN" : "RED") + '",' +
-         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
+         '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
+         '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + tpCandleDir + '",' +
+         '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
          '"signal_id":"' + entrySigId + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    alert(longEntryMessage, tpAlertFreq)
     if tpUseSim
         tpPosDir := 1
         tpPosBar := bar_index
@@ -2984,7 +3000,7 @@ if entryOK and longCondition and tpLong and enableTradersPostAlerts and not took
          '"signal_id":"' + addSigId + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(addLongMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    alert(addLongMessage, tpAlertFreq)
     if tpUseSim
         tpPosQty := tpPosQty + finalContractQty
     tookTradeThisBar := true
@@ -3015,20 +3031,20 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
-         '"signal_type":"' + activeSignalType + '",' +
-         '"confluence":' + tpNumInt(totalConfluenceScore) + ',' +
+         '"signal_type":"' + tpSigType + '",' +
+         '"confluence":' + tpNumInt(tpConfluence) + ',' +
          '"session":"' + tpSession + '",' +
          '"signal_price":' + tpNum(close) + ',' +
-         '"mtf_alignment_pct":' + tpNumInt(mtf_alignment_pct) + ',' +
-         '"fiveStarOK":' + (fiveStarOK ? "true" : "false") + ',' +
-         '"trendOverride":' + ((selectedPriority == "P2:TREND" or selectedPriority == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-         '"impulseOverride":' + (selectedPriority == "P1:IMPULSE" ? "true" : "false") + ',' +
-         '"candleDirection":"' + (candleBear ? "RED" : "GREEN") + '",' +
-         '"choppy":' + (isChoppy ? "true" : "false") + ',' +
+         '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
+         '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
+         '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
+         '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
+         '"candleDirection":"' + tpCandleDir + '",' +
+         '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
          '"signal_id":"' + entrySigId + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    alert(shortEntryMessage, tpAlertFreq)
     if tpUseSim
         tpPosDir := -1
         tpPosBar := bar_index
@@ -3047,7 +3063,7 @@ if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not to
          '"signal_id":"' + addSigId + '",' +
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
-    alert(addShortMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    alert(addShortMessage, tpAlertFreq)
     if tpUseSim
         tpPosQty := tpPosQty + finalContractQty
     tookTradeThisBar := true
