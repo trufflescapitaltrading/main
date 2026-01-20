@@ -857,8 +857,10 @@ tier1Bear = threeBlackCrows or bearishEngulfing
 tier2Bear = eveningStar or darkCloudCover
 tier3Bear = shootingStar or hangingMan or bearishHarami
 tier4Bear = bearishMarubozu
-allowedBullPattern = (enableTier1 and tier1Bull) or (enableTier2 and tier2Bull) or (enableTier3 and tier3Bull) or (enableTier4 and tier4Bull)
-allowedBearPattern = (enableTier1 and tier1Bear) or (enableTier2 and tier2Bear) or (enableTier3 and tier3Bear) or (enableTier4 and tier4Bear)
+// USER REQUIREMENT: Tier-4 patterns = NO TRADE (hard block). Tier-4 is NOT an allowed entry confirmation.
+isTier4Pattern = tier4Bull or tier4Bear
+allowedBullPattern = (enableTier1 and tier1Bull) or (enableTier2 and tier2Bull) or (enableTier3 and tier3Bull)
+allowedBearPattern = (enableTier1 and tier1Bear) or (enableTier2 and tier2Bear) or (enableTier3 and tier3Bear)
 
 // Price momentum override
 priceMovePct = math.abs((close - close[momentumLookback]) / close[momentumLookback]) * 100
@@ -1400,8 +1402,8 @@ shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
 // - A “strong body” directional candle can confirm even if it’s not one of the named patterns (prevents missing multi-candle runs).
 genericBullConfirm = candleBull and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
 genericBearConfirm = candleBear and bodyRatio >= 0.45 and (atr10 <= 0 or bodySize >= atr10 * 0.25)
-patternOKLong = (not enableCandlePatterns) or allowedBullPattern or genericBullConfirm or hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong
-patternOKShort = (not enableCandlePatterns) or allowedBearPattern or genericBearConfirm or hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort
+patternOKLong = ((not enableCandlePatterns) or allowedBullPattern or genericBullConfirm or hasTrendOverrideBull or impulseLong or hasMomentumOverrideLong) and (not isTier4Pattern)
+patternOKShort = ((not enableCandlePatterns) or allowedBearPattern or genericBearConfirm or hasTrendOverrideBear or impulseShort or hasMomentumOverrideShort) and (not isTier4Pattern)
 candleConfirmLong = patternOKLong
 candleConfirmShort = patternOKShort
 
@@ -1919,9 +1921,9 @@ if not tookTradeThisBar
 
         // Tier scoring (uses your existing tier flags + generic confirms)
         fhPatternScoreLong =
-             (tier1Bull ? 18.0 : tier2Bull ? 14.0 : tier3Bull ? 10.0 : tier4Bull ? 6.0 : genericBullConfirm ? 9.0 : 0.0)
+             (isTier4Pattern ? 0.0 : (tier1Bull ? 18.0 : tier2Bull ? 14.0 : tier3Bull ? 10.0 : genericBullConfirm ? 9.0 : 0.0))
         fhPatternScoreShort =
-             (tier1Bear ? 18.0 : tier2Bear ? 14.0 : tier3Bear ? 10.0 : tier4Bear ? 6.0 : genericBearConfirm ? 9.0 : 0.0)
+             (isTier4Pattern ? 0.0 : (tier1Bear ? 18.0 : tier2Bear ? 14.0 : tier3Bear ? 10.0 : genericBearConfirm ? 9.0 : 0.0))
 
         // Trend/regime score (directional)
         fhTrendBase = veryStrongTrend ? 20.0 : strongTrend ? 16.0 : moderateTrend ? 10.0 : 0.0
@@ -1984,6 +1986,7 @@ if not tookTradeThisBar
         // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
         // Also: NEVER enter on doji/tiny-body candles (strict requirement for entries).
         fhDojiBlock = isDojiBar or (entryTimingMode == "Next Bar Open" and isDojiBar[1])
+        fhTier4Block = isTier4Pattern or (entryTimingMode == "Next Bar Open" and isTier4Pattern[1])
         // Sideways/chop/gray-zone block (trend-only trading):
         fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
         fhVeryStrongLong = fhStrongLong2 and veryStrongTrend
@@ -1991,8 +1994,8 @@ if not tookTradeThisBar
         fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongLong : fhStrongLong2)
         fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongShort : fhStrongShort2)
 
-        fhCandidateLong = canGoLong and fhRawLong and longBarOK and not fhDojiBlock and fhAllowSidewaysLong
-        fhCandidateShort = canGoShort and fhRawShort and shortBarOK and not fhDojiBlock and fhAllowSidewaysShort
+        fhCandidateLong = canGoLong and fhRawLong and longBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysLong
+        fhCandidateShort = canGoShort and fhRawShort and shortBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysShort
 
         fhAllowLong = fhCandidateLong and fhOkLong
         fhAllowShort = fhCandidateShort and fhOkShort
@@ -2184,9 +2187,11 @@ if strategy.position_size == 0
 
 selectedPriorityForLog = entryTimingMode == "Next Bar Open" ? selectedPriority[1] : selectedPriority
 if longCondition and strategy.position_size == 0
-    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
+    sigOff2 = entryTimingMode == "Next Bar Open" ? 1 : 0
+    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong[sigOff2] ? "MOMENTUM" : impulseLong[sigOff2] ? "IMPULSE" : hasTrendOverrideBull[sigOff2] ? "TREND" : microBuySignal[sigOff2] ? "MICRO" : instantBuySignal[sigOff2] ? "INSTANT" : scalpBuySignal[sigOff2] ? "SCALP" : strongBuySignal[sigOff2] ? "STRONG" : swingBuySignal[sigOff2] ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0
-    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort ? "MOMENTUM" : impulseShort ? "IMPULSE" : hasTrendOverrideBear ? "TREND" : microSellSignal ? "MICRO" : instantSellSignal ? "INSTANT" : scalpSellSignal ? "SCALP" : strongSellSignal ? "STRONG" : swingSellSignal ? "SWING" : "NORMAL"
+    sigOff2 = entryTimingMode == "Next Bar Open" ? 1 : 0
+    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort[sigOff2] ? "MOMENTUM" : impulseShort[sigOff2] ? "IMPULSE" : hasTrendOverrideBear[sigOff2] ? "TREND" : microSellSignal[sigOff2] ? "MICRO" : instantSellSignal[sigOff2] ? "INSTANT" : scalpSellSignal[sigOff2] ? "SCALP" : strongSellSignal[sigOff2] ? "STRONG" : swingSellSignal[sigOff2] ? "SWING" : "NORMAL"
 else if strategy.position_size == 0
     activeSignalType := "NONE"
 
@@ -2206,8 +2211,11 @@ getActiveQty(baseQty) =>
         qty := m2k_customQty
     qty
 
+// When using Next Bar Open, the entry is triggered on the new bar but the signal is from the previous bar.
+sigOff = entryTimingMode == "Next Bar Open" ? 1 : 0
+
 bool allowEntryLong = true
-if require5Star and not fiveStarOK and not hasTrendOverrideBull and not (impulseLong and candleBull) and not hasMomentumOverrideLong
+if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBull[sigOff] and not (impulseLong[sigOff] and candleBull[sigOff]) and not hasMomentumOverrideLong[sigOff]
     allowEntryLong := false
 
 if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0
@@ -2215,7 +2223,9 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
         biasDir := 1
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
-    int tradeQty = getActiveQty(finalContractQty)
+    // Use signal-bar sizing when entering on next bar open
+    int qtyForEntry = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
+    int tradeQty = getActiveQty(qtyForEntry)
     if not alertOnlyMode_eff
         strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -2228,7 +2238,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
     lastSignalBar := bar_index
 
 bool allowEntryShort = true
-if require5Star and not fiveStarOK and not hasTrendOverrideBear and not (impulseShort and candleBear) and not hasMomentumOverrideShort
+if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBear[sigOff] and not (impulseShort[sigOff] and candleBear[sigOff]) and not hasMomentumOverrideShort[sigOff]
     allowEntryShort := false
 
 if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0
@@ -2236,7 +2246,8 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
-    int tradeQtyS = getActiveQty(finalContractQty)
+    int qtyForEntryS = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
+    int tradeQtyS = getActiveQty(qtyForEntryS)
     if not alertOnlyMode_eff
         strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -2900,6 +2911,11 @@ tpCandleDir =
          (candleBull[1] ? "GREEN" : candleBear[1] ? "RED" : "NEUTRAL") :
          (candleBull ? "GREEN" : candleBear ? "RED" : "NEUTRAL")
 
+// Execution price vs signal price (important for market entries + correct stop/TP math in live routing).
+tpExecPrice = entryTimingMode == "Next Bar Open" ? open : close
+tpSignalPrice = entryTimingMode == "Next Bar Open" ? close[1] : close
+tpEntryQty = entryTimingMode == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
+
 tpNum(x) =>
     tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
 
@@ -2941,7 +2957,7 @@ if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat 
             // Mark this bar as “consumed” so we don’t emit duplicate exit alerts.
             tookTradeThisBar := true
 
-if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty > 0 and enableTradersPostAlerts
+if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -2950,16 +2966,16 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
         currentSL_pts := manualDollarSL / safePointValue
     if useManualDollarOverrides and manualDollarTP > 0
         currentTP1_pts := manualDollarTP / safePointValue
-    localSL = close - currentSL_pts
-    localTP1 = close + currentTP1_pts
+    localSL = tpExecPrice - currentSL_pts
+    localTP1 = tpExecPrice + currentTP1_pts
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     entrySigId = tpSignalId("buy", "LONG")
     longEntryMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"buy",' +
-         '"quantity":' + tpNumInt(finalContractQty) + ',' +
-         '"price":' + tpNum(close) + ',' +
+         '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+         '"price":' + tpNum(tpExecPrice) + ',' +
          '"stop_loss":' + tpNum(localSL) + ',' +
          '"take_profit":' + tpNum(localTP1) + ',' +
          (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
@@ -2970,7 +2986,7 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
          '"signal_type":"' + tpSigType + '",' +
          '"confluence":' + tpNumInt(tpConfluence) + ',' +
          '"session":"' + tpSession + '",' +
-         '"signal_price":' + tpNum(close) + ',' +
+         '"signal_price":' + tpNum(tpSignalPrice) + ',' +
          '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
          '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
          '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
@@ -2984,7 +3000,7 @@ if entryOK and longCondition and tpFlat and allowEntryLong and finalContractQty 
     if tpUseSim
         tpPosDir := 1
         tpPosBar := bar_index
-        tpPosQty := finalContractQty
+        tpPosQty := tpEntryQty
 
 // Same-direction behavior: ignore or "add" (prevents TradersPost rejections when a position already exists).
 if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
@@ -2992,8 +3008,8 @@ if entryOK and longCondition and tpLong and enableTradersPostAlerts and not took
     addLongMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"add",' +
-         '"quantity":' + tpNumInt(finalContractQty) + ',' +
-         '"price":' + tpNum(close) + ',' +
+         '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+         '"price":' + tpNum(tpExecPrice) + ',' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
@@ -3002,10 +3018,10 @@ if entryOK and longCondition and tpLong and enableTradersPostAlerts and not took
          '}'
     alert(addLongMessage, tpAlertFreq)
     if tpUseSim
-        tpPosQty := tpPosQty + finalContractQty
+        tpPosQty := tpPosQty + tpEntryQty
     tookTradeThisBar := true
 
-if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQty > 0 and enableTradersPostAlerts
+if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
     float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
@@ -3014,16 +3030,16 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
         currentSL_pts := manualDollarSL / safePointValue
     if useManualDollarOverrides and manualDollarTP > 0
         currentTP1_pts := manualDollarTP / safePointValue
-    localSL = close + currentSL_pts
-    localTP1 = close - currentTP1_pts
+    localSL = tpExecPrice + currentSL_pts
+    localTP1 = tpExecPrice - currentTP1_pts
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     entrySigId = tpSignalId("sell", "SHORT")
     shortEntryMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"sell",' +
-         '"quantity":' + tpNumInt(finalContractQty) + ',' +
-         '"price":' + tpNum(close) + ',' +
+         '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+         '"price":' + tpNum(tpExecPrice) + ',' +
          '"stop_loss":' + tpNum(localSL) + ',' +
          '"take_profit":' + tpNum(localTP1) + ',' +
          (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
@@ -3034,7 +3050,7 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
          '"signal_type":"' + tpSigType + '",' +
          '"confluence":' + tpNumInt(tpConfluence) + ',' +
          '"session":"' + tpSession + '",' +
-         '"signal_price":' + tpNum(close) + ',' +
+         '"signal_price":' + tpNum(tpSignalPrice) + ',' +
          '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
          '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
          '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
@@ -3048,15 +3064,15 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and finalContractQt
     if tpUseSim
         tpPosDir := -1
         tpPosBar := bar_index
-        tpPosQty := finalContractQty
+        tpPosQty := tpEntryQty
 
 if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
     addSigId = tpSignalId("add", "SHORT")
     addShortMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"add",' +
-         '"quantity":' + tpNumInt(finalContractQty) + ',' +
-         '"price":' + tpNum(close) + ',' +
+         '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+         '"price":' + tpNum(tpExecPrice) + ',' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
@@ -3065,7 +3081,7 @@ if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not to
          '}'
     alert(addShortMessage, tpAlertFreq)
     if tpUseSim
-        tpPosQty := tpPosQty + finalContractQty
+        tpPosQty := tpPosQty + tpEntryQty
     tookTradeThisBar := true
 
 // Strategy-close exit alert. Guarded to avoid duplicate exits when we already sent a reverse-exit this bar,
