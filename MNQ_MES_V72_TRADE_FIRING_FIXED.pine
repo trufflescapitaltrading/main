@@ -1,0 +1,716 @@
+//@version=5
+strategy("V72 MNQ/MES 3m/5m TRADE FIRING FIXED - Early Entry + Direction Validation", overlay=true, initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, process_orders_on_close=false, backtest_fill_limits_assumption=0, dynamic_requests=true)
+
+// ==================== 💰 DAILY PROFIT TARGET ====================
+profitTargetGroup = "💰 Daily Profit Target"
+enableDailyProfitTarget = input.bool(true, "Enable Daily Profit Target", group=profitTargetGroup)
+dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", minval=500, maxval=5000, group=profitTargetGroup)
+
+// ==================== 🎯 INSTRUMENT DETECTION ====================
+actualTicker = str.replace_all(syminfo.ticker, "1!", "")
+isMNQ = str.contains(actualTicker, "MNQ") or str.contains(syminfo.description, "Micro E-mini Nasdaq")
+isMES = str.contains(actualTicker, "MES") or str.contains(syminfo.description, "Micro E-mini S&P")
+isMYM = str.contains(actualTicker, "MYM") or str.contains(syminfo.description, "Micro E-mini Dow")
+isMCL = str.contains(actualTicker, "MCL") or str.contains(syminfo.description, "Micro WTI Crude")
+isMGC = str.contains(actualTicker, "MGC") or str.contains(syminfo.description, "Micro Gold")
+isM2K = str.contains(actualTicker, "M2K") or str.contains(syminfo.description, "Micro E-mini Russell")
+instrumentName = isMNQ ? "MNQ" : isMES ? "MES" : isMYM ? "MYM" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "UNKNOWN"
+
+// Timeframe detection
+is1min = timeframe.period == "1"
+is2min = timeframe.period == "2"
+is3min = timeframe.period == "3"
+is5min = timeframe.period == "5"
+is10min = timeframe.period == "10"
+is15min = timeframe.period == "15"
+is30min = timeframe.period == "30"
+is1hour = timeframe.period == "60"
+is2hour = timeframe.period == "120"
+is4hour = timeframe.period == "240"
+
+// ==================== 🚀 EARLY ENTRY SYSTEM (NEW V72 FIX) ====================
+earlyEntryGroup = "🚀 V72 EARLY ENTRY SYSTEM (FIXES LATE FIRING)"
+enableEarlyEntry = input.bool(true, "✅ MASTER: Enable Early Entry System", group=earlyEntryGroup, tooltip="Fixes the late entry issue - enters on 1st-2nd candle instead of 4th-5th")
+enableFirstCandleEntry = input.bool(true, "Enable First Candle Entry (P0:FIRST)", group=earlyEntryGroup, tooltip="Enter on the FIRST strong directional candle of a potential trend")
+enableMomentumPreSignal = input.bool(true, "Enable Momentum Pre-Signal Detection", group=earlyEntryGroup, tooltip="Detect momentum building before trend confirmation")
+enableVelocityDetection = input.bool(true, "Enable Price Velocity Detection", group=earlyEntryGroup, tooltip="Measure price acceleration for early entry")
+
+// First candle entry parameters
+firstCandleMinBody = input.float(0.50, "First Candle: Min Body Ratio", minval=0.30, maxval=0.80, step=0.05, group=earlyEntryGroup)
+firstCandleMinATR = input.float(0.30, "First Candle: Min Body (×ATR)", minval=0.15, maxval=0.60, step=0.05, group=earlyEntryGroup)
+firstCandleVolMult = input.float(1.10, "First Candle: Volume Multiple", minval=0.80, maxval=2.00, step=0.05, group=earlyEntryGroup)
+
+// Momentum pre-signal parameters
+momentumPreLookback = input.int(3, "Pre-Signal: Lookback Bars", minval=2, maxval=6, group=earlyEntryGroup)
+momentumPreRSIShift = input.float(5.0, "Pre-Signal: Min RSI Shift", minval=2.0, maxval=15.0, step=0.5, group=earlyEntryGroup)
+momentumPrePriceShift = input.float(0.15, "Pre-Signal: Min Price Shift (% ATR)", minval=0.05, maxval=0.50, step=0.05, group=earlyEntryGroup)
+
+// Velocity detection parameters
+velocityLookback = input.int(2, "Velocity: Lookback Bars", minval=1, maxval=5, group=earlyEntryGroup)
+velocityAccelThreshold = input.float(1.50, "Velocity: Acceleration Threshold", minval=1.10, maxval=3.00, step=0.10, group=earlyEntryGroup)
+
+// ==================== 🛡️ STRICT CANDLE DIRECTION GATE (V72 FIX) ====================
+directionGateGroup = "🛡️ V72 STRICT DIRECTION VALIDATION (FIXES WRONG COLOR)"
+enableStrictDirection = input.bool(true, "✅ ENFORCE: Long=Green Candle, Short=Red Candle", group=directionGateGroup, tooltip="CRITICAL FIX: Prevents firing longs on red candles and shorts on green candles")
+requireBodyDominance = input.bool(true, "Require Body Dominance (not just color)", group=directionGateGroup)
+minDirectionalBody = input.float(0.40, "Min Body Ratio for Direction", minval=0.25, maxval=0.70, step=0.05, group=directionGateGroup)
+blockDojiSignals = input.bool(true, "Block ALL Signals on Doji/Tiny Body", group=directionGateGroup)
+maxDojiBodyRatio = input.float(0.15, "Max Body Ratio for Doji Block", minval=0.05, maxval=0.25, step=0.01, group=directionGateGroup)
+
+// ==================== 🎯 CONSECUTIVE CANDLE DETECTION (V72 ENHANCED) ====================
+consecutiveGroup = "🎯 V72 CONSECUTIVE CANDLE DETECTION"
+enableConsecutiveEarlyEntry = input.bool(true, "Enter Early on Consecutive Candles", group=consecutiveGroup, tooltip="Don't wait for 3-4 candles - enter on strong 1st-2nd candle")
+minConsecForP1 = input.int(1, "Min Consecutive for P1 Entry", minval=1, maxval=3, group=consecutiveGroup)
+minConsecForP2 = input.int(2, "Min Consecutive for P2 Entry", minval=1, maxval=4, group=consecutiveGroup)
+consecBodyRatioMin = input.float(0.35, "Consecutive: Min Body Ratio", minval=0.20, maxval=0.60, step=0.05, group=consecutiveGroup)
+
+// ==================== 🔥 MOMENTUM INDICATORS (V72 ENHANCED) ====================
+momentumGroup = "🔥 V72 MOMENTUM SYSTEM"
+enableEnhancedMomentum = input.bool(true, "Enable Enhanced Momentum Detection", group=momentumGroup)
+rsiPeriodFast = input.int(5, "RSI Fast Period", minval=3, maxval=10, group=momentumGroup)
+rsiPeriodSlow = input.int(14, "RSI Slow Period", minval=10, maxval=21, group=momentumGroup)
+macdFast = input.int(8, "MACD Fast", minval=5, maxval=15, group=momentumGroup)
+macdSlow = input.int(21, "MACD Slow", minval=15, maxval=30, group=momentumGroup)
+macdSignal = input.int(5, "MACD Signal", minval=3, maxval=12, group=momentumGroup)
+stochKPeriod = input.int(5, "Stochastic K Period", minval=3, maxval=14, group=momentumGroup)
+stochDPeriod = input.int(3, "Stochastic D Period", minval=2, maxval=7, group=momentumGroup)
+
+// ==================== 📊 TREND DETECTION ====================
+trendGroup = "📊 Trend Detection"
+enableSuperTrend = input.bool(true, "Enable SuperTrend", group=trendGroup)
+superTrendPeriod = input.int(10, "SuperTrend Period", minval=5, maxval=20, group=trendGroup)
+superTrendMultiplier = input.float(2.0, "SuperTrend Multiplier", minval=1.0, maxval=4.0, step=0.1, group=trendGroup)
+hullPeriodMain = input.int(20, "Hull MA Period (Main)", minval=10, maxval=50, group=trendGroup)
+hullPeriodFast = input.int(9, "Hull MA Period (Fast)", minval=5, maxval=20, group=trendGroup)
+
+// ==================== 🎯 SIGNAL LINE SYSTEM ====================
+signalGroup = "🎯 Signal Line System"
+enableSignalLine = input.bool(true, "Enable Signal Line System", group=signalGroup)
+swingPeriod = input.int(3, "BUY/SELL Swing Period", minval=1, maxval=10, group=signalGroup)
+enableSwingSignals = input.bool(true, "Enable BUY/SELL Swing Signals", group=signalGroup)
+
+// ==================== 📈 SESSION FILTERS ====================
+sessionGroup = "📈 Session Filters"
+enableSessionFilters = input.bool(true, "Enable Session Filters", group=sessionGroup)
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359, group=sessionGroup)
+endOfDayTime = input.int(1555, "End of Day Exit Time (ET)", minval=0, maxval=2359, group=sessionGroup)
+
+// ==================== 🛡️ RISK MANAGEMENT ====================
+riskGroup = "🛡️ Risk Management"
+enableDailyLossCircuit = input.bool(true, "Enable Daily Loss Circuit", group=riskGroup)
+maxDailyLossDollars = input.float(450.0, "Max Daily Loss ($)", minval=50, maxval=5000, group=riskGroup)
+enablePreTP1ProfitLock = input.bool(true, "Protect Profit Before TP1", group=riskGroup)
+preTP1TriggerDollars = input.float(10.0, "Trigger Profit ($)", minval=1, maxval=500, step=1, group=riskGroup)
+preTP1KeepDollars = input.float(4.0, "Keep Profit ($)", minval=0, maxval=500, step=1, group=riskGroup)
+
+// ==================== 💹 TAKE PROFIT / STOP LOSS ====================
+tpslGroup = "💹 TP/SL Settings"
+// MNQ settings
+mnq_customSL_3m = input.float(50.0, "MNQ 3m: Stop Loss (points)", group=tpslGroup)
+mnq_customTP1_3m = input.float(45.0, "MNQ 3m: TP1 (points)", group=tpslGroup)
+mnq_customTP2_3m = input.float(70.0, "MNQ 3m: TP2 (points)", group=tpslGroup)
+mnq_customTP3_3m = input.float(100.0, "MNQ 3m: TP3 (points)", group=tpslGroup)
+mnq_customSL_5m = input.float(60.0, "MNQ 5m: Stop Loss (points)", group=tpslGroup)
+mnq_customTP1_5m = input.float(60.0, "MNQ 5m: TP1 (points)", group=tpslGroup)
+mnq_customTP2_5m = input.float(90.0, "MNQ 5m: TP2 (points)", group=tpslGroup)
+// MES settings
+mes_customSL_3m = input.float(8.0, "MES 3m: Stop Loss (points)", group=tpslGroup)
+mes_customTP1_3m = input.float(6.0, "MES 3m: TP1 (points)", group=tpslGroup)
+mes_customTP2_3m = input.float(10.0, "MES 3m: TP2 (points)", group=tpslGroup)
+mes_customSL_5m = input.float(10.0, "MES 5m: Stop Loss (points)", group=tpslGroup)
+mes_customTP1_5m = input.float(8.0, "MES 5m: TP1 (points)", group=tpslGroup)
+mes_customTP2_5m = input.float(12.0, "MES 5m: TP2 (points)", group=tpslGroup)
+
+// ==================== 🔔 TRADERSPOST ALERTS ====================
+alertGroup = "🔔 TradersPost Alerts"
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts", group=alertGroup)
+tpStrategyName = input.string("V72_MNQ_MES_FIXED", "Strategy Name for Alerts", group=alertGroup)
+enterOnBarClose = input.bool(false, "Send Alerts on Bar Close Only", group=alertGroup)
+
+// ==================== 📊 CORE CALCULATIONS ====================
+// ATR calculations
+atr10 = ta.atr(10)
+atr14 = ta.atr(14)
+atrMain = ta.atr(14)
+
+// Volume
+volumeMA = ta.sma(volume, 20)
+volumeMA50 = ta.sma(volume, 50)
+
+// Hull MA
+hma(src, len) =>
+    half_length = math.max(math.round(len / 2), 1)
+    sqrt_length = math.max(math.round(math.sqrt(len)), 1)
+    wma_half = ta.wma(src, half_length)
+    wma_full = ta.wma(src, len)
+    wma_diff = 2 * wma_half - wma_full
+    ta.wma(wma_diff, sqrt_length)
+
+hullMain = hma(close, hullPeriodMain)
+hullFast = hma(close, hullPeriodFast)
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+hullAnyBullish = slopeMain == 1 or slopeFast == 1
+hullAnyBearish = slopeMain == -1 or slopeFast == -1
+hullMicroTurn = slopeFast != slopeFast[1]
+
+// SuperTrend
+[superTrend, trendDirection] = ta.supertrend(superTrendMultiplier, superTrendPeriod)
+trend = trendDirection
+trendChange = ta.change(trend) != 0
+
+// EMAs
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+sma9 = ta.sma(close, 9)
+sma50 = ta.sma(close, 50)
+sma180 = ta.sma(close, 180)
+
+// EMA alignment
+emaAlignedLong = (ema9 > ema21 ? 1 : 0) + (ema21 > ema50 ? 1 : 0) + (close > ema50 ? 1 : 0)
+emaAlignedShort = (ema9 < ema21 ? 1 : 0) + (ema21 < ema50 ? 1 : 0) + (close < ema50 ? 1 : 0)
+trendAlignedLong = emaAlignedLong >= 2
+trendAlignedShort = emaAlignedShort >= 2
+
+// Signal line
+signalTrendUp = sma9 > sma50 and sma50 > sma180
+signalTrendDown = sma9 < sma50 and sma50 < sma180
+res = ta.highest(high, swingPeriod)
+sup = ta.lowest(low, swingPeriod)
+avd = close > res[1] ? 1 : close < sup[1] ? -1 : 0
+avn = ta.valuewhen(avd != 0, avd, 1)
+tsl = avn == 1 ? sup : res
+swingBuySignal = ta.crossover(close, tsl) and enableSwingSignals
+swingSellSignal = ta.crossunder(close, tsl) and enableSwingSignals
+
+// ==================== 🕯️ CANDLESTICK ANALYSIS ====================
+// Basic candle properties
+candleBull = close > open
+candleBear = close < open
+bodySize = math.abs(close - open)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+totalRange = high - low
+bodyRatio = totalRange > 0 ? bodySize / totalRange : 0
+upperWickRatio = totalRange > 0 ? upperWick / totalRange : 0
+lowerWickRatio = totalRange > 0 ? lowerWick / totalRange : 0
+
+// ==================== 🛡️ V72 DOJI/SMALL BODY DETECTION ====================
+// Multiple detection methods for robust doji identification
+isDojiByRatio = bodyRatio <= maxDojiBodyRatio
+isDojiByATR = atr10 > 0 and bodySize <= atr10 * 0.10
+isDojiByRange = totalRange > 0 and bodySize <= totalRange * 0.08
+isDojiBar = isDojiByRatio or isDojiByATR or isDojiByRange
+isSmallBody = bodyRatio < 0.25 or (atr10 > 0 and bodySize < atr10 * 0.15)
+isSpinningTop = bodyRatio >= 0.15 and bodyRatio <= 0.35 and upperWickRatio >= 0.25 and lowerWickRatio >= 0.25
+
+// V72 CRITICAL: Block signals on indecision candles
+isIndecisionCandle = isDojiBar or isSmallBody or isSpinningTop
+
+// ==================== 🛡️ V72 STRICT DIRECTION VALIDATION ====================
+// CRITICAL FIX: This prevents firing longs on red candles and shorts on green candles
+
+// Strong bullish candle (for LONG signals)
+isStrongBullCandle = candleBull and bodyRatio >= minDirectionalBody and not isIndecisionCandle
+isValidBullDirection = candleBull and (not requireBodyDominance or bodyRatio >= minDirectionalBody)
+
+// Strong bearish candle (for SHORT signals)
+isStrongBearCandle = candleBear and bodyRatio >= minDirectionalBody and not isIndecisionCandle
+isValidBearDirection = candleBear and (not requireBodyDominance or bodyRatio >= minDirectionalBody)
+
+// MASTER DIRECTION GATES - These MUST be true for any signal
+longDirectionOK = enableStrictDirection ? isValidBullDirection : candleBull
+shortDirectionOK = enableStrictDirection ? isValidBearDirection : candleBear
+
+// Additional block: Never fire on doji if block is enabled
+dojiBlockActive = blockDojiSignals and isIndecisionCandle
+longDirectionGate = longDirectionOK and not dojiBlockActive
+shortDirectionGate = shortDirectionOK and not dojiBlockActive
+
+// ==================== 🔥 V72 ENHANCED MOMENTUM INDICATORS ====================
+// RSI
+rsiFast = ta.rsi(close, rsiPeriodFast)
+rsiSlow = ta.rsi(close, rsiPeriodSlow)
+rsiDivergence = rsiFast - rsiSlow
+rsiAccelerating = rsiFast > rsiFast[1] and rsiFast[1] > rsiFast[2]
+rsiDecelerating = rsiFast < rsiFast[1] and rsiFast[1] < rsiFast[2]
+
+// MACD
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSignal)
+macdBullish = macdLine > signalLine
+macdBearish = macdLine < signalLine
+macdCrossUp = ta.crossover(macdLine, signalLine)
+macdCrossDown = ta.crossunder(macdLine, signalLine)
+macdAccelUp = histLine > histLine[1] and histLine[1] > histLine[2]
+macdAccelDown = histLine < histLine[1] and histLine[1] < histLine[2]
+
+// Stochastic
+stochK = ta.stoch(close, high, low, stochKPeriod)
+stochD = ta.sma(stochK, stochDPeriod)
+stochBullish = stochK > stochD and stochK < 80
+stochBearish = stochK < stochD and stochK > 20
+stochOversold = stochK < 25
+stochOverbought = stochK > 75
+
+// ==================== 🚀 V72 FIRST CANDLE ENTRY DETECTION ====================
+// This is the CRITICAL fix for late entry - enter on FIRST strong candle
+
+// Price velocity (acceleration)
+priceChange1 = close - close[1]
+priceChange2 = close[1] - close[2]
+priceVelocity = math.abs(priceChange1)
+priceAcceleration = math.abs(priceChange1) / math.max(math.abs(priceChange2), syminfo.mintick)
+isAccelerating = priceAcceleration >= velocityAccelThreshold
+
+// First candle detection for LONG
+firstCandleLongOK = enableFirstCandleEntry and
+     isStrongBullCandle and
+     bodyRatio >= firstCandleMinBody and
+     (atr10 <= 0 or bodySize >= atr10 * firstCandleMinATR) and
+     volume >= volumeMA * firstCandleVolMult and
+     (slopeFast == 1 or hullMicroTurn) and
+     (trendAlignedLong or trend == 1 or macdBullish)
+
+// First candle detection for SHORT
+firstCandleShortOK = enableFirstCandleEntry and
+     isStrongBearCandle and
+     bodyRatio >= firstCandleMinBody and
+     (atr10 <= 0 or bodySize >= atr10 * firstCandleMinATR) and
+     volume >= volumeMA * firstCandleVolMult and
+     (slopeFast == -1 or hullMicroTurn) and
+     (trendAlignedShort or trend == -1 or macdBearish)
+
+// ==================== 🎯 V72 MOMENTUM PRE-SIGNAL DETECTION ====================
+// Detect momentum building BEFORE price confirms - allows earlier entry
+
+rsiShiftUp = rsiFast - rsiFast[momentumPreLookback]
+rsiShiftDown = rsiFast[momentumPreLookback] - rsiFast
+priceShiftPct = atr10 > 0 ? (close - close[momentumPreLookback]) / atr10 : 0
+
+momentumPreSignalLong = enableMomentumPreSignal and
+     rsiShiftUp >= momentumPreRSIShift and
+     priceShiftPct >= momentumPrePriceShift and
+     macdBullish and
+     (stochBullish or stochOversold)
+
+momentumPreSignalShort = enableMomentumPreSignal and
+     rsiShiftDown >= momentumPreRSIShift and
+     priceShiftPct <= -momentumPrePriceShift and
+     macdBearish and
+     (stochBearish or stochOverbought)
+
+// ==================== 📊 V72 ENHANCED CONSECUTIVE CANDLE DETECTION ====================
+// Track consecutive candles with proper body requirements
+
+// Count consecutive bullish candles
+consecBullCount = 0
+for i = 0 to 6
+    if (close[i] > open[i]) and not isDojiBar[i] and 
+       (totalRange[i] > 0 and math.abs(close[i] - open[i]) / totalRange[i] >= consecBodyRatioMin)
+        consecBullCount += 1
+    else
+        break
+
+// Count consecutive bearish candles
+consecBearCount = 0
+for i = 0 to 6
+    if (close[i] < open[i]) and not isDojiBar[i] and 
+       (totalRange[i] > 0 and math.abs(close[i] - open[i]) / totalRange[i] >= consecBodyRatioMin)
+        consecBearCount += 1
+    else
+        break
+
+// Count consecutive higher closes
+consecHigherCloses = 0
+for i = 0 to 6
+    if close[i] > close[i+1] and not isDojiBar[i]
+        consecHigherCloses += 1
+    else
+        break
+
+// Count consecutive lower closes
+consecLowerCloses = 0
+for i = 0 to 6
+    if close[i] < close[i+1] and not isDojiBar[i]
+        consecLowerCloses += 1
+    else
+        break
+
+// Effective consecutive counts
+runUpCount = math.max(consecBullCount, consecHigherCloses)
+runDownCount = math.max(consecBearCount, consecLowerCloses)
+
+// ==================== 🔥 V72 EARLY TREND DETECTION ====================
+// Detect trends at 1st-2nd candle instead of waiting for 3rd-4th
+
+// STRONG criteria for 1st candle entry
+firstCandleTrendLong = enableConsecutiveEarlyEntry and
+     consecBullCount >= minConsecForP1 and
+     isStrongBullCandle and
+     volume >= volumeMA * 1.05 and
+     (slopeFast == 1 or trend == 1 or macdBullish)
+
+firstCandleTrendShort = enableConsecutiveEarlyEntry and
+     consecBearCount >= minConsecForP1 and
+     isStrongBearCandle and
+     volume >= volumeMA * 1.05 and
+     (slopeFast == -1 or trend == -1 or macdBearish)
+
+// MODERATE criteria for 2nd candle entry
+secondCandleTrendLong = enableConsecutiveEarlyEntry and
+     runUpCount >= minConsecForP2 and
+     candleBull and bodyRatio >= 0.35 and
+     not isIndecisionCandle
+
+secondCandleTrendShort = enableConsecutiveEarlyEntry and
+     runDownCount >= minConsecForP2 and
+     candleBear and bodyRatio >= 0.35 and
+     not isIndecisionCandle
+
+// ==================== 🎯 V72 IMPULSE / BREAKOUT DETECTION ====================
+// Detect strong impulsive moves early
+
+volSurgeNow = volume >= volumeMA50 * 1.30
+barMove = math.abs(close - open)
+impulseMove = atr10 > 0 and barMove >= atr10 * 0.80
+rangeExpansion = atr10 > 0 and totalRange >= atr10 * 1.20
+
+// Breakout detection
+breakoutUp = close > ta.highest(high[1], 5) and volume >= volumeMA * 1.15
+breakoutDown = close < ta.lowest(low[1], 5) and volume >= volumeMA * 1.15
+
+impulseLong = enableEnhancedMomentum and
+     isStrongBullCandle and
+     (impulseMove or rangeExpansion or breakoutUp) and
+     volSurgeNow and
+     (macdBullish or rsiAccelerating)
+
+impulseShort = enableEnhancedMomentum and
+     isStrongBearCandle and
+     (impulseMove or rangeExpansion or breakoutDown) and
+     volSurgeNow and
+     (macdBearish or rsiDecelerating)
+
+// ==================== 🔥 V72 TREND OVERRIDE (REQUIRES DIRECTION MATCH) ====================
+// These require the candle to match the signal direction
+
+hasTrendOverrideBull = runUpCount >= 3 and volume >= volumeMA * 0.6 and not isIndecisionCandle and longDirectionGate
+hasTrendOverrideBear = runDownCount >= 3 and volume >= volumeMA * 0.6 and not isIndecisionCandle and shortDirectionGate
+hasStrongTrendOverrideBull = runUpCount >= 4 and volume >= volumeMA * 0.7 and not isIndecisionCandle and longDirectionGate
+hasStrongTrendOverrideBear = runDownCount >= 4 and volume >= volumeMA * 0.7 and not isIndecisionCandle and shortDirectionGate
+
+// ==================== 📊 V72 MOMENTUM OVERRIDE ====================
+priceMovePct = math.abs((close - close[5]) / close[5]) * 100
+priceMovePoints = math.abs(close - close[5])
+momentumUpMove = close > close[5] and priceMovePct >= 0.3
+momentumDownMove = close < close[5] and priceMovePct >= 0.3
+mnqMomentumUpMove = isMNQ and (close - close[5]) >= 80
+mnqMomentumDownMove = isMNQ and (close[5] - close) >= 80
+
+hasMomentumOverrideLong = momentumUpMove and isStrongBullCandle and longDirectionGate
+hasMomentumOverrideShort = momentumDownMove and isStrongBearCandle and shortDirectionGate
+
+// ==================== ⏰ SESSION & TIME FILTERS ====================
+currentTime = hour * 100 + minute
+isRegularSession = enableSessionFilters and currentTime >= regularSessionStart and currentTime <= regularSessionEnd
+isEndOfDay = currentTime >= endOfDayTime
+canTradeNow = not isEndOfDay and (not enableSessionFilters or isRegularSession)
+
+// ==================== 💰 DAILY P&L TRACKING ====================
+var float dailyPnL = 0.0
+var int lastTradeCount = 0
+newDayDetected = ta.change(time("D")) != 0
+if newDayDetected
+    dailyPnL := 0.0
+if strategy.closedtrades > lastTradeCount
+    dailyPnL := dailyPnL + strategy.closedtrades.profit(strategy.closedtrades - 1)
+    lastTradeCount := strategy.closedtrades
+
+profitTargetReached = enableDailyProfitTarget and dailyPnL >= dailyProfitTarget
+maxLossReached = enableDailyLossCircuit and dailyPnL <= -maxDailyLossDollars
+
+// ==================== 🎯 V72 UNIFIED SIGNAL GENERATION ====================
+var string selectedPriority = "NONE"
+var string entryPriority = "NONE"
+var bool shouldEnterLong = false
+var bool shouldEnterShort = false
+var string lastBlockReason = "NONE"
+var bool tookTradeThisBar = false
+
+// Reset on new bar
+if barstate.isconfirmed
+    tookTradeThisBar := false
+
+// Base entry conditions
+canEnterLong = canTradeNow and strategy.position_size <= 0 and not profitTargetReached and not maxLossReached
+canEnterShort = canTradeNow and strategy.position_size >= 0 and not profitTargetReached and not maxLossReached
+
+// Reset signals
+shouldEnterLong := false
+shouldEnterShort := false
+selectedPriority := "NONE"
+
+// ==================== 🚀 V72 PRIORITY SIGNAL SYSTEM ====================
+// Order: P0:FIRST -> P0:MOMENTUM -> P1:IMPULSE -> P1:EARLY -> P2:TREND -> P3:SWING
+
+if not tookTradeThisBar and canEnterLong or canEnterShort
+    // P0: FIRST CANDLE ENTRY (Earliest possible entry)
+    if canEnterLong and firstCandleLongOK and longDirectionGate and not shouldEnterLong
+        shouldEnterLong := true
+        selectedPriority := "P0:FIRST"
+        entryPriority := "P0:FIRST"
+    else if canEnterShort and firstCandleShortOK and shortDirectionGate and not shouldEnterShort
+        shouldEnterShort := true
+        selectedPriority := "P0:FIRST"
+        entryPriority := "P0:FIRST"
+    
+    // P0: MOMENTUM PRE-SIGNAL
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and momentumPreSignalLong and isStrongBullCandle and longDirectionGate
+            shouldEnterLong := true
+            selectedPriority := "P0:MOMENTUM"
+            entryPriority := "P0:MOMENTUM"
+        else if canEnterShort and momentumPreSignalShort and isStrongBearCandle and shortDirectionGate
+            shouldEnterShort := true
+            selectedPriority := "P0:MOMENTUM"
+            entryPriority := "P0:MOMENTUM"
+    
+    // P1: IMPULSE ENTRY
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and impulseLong and longDirectionGate
+            shouldEnterLong := true
+            selectedPriority := "P1:IMPULSE"
+            entryPriority := "P1:IMPULSE"
+        else if canEnterShort and impulseShort and shortDirectionGate
+            shouldEnterShort := true
+            selectedPriority := "P1:IMPULSE"
+            entryPriority := "P1:IMPULSE"
+    
+    // P1: EARLY TREND (1st-2nd candle)
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and (firstCandleTrendLong or hasMomentumOverrideLong) and longDirectionGate
+            shouldEnterLong := true
+            selectedPriority := "P1:EARLY_TREND"
+            entryPriority := "P1:EARLY_TREND"
+        else if canEnterShort and (firstCandleTrendShort or hasMomentumOverrideShort) and shortDirectionGate
+            shouldEnterShort := true
+            selectedPriority := "P1:EARLY_TREND"
+            entryPriority := "P1:EARLY_TREND"
+    
+    // P2: CONTINUATION (2nd-3rd candle)
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and (secondCandleTrendLong or hasTrendOverrideBull) and longDirectionGate
+            shouldEnterLong := true
+            selectedPriority := "P2:TREND"
+            entryPriority := "P2:TREND"
+        else if canEnterShort and (secondCandleTrendShort or hasTrendOverrideBear) and shortDirectionGate
+            shouldEnterShort := true
+            selectedPriority := "P2:TREND"
+            entryPriority := "P2:TREND"
+    
+    // P2: STRONG TREND (3rd+ candle continuation)
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and hasStrongTrendOverrideBull and longDirectionGate
+            shouldEnterLong := true
+            selectedPriority := "P2:STRONG_TREND"
+            entryPriority := "P2:STRONG_TREND"
+        else if canEnterShort and hasStrongTrendOverrideBear and shortDirectionGate
+            shouldEnterShort := true
+            selectedPriority := "P2:STRONG_TREND"
+            entryPriority := "P2:STRONG_TREND"
+    
+    // P3: SWING SIGNALS (with strict direction)
+    if not shouldEnterLong and not shouldEnterShort
+        if canEnterLong and swingBuySignal and longDirectionGate and trendAlignedLong
+            shouldEnterLong := true
+            selectedPriority := "P3:SWING"
+            entryPriority := "P3:SWING"
+        else if canEnterShort and swingSellSignal and shortDirectionGate and trendAlignedShort
+            shouldEnterShort := true
+            selectedPriority := "P3:SWING"
+            entryPriority := "P3:SWING"
+
+// ==================== 🛡️ V72 FINAL VALIDATION ====================
+// Last check: Ensure direction gate is satisfied
+if shouldEnterLong and not longDirectionGate
+    shouldEnterLong := false
+    lastBlockReason := "DIRECTION:NOT_GREEN"
+if shouldEnterShort and not shortDirectionGate
+    shouldEnterShort := false
+    lastBlockReason := "DIRECTION:NOT_RED"
+
+// Block on doji if enabled
+if shouldEnterLong and dojiBlockActive
+    shouldEnterLong := false
+    lastBlockReason := "BLOCKED:DOJI"
+if shouldEnterShort and dojiBlockActive
+    shouldEnterShort := false
+    lastBlockReason := "BLOCKED:DOJI"
+
+// ==================== 💹 CALCULATE TP/SL ====================
+var float stopLossPoints = 50.0
+var float tp1Points = 45.0
+var float tp2Points = 70.0
+
+if isMNQ
+    if is3min
+        stopLossPoints := mnq_customSL_3m
+        tp1Points := mnq_customTP1_3m
+        tp2Points := mnq_customTP2_3m
+    else
+        stopLossPoints := mnq_customSL_5m
+        tp1Points := mnq_customTP1_5m
+        tp2Points := mnq_customTP2_5m
+else if isMES
+    if is3min
+        stopLossPoints := mes_customSL_3m
+        tp1Points := mes_customTP1_3m
+        tp2Points := mes_customTP2_3m
+    else
+        stopLossPoints := mes_customSL_5m
+        tp1Points := mes_customTP1_5m
+        tp2Points := mes_customTP2_5m
+
+// ==================== 📈 EXECUTE TRADES ====================
+longCondition = shouldEnterLong and not tookTradeThisBar
+shortCondition = shouldEnterShort and not tookTradeThisBar
+
+if longCondition
+    strategy.entry("Long", strategy.long, comment=selectedPriority)
+    tookTradeThisBar := true
+    
+if shortCondition
+    strategy.entry("Short", strategy.short, comment=selectedPriority)
+    tookTradeThisBar := true
+
+// ==================== 🛡️ EXIT MANAGEMENT ====================
+if strategy.position_size > 0
+    strategy.exit("TP/SL Long", "Long", 
+         profit=tp1Points * syminfo.pointvalue, 
+         loss=stopLossPoints * syminfo.pointvalue)
+
+if strategy.position_size < 0
+    strategy.exit("TP/SL Short", "Short", 
+         profit=tp1Points * syminfo.pointvalue, 
+         loss=stopLossPoints * syminfo.pointvalue)
+
+// End of day exit
+if isEndOfDay and strategy.position_size != 0
+    strategy.close_all(comment="EOD_EXIT")
+
+// ==================== 🔔 TRADERSPOST ALERTS ====================
+tpNum(val) => str.tostring(val, "#.##")
+tpNumInt(val) => str.tostring(val, "#")
+
+if longCondition and enableTradersPostAlerts
+    longEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"buy",' +
+         '"quantity":1,' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal":"' + selectedPriority + '",' +
+         '"candleDirection":"GREEN",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(longEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+
+if shortCondition and enableTradersPostAlerts
+    shortEntryMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"sell",' +
+         '"quantity":1,' +
+         '"price":' + tpNum(close) + ',' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"signal":"' + selectedPriority + '",' +
+         '"candleDirection":"RED",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(shortEntryMessage, enterOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+
+// Exit alert
+if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts
+    exitDir = strategy.position_size[1] > 0 ? "LONG" : "SHORT"
+    exitMessage = '{' +
+         '"ticker":"' + actualTicker + '",' +
+         '"action":"exit",' +
+         '"quantity":1,' +
+         '"strategy":"' + tpStrategyName + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+    alert(exitMessage, alert.freq_once_per_bar)
+
+// ==================== 📊 VISUAL INDICATORS ====================
+// Hull MA
+hullMainColor = slopeMain == 1 ? color.new(color.green, 50) : slopeMain == -1 ? color.new(color.red, 50) : color.new(color.gray, 70)
+hullFastColor = slopeFast == 1 ? color.new(color.lime, 30) : slopeFast == -1 ? color.new(color.orange, 30) : color.new(color.gray, 50)
+plot(hullMain, "Hull Main", color=hullMainColor, linewidth=3)
+plot(hullFast, "Hull Fast", color=hullFastColor, linewidth=2)
+
+// EMAs
+plot(ema9, "EMA 9", color=color.new(color.blue, 60), linewidth=1)
+plot(ema21, "EMA 21", color=color.new(color.orange, 60), linewidth=1)
+plot(ema50, "EMA 50", color=color.new(color.gray, 60), linewidth=1)
+
+// Swing Line
+plot(tsl, "Swing Line", color=close >= tsl ? color.green : color.red, linewidth=2)
+
+// SuperTrend background
+trendColor = trend == 1 ? color.new(color.green, 95) : trend == -1 ? color.new(color.red, 95) : color.new(color.gray, 98)
+bgcolor(trendColor, title="SuperTrend Background")
+
+// Entry signals
+plotshape(longCondition, "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(shortCondition, "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Blocked signals (for debugging)
+blockedLong = shouldEnterLong == false and (firstCandleLongOK or impulseLong or hasTrendOverrideBull) and not longDirectionGate
+blockedShort = shouldEnterShort == false and (firstCandleShortOK or impulseShort or hasTrendOverrideBear) and not shortDirectionGate
+plotshape(blockedLong, "Blocked Long (Wrong Color)", shape.xcross, location.belowbar, color.new(color.red, 50), size=size.tiny)
+plotshape(blockedShort, "Blocked Short (Wrong Color)", shape.xcross, location.abovebar, color.new(color.green, 50), size=size.tiny)
+
+// ==================== 📊 PERFORMANCE TABLE ====================
+var table perfTable = table.new(position.top_right, 2, 12, border_width=1)
+winRateAll = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+if barstate.islast
+    table.cell(perfTable, 0, 0, "🏆 WIN RATE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 0, str.tostring(winRateAll, "#.#") + "%", text_color=winRateAll >= 70 ? color.green : winRateAll >= 60 ? color.yellow : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 1, "TRADES", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 1, str.tostring(strategy.closedtrades), text_color=color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 2, "NET P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 2, "$" + str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 3, "DAILY P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 3, "$" + str.tostring(dailyPnL, "#.##"), text_color=dailyPnL >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 4, "SIGNAL", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 4, selectedPriority, text_color=color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 5, "CONSEC UP", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 5, str.tostring(runUpCount), text_color=runUpCount >= 2 ? color.green : color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 6, "CONSEC DN", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 6, str.tostring(runDownCount), text_color=runDownCount >= 2 ? color.red : color.white, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 7, "RSI FAST", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 7, str.tostring(rsiFast, "#.#"), text_color=rsiFast > 50 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 8, "MACD", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 8, macdBullish ? "BULL" : "BEAR", text_color=macdBullish ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 9, "CANDLE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 9, candleBull ? "GREEN" : "RED", text_color=candleBull ? color.green : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 10, "BODY %", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(perfTable, 1, 10, str.tostring(bodyRatio * 100, "#") + "%", text_color=bodyRatio >= 0.4 ? color.green : bodyRatio >= 0.25 ? color.yellow : color.red, bgcolor=color.new(color.gray, 85))
+    table.cell(perfTable, 0, 11, "BLOCK", text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(perfTable, 1, 11, lastBlockReason, text_color=lastBlockReason == "NONE" ? color.green : color.white, bgcolor=color.new(color.gray, 85))
+
+// Debug plots (Data Window only)
+plot(runUpCount, "Consec Up", color=color.new(color.green, 0), display=display.data_window)
+plot(runDownCount, "Consec Down", color=color.new(color.red, 0), display=display.data_window)
+plot(bodyRatio * 100, "Body Ratio %", color=color.new(color.blue, 0), display=display.data_window)
+plot(rsiFast, "RSI Fast", color=color.new(color.purple, 0), display=display.data_window)
+plot(longDirectionGate ? 1 : 0, "Long Dir OK", color=color.new(color.green, 0), display=display.data_window)
+plot(shortDirectionGate ? 1 : 0, "Short Dir OK", color=color.new(color.red, 0), display=display.data_window)
