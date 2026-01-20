@@ -723,11 +723,11 @@ spinningTop = enableCandlePatterns and enableSpinningTop and bodyRatio >= 0.2 an
 tier1Bull = threeWhiteSoldiers or bullishEngulfing
 tier2Bull = morningStar or piercingLine
 tier3Bull = hammer or invertedHammer or bullishHarami
-tier4Bull = bullishMarubozu or doji or spinningTop
+tier4Bull = bullishMarubozu or spinningTop
 tier1Bear = threeBlackCrows or bearishEngulfing
 tier2Bear = eveningStar or darkCloudCover
 tier3Bear = shootingStar or hangingMan or bearishHarami
-tier4Bear = bearishMarubozu or doji or spinningTop
+tier4Bear = bearishMarubozu or spinningTop
 
 allowedBullPattern = (enableTier1 and tier1Bull) or (enableTier2 and tier2Bull) or (enableTier3 and tier3Bull) or (enableTier4 and tier4Bull)
 allowedBearPattern = (enableTier1 and tier1Bear) or (enableTier2 and tier2Bear) or (enableTier3 and tier3Bear) or (enableTier4 and tier4Bear)
