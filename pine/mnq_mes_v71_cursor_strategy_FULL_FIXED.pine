@@ -108,7 +108,9 @@ fhMinQuality = input.float(70.0, "Min quality to enter (%)", minval=40.0, maxval
 fhStrongOverrideFactor = input.float(0.85, "Strong-signal threshold factor", minval=0.60, maxval=0.95, step=0.01, group=filterHarmonyGroup, tooltip="Strong signals can enter at MinQuality × factor (ex: 70%×0.85=59.5%)")
 fhTieTolerance = input.float(5.0, "Tie tolerance (%)", minval=0.0, maxval=20.0, step=1.0, group=filterHarmonyGroup, tooltip="If long/short quality are within this %, prefer trend-aligned / momentum side.")
 fhGrayZonePenalty = input.float(10.0, "Gray-zone penalty (points)", minval=0.0, maxval=30.0, step=1.0, group=filterHarmonyGroup)
-fhAllowSwingInGrayZone = input.bool(true, "Allow swing signals in gray zone if quality high", group=filterHarmonyGroup)
+fhAllowSwingInGrayZone = input.bool(false, "Allow swing signals in gray zone if quality high", group=filterHarmonyGroup)
+fhAvoidSidewaysEntries = input.bool(true, "✅ Avoid sideways/chop/gray-zone entries", group=filterHarmonyGroup, tooltip="Blocks entries in chop/gray-zone/ranging unless a very strong impulse/ignition is present.")
+fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only if VERY strong", group=filterHarmonyGroup, tooltip="When enabled, only very-strong trend signals can bypass the sideways/chop block.")
 
 // Strategy Tester fix: if you set Alert Only Mode = ON, TradingView strategy tester shows no trades.
 // This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
@@ -799,9 +801,24 @@ lowerWickRatio = totalRange > 0 ? lowerWick / totalRange : 0
 // Stronger doji/tiny-body detection: range% OR ATR-relative
 dojiRangePct = input.float(0.05, "Doji: body <= range%", minval=0.02, maxval=0.15, step=0.01)
 dojiAtrPct = input.float(0.10, "Doji: body <= ATR%", minval=0.03, maxval=0.30, step=0.01)
+autoTuneDojiFilter = input.bool(true, "Auto-tune Doji filter (MNQ/MES 3m/5m)", group="🧠 Entry Block-Reason Instrumentation", tooltip="Classifies more tiny-body candles as doji on MNQ/MES to prevent doji entries/exits.")
+dojiRangePct_eff =
+     not autoTuneDojiFilter ? dojiRangePct :
+     (isMNQ and is3min) ? 0.06 :
+     (isMNQ and is5min) ? 0.065 :
+     (isMES and is3min) ? 0.055 :
+     (isMES and is5min) ? 0.055 :
+     dojiRangePct
+dojiAtrPct_eff =
+     not autoTuneDojiFilter ? dojiAtrPct :
+     (isMNQ and is3min) ? 0.12 :
+     (isMNQ and is5min) ? 0.12 :
+     (isMES and is3min) ? 0.11 :
+     (isMES and is5min) ? 0.11 :
+     dojiAtrPct
 isDojiBar =
-     (totalRange > 0 and bodySize <= totalRange * dojiRangePct) or
-     (atr10 > 0 and bodySize <= atr10 * dojiAtrPct)
+     (totalRange > 0 and bodySize <= totalRange * dojiRangePct_eff) or
+     (atr10 > 0 and bodySize <= atr10 * dojiAtrPct_eff)
 
 // ==================== ✅ Candle Quality Gate (ATR-relative) ====================
 minBodyRatioEntry = input.float(0.35, "Min body ratio for ALL entries", minval=0.15, maxval=0.80, step=0.01)
@@ -1965,8 +1982,17 @@ if not tookTradeThisBar
         fhOkShort = fhQualityShort >= fhMinShort or (fhStrongShort2 and fhQualityShort >= (fhMinShort * fhStrongOverrideFactor))
 
         // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
-        fhCandidateLong = canGoLong and fhRawLong and longBarOK
-        fhCandidateShort = canGoShort and fhRawShort and shortBarOK
+        // Also: NEVER enter on doji/tiny-body candles (strict requirement for entries).
+        fhDojiBlock = isDojiBar or (entryTimingMode == "Next Bar Open" and isDojiBar[1])
+        // Sideways/chop/gray-zone block (trend-only trading):
+        fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
+        fhVeryStrongLong = fhStrongLong2 and veryStrongTrend
+        fhVeryStrongShort = fhStrongShort2 and veryStrongTrend
+        fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongLong : fhStrongLong2)
+        fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongShort : fhStrongShort2)
+
+        fhCandidateLong = canGoLong and fhRawLong and longBarOK and not fhDojiBlock and fhAllowSidewaysLong
+        fhCandidateShort = canGoShort and fhRawShort and shortBarOK and not fhDojiBlock and fhAllowSidewaysShort
 
         fhAllowLong = fhCandidateLong and fhOkLong
         fhAllowShort = fhCandidateShort and fhOkShort
