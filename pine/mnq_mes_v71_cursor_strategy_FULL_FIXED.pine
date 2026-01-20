@@ -151,6 +151,14 @@ enterOnBarClose = input.bool(true, "Enter ONLY on bar close (no intrabar entries
 allowIntrabarForP1P2 = input.bool(true, "Allow intrabar entries for P1/P2 (earlier impulse/trend)", group=entryGroup)
 require5mCandleColorConfirm = input.bool(true, "3m entries require 5m candle color confirmation", group=entryGroup)
 
+// ==================== 🕐 ENTRY TIMING (Fix “late entries” + wrong-color candles) ====================
+timingGroup = "🕐 Entry Timing"
+// Key fix:
+// - Intrabar entries can LOOK like they fired on the “wrong color” candle because the candle flips color before close.
+// - “Next Bar Open” uses the previous CLOSED candle signal, then enters at the next bar open (earlier than waiting for another full candle, but stable).
+entryTimingMode = input.string("Next Bar Open", "Entry timing mode", options=["Bar Close","Next Bar Open","Intrabar"], group=timingGroup)
+useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup, tooltip="Reduces lag vs EMA9/21/50 stack; helps capture 2–3 candle runs earlier.")
+
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
 mesGuardGroup = "🛡️ MES Anti-Chop Guard"
 enableMesAntiChop = input.bool(true, "Enable MES stricter filters (reduces chop entries)", group=mesGuardGroup)
@@ -901,6 +909,8 @@ enableTrendStart = input.bool(true, "Enable P-1 Trend Start (2nd candle)", group
 trendStartBodyMin = input.float(0.40, "P-1 min body ratio", minval=0.20, maxval=0.80, step=0.01, group=trendStartGroup)
 trendStartVolMult = input.float(1.20, "P-1 volume multiple vs SMA20", minval=1.0, maxval=2.5, step=0.05, group=trendStartGroup)
 trendStartAccel = input.bool(true, "P-1 require acceleration", group=trendStartGroup)
+trendStartRunMin = input.int(2, "P-1 min run candles (2 catches earlier)", minval=2, maxval=4, group=trendStartGroup)
+trendStartPrevVolMult = input.float(1.00, "P-1 prev candle vol mult vs SMA20", minval=0.8, maxval=2.0, step=0.05, group=trendStartGroup)
 
 prevRange = high[1] - low[1]
 prevBody = math.abs(close[1] - open[1])
@@ -909,18 +919,18 @@ prevBodyRatio = prevRange > 0 ? (prevBody / prevRange) : 0.0
 curStrongBull = candleBull and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
 curStrongBear = candleBear and candleQualityOK and bodyRatio >= trendStartBodyMin and (volume > volumeMA * trendStartVolMult)
 
-prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
-prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * 1.05)
+prevStrongBull = (close[1] > open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * trendStartPrevVolMult)
+prevStrongBear = (close[1] < open[1]) and (not isDojiBar[1]) and prevBodyRatio >= trendStartBodyMin and (volume[1] > volumeMA[1] * trendStartPrevVolMult)
 
 accelBull = (close - close[1]) > (close[1] - close[2])
 accelBear = (close[1] - close) > (close[2] - close[1])
 
 hasTrendStartLong =
-     enableTrendStart and (runUpCloses == 2) and curStrongBull and prevStrongBull and
+     enableTrendStart and (runUpCloses >= trendStartRunMin) and curStrongBull and prevStrongBull and
      (not trendStartAccel or accelBull)
 
 hasTrendStartShort =
-     enableTrendStart and (runDownCloses == 2) and curStrongBear and prevStrongBear and
+     enableTrendStart and (runDownCloses >= trendStartRunMin) and curStrongBear and prevStrongBear and
      (not trendStartAccel or accelBear)
 
 hasTrendOverrideBull = enableTrendOverride and (runUpCloses >= 3) and isStrongVolume and isStrongRange and not isDojiBar
@@ -946,6 +956,10 @@ emaAlignedLong = (emaShort > emaMedium ? 1 : 0) + (emaMedium > emaLong ? 1 : 0) 
 emaAlignedShort = (emaShort < emaMedium ? 1 : 0) + (emaMedium < emaLong ? 1 : 0) + (close < emaLong ? 1 : 0)
 trendAlignedLong = emaAlignedLong >= 3
 trendAlignedShort = emaAlignedShort >= 3
+
+// Faster alignment for earlier entries (reduces “P2 on 4th candle” behavior)
+trendAlignedLongFast = (emaShort > emaMedium) and (close > emaMedium)
+trendAlignedShortFast = (emaShort < emaMedium) and (close < emaMedium)
 
 // ==================== ✅ Mandatory Trend-Only Filter signals ====================
 vwapVal = ta.vwap(hlc3)
@@ -1051,8 +1065,8 @@ impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impu
 // Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
 earlyTrendBodyOK = not isDojiBar and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
 // NOTE: Avoid referencing SuperTrend vars here (trend/trendChange) to prevent ordering compile errors.
-earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and trendAlignedLong and canTradeNow and (hullMicroTurn or slopeFast == 1)
-earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and trendAlignedShort and canTradeNow and (hullMicroTurn or slopeFast == -1)
+earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and (useFastEmaForEarlyTrend ? trendAlignedLongFast : trendAlignedLong) and canTradeNow and (hullMicroTurn or slopeFast == 1)
+earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and (useFastEmaForEarlyTrend ? trendAlignedShortFast : trendAlignedShort) and canTradeNow and (hullMicroTurn or slopeFast == -1)
 
 // ==================== ⚡ TREND IGNITION + CONTINUATION (STRUCTURAL EARLY ENTRY FIX) ====================
 tibGroup = "⚡ Trend Ignition Engine"
@@ -1980,10 +1994,10 @@ ltfOK_Short = (not enableLTFConfirm) or (not intrabarAllowedNow) or ltfBear
 shouldEnterLong := shouldEnterLong and ltfOK_Long
 shouldEnterShort := shouldEnterShort and ltfOK_Short
 
-// Default: gate entries to bar close when enabled.
-// Exception: allow intrabar entries for Kenya MNQ 3m if enabled (to match the proven Kenya behavior).
-// Default: gate entries to bar close when enabled.
-// Exception: allow intrabar entries for Kenya MNQ 3m (restore) OR for P-1/P1/P2 when enabled.
+// ==================== 🕐 Entry timing gate ====================
+// Bar Close: safest (but can be “late”)
+// Next Bar Open: uses previous closed bar signal, enters at next bar open (earlier + avoids wrong-color candles)
+// Intrabar: fastest but can look “wrong color” if candle flips before close
 isPriorityIntrabar =
      (selectedPriority == "P-1:TREND_START") or
      (selectedPriority == "P1:IMPULSE") or
@@ -1991,12 +2005,32 @@ isPriorityIntrabar =
      (selectedPriority == "P2:TREND") or
      (selectedPriority == "P2:STRONG_TREND")
 
-entryOK =
-     (not enterOnBarClose or barstate.isconfirmed) or
+// Require candle quality (prevents P1/P2 firing on dojis/tiny-body bars)
+curCandleOK = candleQualityOK and (not isDojiBar)
+prevCandleOK = candleQualityOK[1] and (not isDojiBar[1])
+
+entryOK_intrabar =
      (kenyaAllowIntrabarEntries and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3") or
-     (allowIntrabarForP1P2 and isPriorityIntrabar)
-bool longCondition = entryOK and shouldEnterLong and not tookTradeThisBar
-bool shortCondition = entryOK and shouldEnterShort and not tookTradeThisBar
+     ((not enterOnBarClose) and (allowIntrabarForP1P2 and isPriorityIntrabar))
+
+entryOK_barclose = barstate.isconfirmed
+entryOK_nextopen = barstate.isnew
+
+bool longCondition =
+     (entryTimingMode == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterLong) :
+      entryTimingMode == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterLong) :
+      // Next Bar Open (default): use previous bar signal to enter earlier + stable
+      (entryOK_nextopen and prevCandleOK and shouldEnterLong[1])) and
+     not tookTradeThisBar
+
+bool shortCondition =
+     (entryTimingMode == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterShort) :
+      entryTimingMode == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterShort) :
+      (entryOK_nextopen and prevCandleOK and shouldEnterShort[1])) and
+     not tookTradeThisBar
+
+// Preserve existing downstream logic that expects `entryOK` for alerts/logs.
+entryOK = (entryTimingMode == "Intrabar" ? entryOK_intrabar : entryTimingMode == "Bar Close" ? entryOK_barclose : entryOK_nextopen)
 
 // ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
 var string lastBlockReason = "NONE"
@@ -2055,10 +2089,11 @@ if strategy.position_size == 0
              (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
              "OTHER"
 
+selectedPriorityForLog = entryTimingMode == "Next Bar Open" ? selectedPriority[1] : selectedPriority
 if longCondition and strategy.position_size == 0
-    activeSignalType := selectedPriority == "P-1:TREND_START" ? "IGNITION" : selectedPriority == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
+    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong ? "MOMENTUM" : impulseLong ? "IMPULSE" : hasTrendOverrideBull ? "TREND" : microBuySignal ? "MICRO" : instantBuySignal ? "INSTANT" : scalpBuySignal ? "SCALP" : strongBuySignal ? "STRONG" : swingBuySignal ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0
-    activeSignalType := selectedPriority == "P-1:TREND_START" ? "IGNITION" : selectedPriority == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort ? "MOMENTUM" : impulseShort ? "IMPULSE" : hasTrendOverrideBear ? "TREND" : microSellSignal ? "MICRO" : instantSellSignal ? "INSTANT" : scalpSellSignal ? "SCALP" : strongSellSignal ? "STRONG" : swingSellSignal ? "SWING" : "NORMAL"
+    activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort ? "MOMENTUM" : impulseShort ? "IMPULSE" : hasTrendOverrideBear ? "TREND" : microSellSignal ? "MICRO" : instantSellSignal ? "INSTANT" : scalpSellSignal ? "SCALP" : strongSellSignal ? "STRONG" : swingSellSignal ? "SWING" : "NORMAL"
 else if strategy.position_size == 0
     activeSignalType := "NONE"
 
@@ -2089,7 +2124,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
         lastOppositeEntryBar := bar_index
     int tradeQty = getActiveQty(finalContractQty)
     if not alertOnlyMode_eff
-        strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriority)
+        strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastLongSignalBar := bar_index
@@ -2110,7 +2145,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         lastOppositeEntryBar := bar_index
     int tradeQtyS = getActiveQty(finalContractQty)
     if not alertOnlyMode_eff
-        strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriority)
+        strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastShortSignalBar := bar_index
