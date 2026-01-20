@@ -1257,6 +1257,9 @@ effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXFo
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
 v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
 
+// Early trend strength flag (used before `strongTrend` is defined later in the script)
+strongTrendEarly = trendStrength > 0.15
+
 // Choppy detection
 isLowADX = adxValue < choppyADXThreshold
 atrCurrent = ta.atr(14)
@@ -1274,7 +1277,7 @@ choppyActiveWhenInPosition = not disableChoppyInPosition
 choppyCheckAllowed = strategy.position_size == 0 or choppyActiveWhenInPosition
 // Choppy bypass: veryStrongTrend was too late on 3m/5m. Allow strongTrend as well,
 // and allow obvious multi-candle runs to bypass (trend scalping should not be labelled “chop” mid-run).
-trendBypassAllowed = disableChoppyInTrend and (veryStrongTrend or strongTrend)
+trendBypassAllowed = disableChoppyInTrend and (veryStrongTrend or strongTrendEarly)
 runBypassAllowed = (runUpCloses >= 3) or (runDownCloses >= 3)
 overrideBypassAllowed = hasTrendOverrideBull or hasTrendOverrideBear or hasMomentumOverrideLong or hasMomentumOverrideShort or impulseLong or impulseShort or tibLong or tibShort or cpbLong or cpbShort
 isChoppy := enableChoppyFilter and choppyCheckAllowed and isChoppyRaw and not trendBypassAllowed and not runBypassAllowed and not overrideBypassAllowed
