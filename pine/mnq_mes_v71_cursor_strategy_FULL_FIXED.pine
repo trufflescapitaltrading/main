@@ -419,6 +419,7 @@ alertOnlyMode = input.bool(false, "Alert Only Mode")
 // Effective alert-only flag (keeps strategy tester working)
 alertOnlyMode_eff = alertOnlyMode and not forceStrategyOrdersForBacktest
 tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state (required for Alert Only Mode)", group="TradersPost Router")
+tpResetSimOnNewDay = input.bool(true, "TradersPost: Reset simulated position on new day", group="TradersPost Router", tooltip="Prevents phantom EXIT alerts if the script was restarted or the broker rejected an order. Disable only if you intentionally hold positions across midnight while in Alert Only Mode.")
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
 tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group="TradersPost Router")
@@ -1555,6 +1556,11 @@ if newDayDetected or barstate.isfirst
     todayTradeCount := 0
     consecutiveLosses := 0
     streakPauseUntilBar := na
+    // Alert-only safety: reset simulated broker position daily (prevents phantom exits).
+    if alertOnlyMode_eff and tpSimulateBrokerPosition and tpResetSimOnNewDay
+        tpPosDir := 0
+        tpPosBar := na
+        tpPosQty := 0
 
 if resetStreakOnNewDay and newDayDetected
     consecutiveLosses := 0
@@ -3074,7 +3080,10 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
     lastExitReason := "MAX_HOLD"
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
-tpUseSim = tpSimulateBrokerPosition or alertOnlyMode_eff
+// IMPORTANT:
+// - When NOT in Alert Only Mode, trust strategy.position_size for broker-state (prevents “exit with no trade” alerts).
+// - When in Alert Only Mode, use simulated state to avoid duplicate entries/exits.
+tpUseSim = alertOnlyMode_eff and tpSimulateBrokerPosition
 // IMPORTANT: Treat qty<=0 as flat (prevents “exit when flat” rejections).
 tpFlat = tpUseSim ? (tpPosDir == 0 or tpPosQty <= 0) : (strategy.position_size == 0)
 tpLong = tpUseSim ? (tpPosDir == 1 and tpPosQty > 0) : (strategy.position_size > 0)
