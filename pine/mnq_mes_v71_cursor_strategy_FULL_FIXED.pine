@@ -927,12 +927,18 @@ bullOCStreak = 0
 bearOCStreak = 0
 upCloseStreak = 0
 downCloseStreak = 0
-minRunBodyRatio = input.float(0.30, "Run candle min body ratio", minval=0.15, maxval=0.70, step=0.01)
+minRunBodyRatio = input.float(0.20, "Run candle min body ratio", minval=0.05, maxval=0.70, step=0.01)
+minRunBodyRatio_eff =
+     // MNQ/MES 3m/5m: allow runs to persist through normal-body trend candles.
+     (isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m) ? math.min(minRunBodyRatio, 0.12) : minRunBodyRatio
 for i = 0 to maxRunBars - 1
     rng_i = high[i] - low[i]
     body_i = math.abs(close[i] - open[i])
     bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
-    if (close[i] > open[i]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
+    if isDojiBar[i]
+        // Doji: don't extend the streak, but don't break it either.
+        bullOCStreak += 0
+    else if (close[i] > open[i]) and bodyRatio_i >= minRunBodyRatio_eff
         bullOCStreak += 1
     else
         break
@@ -940,7 +946,9 @@ for i = 0 to maxRunBars - 1
     rng_i = high[i] - low[i]
     body_i = math.abs(close[i] - open[i])
     bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
-    if (close[i] < open[i]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
+    if isDojiBar[i]
+        bearOCStreak += 0
+    else if (close[i] < open[i]) and bodyRatio_i >= minRunBodyRatio_eff
         bearOCStreak += 1
     else
         break
@@ -948,7 +956,9 @@ for i = 0 to maxRunBars - 1
     rng_i = high[i] - low[i]
     body_i = math.abs(close[i] - open[i])
     bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
-    if (close[i] > close[i + 1]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
+    if isDojiBar[i]
+        upCloseStreak += 0
+    else if (close[i] > close[i + 1]) and bodyRatio_i >= minRunBodyRatio_eff
         upCloseStreak += 1
     else
         break
@@ -956,7 +966,9 @@ for i = 0 to maxRunBars - 1
     rng_i = high[i] - low[i]
     body_i = math.abs(close[i] - open[i])
     bodyRatio_i = rng_i > 0 ? (body_i / rng_i) : 0.0
-    if (close[i] < close[i + 1]) and not isDojiBar[i] and bodyRatio_i >= minRunBodyRatio
+    if isDojiBar[i]
+        downCloseStreak += 0
+    else if (close[i] < close[i + 1]) and bodyRatio_i >= minRunBodyRatio_eff
         downCloseStreak += 1
     else
         break
@@ -1254,8 +1266,17 @@ cpbReexpandRangeMult_eff =
 volOK_TIB = volume >= volumeMA * tibVolMult_eff2
 rangeExpOK = avgRange5 > 0 ? (totalRange >= avgRange5 * tibRangeMult_eff) : false
 
-tibLong = enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta >= tibRsiDeltaMin_eff) and breakUp and vwapDistOK and volOK_TIB and trendAlignedLong and canEnterNow
-tibShort = enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and breakDn and vwapDistOK and volOK_TIB and trendAlignedShort and canEnterNow
+// TIB was too strict (breakout+range+RSI+VWAP+volume all at once). Allow a run-based ignition path on MNQ/MES 3m/5m.
+tibRunBypass = (isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m) and (runUpCloses >= 2 or runDownCloses >= 2)
+tibVolOK_Loose = volume >= volumeMA * 0.80
+tibLong =
+     enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta >= tibRsiDeltaMin_eff) and vwapDistOK and canEnterNow and
+     (trendAlignedLong or trendAlignedLongFast) and
+     ((breakUp and volOK_TIB) or (tibRunBypass and runUpCloses >= 2 and tibVolOK_Loose))
+tibShort =
+     enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and vwapDistOK and canEnterNow and
+     (trendAlignedShort or trendAlignedShortFast) and
+     ((breakDn and volOK_TIB) or (tibRunBypass and runDownCloses >= 2 and tibVolOK_Loose))
 
 var int lastIgnBar = na
 var int lastIgnDir = 0
@@ -1282,8 +1303,11 @@ if barsFromIgn <= cpbMaxBars
 pullbackDepthLong = (atr10 > 0) ? math.max(0.0, (hiSinceIgn - low) / atr10) : 0.0
 pullbackDepthShort = (atr10 > 0) ? math.max(0.0, (high - loSinceIgn) / atr10) : 0.0
 
-cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR_eff) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedLong and canEnterNow
-cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR_eff) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedShort and canEnterNow
+// CPB: allow fast alignment on MNQ/MES 3m/5m so continuations aren't missed while EMAs finish stacking.
+cpbAlignLongOK = trendAlignedLong or ((isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m) and trendAlignedLongFast)
+cpbAlignShortOK = trendAlignedShort or ((isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m) and trendAlignedShortFast)
+cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR_eff) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and cpbAlignLongOK and canEnterNow
+cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR_eff) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and cpbAlignShortOK and canEnterNow
 
 // Price momentum
 priceChange = close - close[5]
@@ -1414,7 +1438,14 @@ trendChange = trend != trend[1]
 strongTrend = trendStrength > 0.15
 // Smarter “range” detector (prevents early trend from being misclassified as range on 3m/5m)
 // Range requires multiple signals of consolidation: low trend strength + low ADX + tight BB + no ATR expansion.
-rangingMarket = (trendStrength < 0.08) and (adxValue < choppyADXThreshold) and isTightBB and (not atrExpandingNow)
+// Ranging should not trigger during real multi-candle runs or aligned momentum.
+rangingMarket =
+     (trendStrength < 0.08) and
+     (adxValue < choppyADXThreshold) and
+     isTightBB and
+     (not atrExpandingNow) and
+     (runUpCloses < 2 and runDownCloses < 2) and
+     (not trendAlignedLongFast and not trendAlignedShortFast)
 moderateTrend = not strongTrend and not rangingMarket
 
 currentVol = ta.atr(volatilityPeriod)
@@ -1502,17 +1533,19 @@ genConfirmAtrMultInput = input.float(0.25, "Generic confirm: min body (×ATR10) 
 
 genConfirmBodyRatio_eff =
      (not autoTuneGenericConfirm) ? genConfirmBodyRatioInput :
-     isMNQ_3m ? 0.36 :
-     isMNQ_5m ? 0.34 :
-     isMES_3m ? 0.38 :
-     isMES_5m ? 0.40 :
+     // Lowered to avoid missing clean trend runs (MNQ/MES 3m/5m massive-move catcher).
+     isMNQ_3m ? 0.28 :
+     isMNQ_5m ? 0.26 :
+     isMES_3m ? 0.30 :
+     isMES_5m ? 0.32 :
      genConfirmBodyRatioInput
 genConfirmAtrMult_eff =
      (not autoTuneGenericConfirm) ? genConfirmAtrMultInput :
-     isMNQ_3m ? 0.16 :
-     isMNQ_5m ? 0.15 :
-     isMES_3m ? 0.18 :
-     isMES_5m ? 0.20 :
+     // Lowered to avoid starving entries on normal trend candles.
+     isMNQ_3m ? 0.10 :
+     isMNQ_5m ? 0.10 :
+     isMES_3m ? 0.12 :
+     isMES_5m ? 0.12 :
      genConfirmAtrMultInput
 
 genericBullConfirm = candleBull and bodyRatio >= genConfirmBodyRatio_eff and (atr10 <= 0 or bodySize >= atr10 * genConfirmAtrMult_eff)
