@@ -708,6 +708,7 @@ isOptimalSession = isNYOpen_opt or isNYClose_opt or isLondonNYOverlap_opt
 // - we are inside the configured trading hours window
 // (No-trade zone always blocks when enabled.)
 // Also: if EOD exits are enabled, block new entries after EOD to prevent “random EOD closes” later.
+isEndOfDay = currentTime >= endOfDayTime
 blockEntriesAfterEOD = input.bool(true, "Block new entries after EOD time", group=exitControlsGroup)
 canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone and (not (useEndOfDayExits and blockEntriesAfterEOD and isEndOfDay))
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
@@ -740,7 +741,6 @@ else
 isPreMarket = enableSessionFilters and currentTime >= preMarketStart and currentTime < regularSessionStart
 isRegularSession = enableSessionFilters and currentTime >= regularSessionStart and currentTime <= regularSessionEnd
 isAfterHours = enableSessionFilters and currentTime > regularSessionEnd and currentTime <= afterHoursEnd
-isEndOfDay = currentTime >= endOfDayTime
 
 sessionMultiplier = not enableSessionFilters ? 1.0 : isRegularSession ? (isMYM ? 1.1 : 1.05) : (isPreMarket or isAfterHours) ? (isMYM ? 0.8 : 0.75) : 0.6
 finalSessionMultiplier = sessionMultiplier * activeSessionMultiplier * optimalSessionBonus
