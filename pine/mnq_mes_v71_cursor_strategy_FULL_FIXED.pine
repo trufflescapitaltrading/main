@@ -415,16 +415,11 @@ tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K (Updat
 tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (Update contract month!)")
 tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Update contract month!)")
 useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
-alertOnlyMode = input.bool(false, "Alert Only Mode")
-// Effective alert-only flag (keeps strategy tester working)
-alertOnlyMode_eff = alertOnlyMode and not forceStrategyOrdersForBacktest
-tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state (required for Alert Only Mode)", group="TradersPost Router")
-tpResetSimOnNewDay = input.bool(true, "TradersPost: Reset simulated position on new day", group="TradersPost Router", tooltip="Prevents phantom EXIT alerts if the script was restarted or the broker rejected an order. Disable only if you intentionally hold positions across midnight while in Alert Only Mode.")
-tpResetSimOnScriptStart = input.bool(true, "TradersPost: Reset simulated position on script start", group="TradersPost Router", tooltip="Strongly recommended. Prevents stale simulated state from emitting EXIT alerts when the script is reloaded.")
+// Alert Only Mode removed: this script always uses strategy.position_size as the source of truth.
 tpSendExitAlertOnStrategyClose = input.bool(false, "TradersPost: Send EXIT when TradingView strategy position closes (NOT recommended)", group="TradersPost Router", tooltip="OFF by default. Strategy fills can diverge from broker fills (rejections/slippage/manual changes). Leaving this OFF prevents 'EXIT with no broker position' webhooks.")
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
-tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group="TradersPost Router")
+tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day", group="TradersPost Router")
 tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
 tpForceContractTicker = input.bool(true, "TradersPost: Force contract ticker (avoid *1!)", group="TradersPost Router")
@@ -1545,10 +1540,7 @@ var int lastOppositeEntryBar = na
 var int lastSignalDir = 0
 var int lastSignalBar = na
 
-// TradersPost simulated broker position state (for alert-only reconciliation).
-var int tpPosDir = 0   // 1=long, -1=short, 0=flat
-var int tpPosBar = na
-var int tpPosQty = 0
+// TradersPost routing uses strategy.position_size (no simulated broker state).
 
 inBiasLock = enableBestSideRouter and not na(biasLockUntilBar) and bar_index <= biasLockUntilBar
 barsSinceOppositeEntry = na(lastOppositeEntryBar) ? 999999 : (bar_index - lastOppositeEntryBar)
@@ -1564,11 +1556,6 @@ if newDayDetected or barstate.isfirst
     todayTradeCount := 0
     consecutiveLosses := 0
     streakPauseUntilBar := na
-    // Alert-only safety: reset simulated broker position (prevents phantom exits).
-    if alertOnlyMode_eff and tpSimulateBrokerPosition and ( (newDayDetected and tpResetSimOnNewDay) or (barstate.isfirst and tpResetSimOnScriptStart) )
-        tpPosDir := 0
-        tpPosBar := na
-        tpPosQty := 0
 
 if resetStreakOnNewDay and newDayDetected
     consecutiveLosses := 0
@@ -2369,8 +2356,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
     // Use signal-bar sizing when entering on next bar open
     int qtyForEntry = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQty = getActiveQty(qtyForEntry)
-    if not alertOnlyMode_eff
-        strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
+    strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastLongSignalBar := bar_index
@@ -2391,8 +2377,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         lastOppositeEntryBar := bar_index
     int qtyForEntryS = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQtyS = getActiveQty(qtyForEntryS)
-    if not alertOnlyMode_eff
-        strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
+    strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastShortSignalBar := bar_index
@@ -3088,15 +3073,12 @@ if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHol
     lastExitReason := "MAX_HOLD"
 
 // ==================== 🔔 TRADERSPOST WEBHOOK ALERTS ====================
-// IMPORTANT:
-// - When NOT in Alert Only Mode, trust strategy.position_size for broker-state (prevents “exit with no trade” alerts).
-// - When in Alert Only Mode, use simulated state to avoid duplicate entries/exits.
-tpUseSim = alertOnlyMode_eff and tpSimulateBrokerPosition
-// IMPORTANT: Treat qty<=0 as flat (prevents “exit when flat” rejections).
-tpFlat = tpUseSim ? (tpPosDir == 0 or tpPosQty <= 0) : (strategy.position_size == 0)
-tpLong = tpUseSim ? (tpPosDir == 1 and tpPosQty > 0) : (strategy.position_size > 0)
-tpShort = tpUseSim ? (tpPosDir == -1 and tpPosQty > 0) : (strategy.position_size < 0)
-tpQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size))
+// This script always routes based on TradingView strategy position (no alert-only simulation).
+tpUseSim = false
+tpFlat = (strategy.position_size == 0)
+tpLong = (strategy.position_size > 0)
+tpShort = (strategy.position_size < 0)
+tpQty = int(math.abs(strategy.position_size))
 
 // Alert frequency must follow entryTimingMode, NOT enterOnBarClose.
 // If we use freq_once_per_bar_close while trying to enter on bar open, the alert will be delayed until the bar closes.
@@ -3153,10 +3135,6 @@ if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat 
         // Guard: never send exit with qty<=0
         if exitQty > 0
             alert(exitNowMessage, alert.freq_once_per_bar)
-            if tpUseSim
-                tpPosDir := 0
-                tpPosBar := bar_index
-                tpPosQty := 0
             // Mark this bar as “consumed” so we don’t emit duplicate exit alerts.
             tookTradeThisBar := true
 
@@ -3200,10 +3178,6 @@ if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 an
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(longEntryMessage, tpAlertFreq)
-    if tpUseSim
-        tpPosDir := 1
-        tpPosBar := bar_index
-        tpPosQty := tpEntryQty
 
 // Same-direction behavior: ignore or "add" (prevents TradersPost rejections when a position already exists).
 if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
@@ -3220,8 +3194,6 @@ if entryOK and longCondition and tpLong and enableTradersPostAlerts and not took
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(addLongMessage, tpAlertFreq)
-    if tpUseSim
-        tpPosQty := tpPosQty + tpEntryQty
     tookTradeThisBar := true
 
 if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts
@@ -3264,10 +3236,6 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(shortEntryMessage, tpAlertFreq)
-    if tpUseSim
-        tpPosDir := -1
-        tpPosBar := bar_index
-        tpPosQty := tpEntryQty
 
 if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookTradeThisBar and tpSameDirectionBehavior == "add"
     addSigId = tpSignalId("add", "SHORT")
@@ -3283,8 +3251,6 @@ if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not to
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(addShortMessage, tpAlertFreq)
-    if tpUseSim
-        tpPosQty := tpPosQty + tpEntryQty
     tookTradeThisBar := true
 
 // Strategy-close exit alert (OPTIONAL).
@@ -3308,13 +3274,13 @@ if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.p
         alert(exitMessage, alert.freq_once_per_bar)
         tookTradeThisBar := true
 
-// Alert-only safety: send EOD exit to reconcile broker state (once at EOD-window start).
-if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and tpPosQty > 0 and not tookTradeThisBar
-    exitSigId = tpSignalId("exit", tpPosDir == 1 ? "LONG" : "SHORT")
+// Send EOD exit once at EOD-window start (only when a strategy position exists).
+if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and strategy.position_size != 0 and not tookTradeThisBar
+    exitSigId = tpSignalId("exit", strategy.position_size > 0 ? "LONG" : "SHORT")
     eodExitMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
-         '"quantity":' + tpNumInt(tpPosQty) + ',' +
+         '"quantity":' + tpNumInt(int(math.abs(strategy.position_size))) + ',' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
@@ -3322,9 +3288,6 @@ if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersP
          '"timestamp":"' + str.tostring(time) + '"' +
          '}'
     alert(eodExitMessage, alert.freq_once_per_bar)
-    tpPosDir := 0
-    tpPosBar := bar_index
-    tpPosQty := 0
     tookTradeThisBar := true
 
 // ==================== 📊 VISUAL INDICATORS ====================
