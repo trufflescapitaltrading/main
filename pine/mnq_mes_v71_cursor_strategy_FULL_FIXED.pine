@@ -420,6 +420,8 @@ alertOnlyMode = input.bool(false, "Alert Only Mode")
 alertOnlyMode_eff = alertOnlyMode and not forceStrategyOrdersForBacktest
 tpSimulateBrokerPosition = input.bool(true, "TradersPost: Simulate broker position state (required for Alert Only Mode)", group="TradersPost Router")
 tpResetSimOnNewDay = input.bool(true, "TradersPost: Reset simulated position on new day", group="TradersPost Router", tooltip="Prevents phantom EXIT alerts if the script was restarted or the broker rejected an order. Disable only if you intentionally hold positions across midnight while in Alert Only Mode.")
+tpResetSimOnScriptStart = input.bool(true, "TradersPost: Reset simulated position on script start", group="TradersPost Router", tooltip="Strongly recommended. Prevents stale simulated state from emitting EXIT alerts when the script is reloaded.")
+tpSendExitAlertOnStrategyClose = input.bool(false, "TradersPost: Send EXIT when TradingView strategy position closes (NOT recommended)", group="TradersPost Router", tooltip="OFF by default. Strategy fills can diverge from broker fills (rejections/slippage/manual changes). Leaving this OFF prevents 'EXIT with no broker position' webhooks.")
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
 tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day (alert-only safe)", group="TradersPost Router")
@@ -1562,8 +1564,8 @@ if newDayDetected or barstate.isfirst
     todayTradeCount := 0
     consecutiveLosses := 0
     streakPauseUntilBar := na
-    // Alert-only safety: reset simulated broker position daily (prevents phantom exits).
-    if alertOnlyMode_eff and tpSimulateBrokerPosition and tpResetSimOnNewDay
+    // Alert-only safety: reset simulated broker position (prevents phantom exits).
+    if alertOnlyMode_eff and tpSimulateBrokerPosition and ( (newDayDetected and tpResetSimOnNewDay) or (barstate.isfirst and tpResetSimOnScriptStart) )
         tpPosDir := 0
         tpPosBar := na
         tpPosQty := 0
@@ -3285,11 +3287,12 @@ if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not to
         tpPosQty := tpPosQty + tpEntryQty
     tookTradeThisBar := true
 
-// Strategy-close exit alert. Guarded to avoid duplicate exits when we already sent a reverse-exit this bar,
-// and to avoid sending exit qty=0 when using simulated TP state.
-if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts and not tookTradeThisBar
-    exitQty = tpUseSim ? tpPosQty : int(math.abs(strategy.position_size[1]))
-    exitDir = tpUseSim ? (tpPosDir == 1 ? "LONG" : tpPosDir == -1 ? "SHORT" : "FLAT") : (strategy.position_size[1] > 0 ? "LONG" : "SHORT")
+// Strategy-close exit alert (OPTIONAL).
+// OFF by default because TradingView strategy position can diverge from broker position (rejections/manual changes),
+// causing "EXIT with no open position" webhooks.
+if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts and not tookTradeThisBar
+    exitQty = int(math.abs(strategy.position_size[1]))
+    exitDir = (strategy.position_size[1] > 0 ? "LONG" : "SHORT")
     exitSigId = tpSignalId("exit", exitDir)
     exitMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
@@ -3303,10 +3306,6 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTrad
          '}'
     if exitQty > 0
         alert(exitMessage, alert.freq_once_per_bar)
-        if tpUseSim
-            tpPosDir := 0
-            tpPosBar := bar_index
-            tpPosQty := 0
         tookTradeThisBar := true
 
 // Alert-only safety: send EOD exit to reconcile broker state (once at EOD-window start).
