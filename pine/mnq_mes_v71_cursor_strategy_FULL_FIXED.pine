@@ -521,6 +521,8 @@ minBarsBeforeSignalReversal = input.int(2, "Min Bars Before Signal Reversal", mi
 useSignalReversalExits = input.bool(false, "Signal Reversal Exits - DISABLED", group=exitControlsGroup)
 useEndOfDayExits = input.bool(true, "End of Day Exits", group=exitControlsGroup)
 endOfDayTime = input.int(1550, "End of Day Time (ET)", minval=1500, maxval=1700, group=exitControlsGroup)
+eodBlockEndTime = input.int(1800, "EOD block end time (ET)", minval=1600, maxval=2359, group=exitControlsGroup, tooltip="Defines the EOD window as [EOD time, end). Default 18:00 ET aligns with CME session reset; prevents random EOD exits later in the evening.")
+blockEntriesDuringEODWindow = input.bool(true, "Block entries during EOD window", group=exitControlsGroup)
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 losingTradeThreshold = input.float(2.0, "Losing Trade Threshold (%)", minval=1.0, maxval=5.0, group=exitControlsGroup)
 
@@ -708,10 +710,14 @@ isOptimalSession = isNYOpen_opt or isNYClose_opt or isLondonNYOverlap_opt
 // - 24/7 trading is enabled, OR
 // - we are inside the configured trading hours window
 // (No-trade zone always blocks when enabled.)
-// End-of-day should be an EVENT (fires once when crossing the configured time), not “true for the rest of the day”.
-// This prevents repeated EOD exits / EOD alerts later in the evening session.
-isEndOfDay = currentTime >= endOfDayTime and (na(currentTime[1]) ? false : (currentTime[1] < endOfDayTime))
-canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
+// End-of-day must be a bounded window (e.g., 15:50–18:00 ET). Futures have an evening session restart;
+// without a window, EOD can keep firing “later” and/or allow positions to remain open overnight.
+inEodWindow =
+     useEndOfDayExits and
+     ((endOfDayTime <= eodBlockEndTime and currentTime >= endOfDayTime and currentTime < eodBlockEndTime) or
+      (endOfDayTime > eodBlockEndTime and (currentTime >= endOfDayTime or currentTime < eodBlockEndTime)))
+eodWindowStart = inEodWindow and not nz(inEodWindow[1], false)
+canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone and not (blockEntriesDuringEODWindow and inEodWindow)
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
@@ -3062,7 +3068,7 @@ if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 an
             exitIssuedThisBar := true
             lastExitReason := "SIGNAL_REVERSAL"
 
-if useEndOfDayExits and strategy.position_size != 0 and isEndOfDay and not exitIssuedThisBar and not mesMJV6Active
+if useEndOfDayExits and strategy.position_size != 0 and inEodWindow and not exitIssuedThisBar and not mesMJV6Active
     strategy.close_all(comment="EOD_EXIT")
     exitIssuedThisBar := true
     lastExitReason := "EOD_EXIT"
@@ -3303,8 +3309,8 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTrad
             tpPosQty := 0
         tookTradeThisBar := true
 
-// Alert-only safety: send EOD exit to reconcile broker state.
-if tpSendEODExitAlert and useEndOfDayExits and isEndOfDay and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and tpPosQty > 0 and not tookTradeThisBar
+// Alert-only safety: send EOD exit to reconcile broker state (once at EOD-window start).
+if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and tpUseSim and tpPosDir != 0 and tpPosQty > 0 and not tookTradeThisBar
     exitSigId = tpSignalId("exit", tpPosDir == 1 ? "LONG" : "SHORT")
     eodExitMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
