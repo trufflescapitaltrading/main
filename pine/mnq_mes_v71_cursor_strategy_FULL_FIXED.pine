@@ -708,10 +708,10 @@ isOptimalSession = isNYOpen_opt or isNYClose_opt or isLondonNYOverlap_opt
 // - 24/7 trading is enabled, OR
 // - we are inside the configured trading hours window
 // (No-trade zone always blocks when enabled.)
-// Also: if EOD exits are enabled, block new entries after EOD to prevent “random EOD closes” later.
-isEndOfDay = currentTime >= endOfDayTime
-blockEntriesAfterEOD = input.bool(true, "Block new entries after EOD time", group=exitControlsGroup)
-canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone and (not (useEndOfDayExits and blockEntriesAfterEOD and isEndOfDay))
+// End-of-day should be an EVENT (fires once when crossing the configured time), not “true for the rest of the day”.
+// This prevents repeated EOD exits / EOD alerts later in the evening session.
+isEndOfDay = currentTime >= endOfDayTime and (na(currentTime[1]) ? false : (currentTime[1] < endOfDayTime))
+canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
