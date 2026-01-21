@@ -673,6 +673,11 @@ isMNQ_5m = isMNQ and is5min
 isMES_3m = isMES and is3min
 isMES_5m = isMES and is5min
 
+// 5m candle-color confirmation (used by entry logic + Filter Harmony scoring)
+// Must be declared early because Harmony references it before the gating section.
+htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
+htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
+
 tfMultiplier1m = isMYM ? baseTfMultiplier1m * 1.05 : isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
 tfMultiplier2m = isMYM ? baseTfMultiplier2m * 1.04 : isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
 tfMultiplier3m = isMYM ? baseTfMultiplier3m * 1.03 : isMNQ ? baseTfMultiplier3m * 1.01 : isMES ? baseTfMultiplier3m * 1.01 : isMCL ? baseTfMultiplier3m * 0.99 : isMGC ? baseTfMultiplier3m * 0.97 : isM2K ? baseTfMultiplier3m * 1.01 : baseTfMultiplier3m
@@ -2174,8 +2179,7 @@ shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
-htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
-htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
+// htf5mBull/htf5mBear are declared earlier (for Filter Harmony scoring).
 // 3m charts: 5m candle-color congruence is a HIGH-QUALITY enhancer.
 // - In Filter Harmony mode: it becomes a quality bonus (NOT a hard gate).
 // - Outside Harmony mode: it remains a gate, with strong-signal bypass.
