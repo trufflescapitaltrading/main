@@ -690,9 +690,10 @@ tfMultiplier2h = isMYM ? baseTfMultiplier2h * 0.97 : isMNQ ? baseTfMultiplier2h 
 tfMultiplier4h = isMYM ? baseTfMultiplier4h * 0.96 : isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
 
 // ==================== 🔢 CALCULATIONS START ====================
-currentHourET = hour(time, "America/New_York")
-currentMinuteET = minute(time, "America/New_York")
-currentTime = currentHourET * 100 + currentMinuteET
+sessionTZ = input.string("America/New_York", "Session timezone (time filters)", group=sessionGroup, tooltip="All session/no-trade/EOD times are interpreted in this timezone. For TopstepX/Tradovate CME hours, America/New_York is typically correct; use America/Chicago if you want CST display-aligned behavior.")
+currentHourTZ = hour(time, sessionTZ)
+currentMinuteTZ = minute(time, sessionTZ)
+currentTime = currentHourTZ * 100 + currentMinuteTZ
 
 isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
 isNoTradeZone = enableNoTradeZone and ((noTradeStart <= noTradeEnd and currentTime >= noTradeStart and currentTime < noTradeEnd) or (noTradeStart > noTradeEnd and (currentTime >= noTradeStart or currentTime < noTradeEnd)))
@@ -706,7 +707,9 @@ isOptimalSession = isNYOpen_opt or isNYClose_opt or isLondonNYOverlap_opt
 // - 24/7 trading is enabled, OR
 // - we are inside the configured trading hours window
 // (No-trade zone always blocks when enabled.)
-canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
+// Also: if EOD exits are enabled, block new entries after EOD to prevent “random EOD closes” later.
+blockEntriesAfterEOD = input.bool(true, "Block new entries after EOD time", group=exitControlsGroup)
+canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone and (not (useEndOfDayExits and blockEntriesAfterEOD and isEndOfDay))
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
@@ -1160,8 +1163,13 @@ barMove = math.abs(close - open)
 impulseMove = (atr10 > 0) and (barMove >= atr10 * impulseATRMult_eff)
 rangeOK = (atr10 > 0) and ((high - low) >= atr10 * impulseRangeMinATR)
 bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
-impulseLong = enableImpulseOverride and candleBull and candleQualityOK and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
-impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impulseMove and volSurgeNow and rangeOK and bodyOK and canTradeNow
+// Volume can lag in clean trends; allow “price-only impulse” when body/range/ATR conditions are strong and trend is aligned.
+impulseGroup2 = "Impulse Volume Mode"
+allowPriceOnlyImpulse = input.bool(true, "Allow price-only impulse (trend aligned) if volume normal", group=impulseGroup2)
+impulseVolOK_Long = volSurgeNow or (allowPriceOnlyImpulse and (volume >= volumeMA * 0.8) and trendAlignedLongFast)
+impulseVolOK_Short = volSurgeNow or (allowPriceOnlyImpulse and (volume >= volumeMA * 0.8) and trendAlignedShortFast)
+impulseLong = enableImpulseOverride and candleBull and candleQualityOK and impulseMove and impulseVolOK_Long and rangeOK and bodyOK and canTradeNow
+impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impulseMove and impulseVolOK_Short and rangeOK and bodyOK and canTradeNow
 
 // EARLY TREND START (captures first 1-2 bars of new trend)
 // Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
