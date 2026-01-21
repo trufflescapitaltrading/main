@@ -714,7 +714,8 @@ inEodWindow =
      ((endOfDayTime <= eodBlockEndTime and currentTime >= endOfDayTime and currentTime < eodBlockEndTime) or
       (endOfDayTime > eodBlockEndTime and (currentTime >= endOfDayTime or currentTime < eodBlockEndTime)))
 eodWindowStart = inEodWindow and not nz(inEodWindow[1], false)
-canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone and not (blockEntriesDuringEODWindow and inEodWindow)
+canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
+canEnterNow = canTradeNow and not (blockEntriesDuringEODWindow and inEodWindow)
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
@@ -1170,17 +1171,19 @@ bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
 // Volume can lag in clean trends; allow “price-only impulse” when body/range/ATR conditions are strong and trend is aligned.
 impulseGroup2 = "Impulse Volume Mode"
 allowPriceOnlyImpulse = input.bool(false, "Allow price-only impulse (trend aligned) if volume normal", group=impulseGroup2, tooltip="OFF by default to preserve historical expectancy. If enabled, applies to non-MES instruments only.")
-impulseVolOK_Long = volSurgeNow or (allowPriceOnlyImpulse and not isMES and (volume >= volumeMA * 0.8) and trendAlignedLongFast)
-impulseVolOK_Short = volSurgeNow or (allowPriceOnlyImpulse and not isMES and (volume >= volumeMA * 0.8) and trendAlignedShortFast)
-impulseLong = enableImpulseOverride and candleBull and candleQualityOK and impulseMove and impulseVolOK_Long and rangeOK and bodyOK and canTradeNow
-impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impulseMove and impulseVolOK_Short and rangeOK and bodyOK and canTradeNow
+impulseHugeMoveMult = input.float(1.35, "Impulse: price-displacement override (×ATR10)", minval=1.10, maxval=2.50, step=0.05, group=impulseGroup2, tooltip="Lets truly huge candles qualify even without a volume spike. Disabled on MES to preserve expectancy.")
+impulseHugeMove = (atr10 > 0) and (barMove >= atr10 * impulseATRMult_eff * impulseHugeMoveMult)
+impulseVolOK_Long = volSurgeNow or ((not isMES) and allowPriceOnlyImpulse and trendAlignedLongFast and impulseHugeMove)
+impulseVolOK_Short = volSurgeNow or ((not isMES) and allowPriceOnlyImpulse and trendAlignedShortFast and impulseHugeMove)
+impulseLong = enableImpulseOverride and candleBull and candleQualityOK and impulseMove and impulseVolOK_Long and rangeOK and bodyOK and canEnterNow
+impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impulseMove and impulseVolOK_Short and rangeOK and bodyOK and canEnterNow
 
 // EARLY TREND START (captures first 1-2 bars of new trend)
 // Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
 earlyTrendBodyOK = not isDojiBar and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
 // NOTE: Avoid referencing SuperTrend vars here (trend/trendChange) to prevent ordering compile errors.
-earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and (useFastEmaForEarlyTrend ? trendAlignedLongFast : trendAlignedLong) and canTradeNow and (hullMicroTurn or slopeFast == 1)
-earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and (useFastEmaForEarlyTrend ? trendAlignedShortFast : trendAlignedShort) and canTradeNow and (hullMicroTurn or slopeFast == -1)
+earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and (useFastEmaForEarlyTrend ? trendAlignedLongFast : trendAlignedLong) and canEnterNow and (hullMicroTurn or slopeFast == 1)
+earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and (useFastEmaForEarlyTrend ? trendAlignedShortFast : trendAlignedShort) and canEnterNow and (hullMicroTurn or slopeFast == -1)
 
 // ==================== ⚡ TREND IGNITION + CONTINUATION (STRUCTURAL EARLY ENTRY FIX) ====================
 tibGroup = "⚡ Trend Ignition Engine"
@@ -1251,8 +1254,8 @@ cpbReexpandRangeMult_eff =
 volOK_TIB = volume >= volumeMA * tibVolMult_eff2
 rangeExpOK = avgRange5 > 0 ? (totalRange >= avgRange5 * tibRangeMult_eff) : false
 
-tibLong = enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta >= tibRsiDeltaMin_eff) and breakUp and vwapDistOK and volOK_TIB and trendAlignedLong and canTradeNow
-tibShort = enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and breakDn and vwapDistOK and volOK_TIB and trendAlignedShort and canTradeNow
+tibLong = enableTIB and candleBull and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta >= tibRsiDeltaMin_eff) and breakUp and vwapDistOK and volOK_TIB and trendAlignedLong and canEnterNow
+tibShort = enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and breakDn and vwapDistOK and volOK_TIB and trendAlignedShort and canEnterNow
 
 var int lastIgnBar = na
 var int lastIgnDir = 0
@@ -1279,8 +1282,8 @@ if barsFromIgn <= cpbMaxBars
 pullbackDepthLong = (atr10 > 0) ? math.max(0.0, (hiSinceIgn - low) / atr10) : 0.0
 pullbackDepthShort = (atr10 > 0) ? math.max(0.0, (high - loSinceIgn) / atr10) : 0.0
 
-cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR_eff) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedLong and canTradeNow
-cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR_eff) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedShort and canTradeNow
+cpbLong = enableCPB and lastIgnDir == 1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthLong <= cpbRetraceATR_eff) and candleBull and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedLong and canEnterNow
+cpbShort = enableCPB and lastIgnDir == -1 and (barsFromIgn >= 1 and barsFromIgn <= cpbMaxBars) and (pullbackDepthShort <= cpbRetraceATR_eff) and candleBear and not isDojiBar and (avgRange5 > 0 and totalRange >= avgRange5 * cpbReexpandRangeMult_eff) and trendAlignedShort and canEnterNow
 
 // Price momentum
 priceChange = close - close[5]
@@ -1787,7 +1790,7 @@ contBypassShort = trendAlignedShort and (runDownCloses >= contRunReq) and atrExp
 // If streak-protection is pausing entries, allow only the strongest/continuation setups to bypass it.
 pauseBypass = overrideBypassAllowed or contBypassLong or contBypassShort
 
-bool baseSafety = canEnterNewPosition and not maxTradesReached and not maxLossReached and not profitTargetReached and canTradeNow and not instrumentRiskLimitReached and (not pauseAfterLosses or pauseBypass)
+bool baseSafety = canEnterNewPosition and not maxTradesReached and not maxLossReached and not profitTargetReached and canEnterNow and not instrumentRiskLimitReached and (not pauseAfterLosses or pauseBypass)
 bool canGoLong = baseSafety and canEnterLong
 bool canGoShort = baseSafety and canEnterShort
 
@@ -3055,7 +3058,8 @@ if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 an
             exitIssuedThisBar := true
             lastExitReason := "SIGNAL_REVERSAL"
 
-if useEndOfDayExits and strategy.position_size != 0 and inEodWindow and not exitIssuedThisBar and not mesMJV6Active
+// EOD close should happen once at the start of the EOD window (prevents repeated close attempts).
+if useEndOfDayExits and strategy.position_size != 0 and eodWindowStart and not exitIssuedThisBar and not mesMJV6Active
     strategy.close_all(comment="EOD_EXIT")
     exitIssuedThisBar := true
     lastExitReason := "EOD_EXIT"
