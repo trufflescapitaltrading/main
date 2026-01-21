@@ -414,7 +414,8 @@ tradersPostSymbolMYM = input.string("MYMH2026", "TradersPost Symbol - MYM (Updat
 tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K (Update contract month!)")
 tradersPostSymbolMCL = input.string("MCLH2026", "TradersPost Symbol - MCL (Update contract month!)")
 tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Update contract month!)")
-useAutoSymbol = input.bool(false, "Auto-detect symbol from chart")
+// For Tradovate/TopstepX via TradersPost, continuous symbols like MES1!/MNQ1! can cause routing failures.
+// Always use the configured contract ticker in webhook payloads.
 // Alert Only Mode removed: this script always uses strategy.position_size as the source of truth.
 tpSendExitAlertOnStrategyClose = input.bool(false, "TradersPost: Send EXIT when TradingView strategy position closes (NOT recommended)", group="TradersPost Router", tooltip="OFF by default. Strategy fills can diverge from broker fills (rejections/slippage/manual changes). Leaving this OFF prevents 'EXIT with no broker position' webhooks.")
 tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
@@ -422,11 +423,8 @@ tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse sign
 tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day", group="TradersPost Router")
 tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
-tpForceContractTicker = input.bool(true, "TradersPost: Force contract ticker (avoid *1!)", group="TradersPost Router")
 contractTicker = (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
-actualTicker = useAutoSymbol ? syminfo.ticker : contractTicker
-// Force contract ticker even if chart is continuous (*1!)
-actualTicker := tpForceContractTicker ? contractTicker : actualTicker
+actualTicker = contractTicker
 
 require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
 minMESRangePoints = input.float(5.0, "V8: Min MES Range (points)", minval=0.0, maxval=20.0)
@@ -3159,10 +3157,13 @@ if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat 
         exitDir = tpShort ? "SHORT" : tpLong ? "LONG" : "FLAT"
         exitQty = tpQty
         exitSigId = tpSignalId("exit", exitDir)
+        exitPrice = close
         exitNowMessage = '{' +
              '"ticker":"' + actualTicker + '",' +
              '"action":"exit",' +
              '"quantity":' + tpNumInt(exitQty) + ',' +
+             '"price":' + tpNum(exitPrice) + ',' +
+             '"reason":"reverse_signal",' +
              '"strategy":"' + tpStrategyName + '",' +
              '"timeframe":"' + timeframe.period + '",' +
              '"instrument":"' + instrumentName + '",' +
@@ -3297,10 +3298,13 @@ if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.p
     exitQty = int(math.abs(strategy.position_size[1]))
     exitDir = (strategy.position_size[1] > 0 ? "LONG" : "SHORT")
     exitSigId = tpSignalId("exit", exitDir)
+    exitPrice = close
     exitMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
          '"quantity":' + tpNumInt(exitQty) + ',' +
+         '"price":' + tpNum(exitPrice) + ',' +
+         '"reason":"strategy_close",' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
@@ -3314,10 +3318,13 @@ if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.p
 // Send EOD exit once at EOD-window start (only when a strategy position exists).
 if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and strategy.position_size != 0 and not tookTradeThisBar
     exitSigId = tpSignalId("exit", strategy.position_size > 0 ? "LONG" : "SHORT")
+    exitPrice = close
     eodExitMessage = '{' +
          '"ticker":"' + actualTicker + '",' +
          '"action":"exit",' +
          '"quantity":' + tpNumInt(int(math.abs(strategy.position_size))) + ',' +
+         '"price":' + tpNum(exitPrice) + ',' +
+         '"reason":"eod_exit",' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
