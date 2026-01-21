@@ -155,6 +155,11 @@ minADXForEntry = input.float(18.0, "Min ADX for Entry", minval=10, maxval=30, gr
 minRSIRangeLow = input.float(35.0, "RSI Range Low", minval=20, maxval=45, group=winOptGroup)
 minRSIRangeHigh = input.float(65.0, "RSI Range High", minval=55, maxval=80, group=winOptGroup)
 
+// Trend Runner Mode: avoid premature exits during strong multi-candle runs.
+runnerGroup = "🏃 Trend Runner Mode"
+enableTrendRunnerMode = input.bool(true, "✅ Hold through strong runs (prevents early exits)", group=runnerGroup)
+runnerMinRunCandles = input.int(4, "Runner: min consecutive candles", minval=3, maxval=10, group=runnerGroup)
+
 // ==================== ✅ ENTRY EXECUTION ====================
 entryGroup = "✅ Entry Execution"
 enterOnBarClose = input.bool(true, "Enter ONLY on bar close (no intrabar entries)", group=entryGroup)
@@ -1072,7 +1077,17 @@ htfBearStructure = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLas
 // HTF structure readiness (pivots need time to confirm). Do not block early trend runs when not ready.
 htfStructureReady = not na(htfLastHigh) and not na(htfPrevHigh) and not na(htfLastLow) and not na(htfPrevLow)
 
-compressionBox = isSignalGrayZone or isChoppy
+// Compression box should block true consolidation, but NOT block obvious trend runs.
+// (Helps catch 3–15 candle runs after chop.)
+compressionBypass = (runUpCloses >= 3) or (runDownCloses >= 3) or hasTrendOverrideBull or hasTrendOverrideBear or hasMomentumOverrideLong or hasMomentumOverrideShort
+compressionBox = (isSignalGrayZone or isChoppy) and not compressionBypass
+
+// Dynamic VWAP-cross limit for MNQ/MES 3m/5m:
+// pre-breakout chop can create many VWAP crosses; allow a higher threshold once trend alignment + ATR expansion confirm.
+maxVwapCrosses_eff =
+     (isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m) and (atrExpandingNow and (trendAlignedLongFast or trendAlignedShortFast)) ?
+         math.max(maxVwapCrosses, 5) :
+         maxVwapCrosses
 
 // Star system
 star_priceRangeExpanding = close > ta.highest(high, 20)[1] or close < ta.lowest(low, 20)[1]
@@ -1781,8 +1796,8 @@ strictBypassLong = impulseLong or hasTrendOverrideBull or hasMomentumOverrideLon
 strictBypassShort = impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort or contBypassShort or tibShort or cpbShort or hasTrendStartShort
 
 // Mandatory Trend-Only Filter gates (allow impulse/momentum bypass)
-mandatoryLongOK = ((not htfStructureReady) ? true : htfBullStructure) and emaStackBull and vwapSlopeUp and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox
-mandatoryShortOK = ((not htfStructureReady) ? true : htfBearStructure) and emaStackBear and vwapSlopeDown and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses) and not compressionBox
+mandatoryLongOK = ((not htfStructureReady) ? true : htfBullStructure) and emaStackBull and vwapSlopeUp and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses_eff) and not compressionBox
+mandatoryShortOK = ((not htfStructureReady) ? true : htfBearStructure) and emaStackBear and vwapSlopeDown and atrExpandingNow and (vwapCrossCount <= maxVwapCrosses_eff) and not compressionBox
 trendOnlyLongGate = (not enableMandatoryTrendOnly) or mandatoryLongOK or strictBypassLong
 trendOnlyShortGate = (not enableMandatoryTrendOnly) or mandatoryShortOK or strictBypassShort
 
@@ -2375,6 +2390,11 @@ v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? vol
 // When enabled, this module runs the profit ladder + protections and disables the legacy V71/Kenya-ladder exits below.
 canExitNow = strategy.position_size != 0 and not na(entryBar) and (bar_index - entryBar) >= minBarsBeforeExit
 
+// Runner active when in strong trend with a continuing multi-candle run.
+runnerLongActive = enableTrendRunnerMode and strategy.position_size > 0 and not isChoppy and (runUpCloses >= runnerMinRunCandles) and (trendAlignedLongFast or trendAlignedLong) and atrExpandingNow
+runnerShortActive = enableTrendRunnerMode and strategy.position_size < 0 and not isChoppy and (runDownCloses >= runnerMinRunCandles) and (trendAlignedShortFast or trendAlignedShort) and atrExpandingNow
+runnerActive = runnerLongActive or runnerShortActive
+
 // Fees/slippage model (round-trip, using original entry size)
 tickValue = syminfo.mintick * syminfo.pointvalue
 slipDolRT_perContract = slippageTicksOneWay * tickValue * 2.0
@@ -2441,7 +2461,7 @@ if v20Active_profit and strategy.position_size > 0
         strategy.exit("V20_TP3_L", from_entry="LONG", qty_percent=10, profit=tp3Points)
         strategy.exit("V20_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
 
-    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow and not runnerActive
         if not exitIssuedThisBar
             strategy.close("LONG", comment="V20_TIME_EXIT_LONG")
             exitIssuedThisBar := true
@@ -2483,7 +2503,7 @@ if v20Active_profit and strategy.position_size < 0
         strategy.exit("V20_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
         strategy.exit("V20_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
 
-    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow
+    if quickExitMode and holdingPeriod >= maxHoldingBars and canExitNow and not runnerActive
         if not exitIssuedThisBar
             strategy.close("SHORT", comment="V20_TIME_EXIT_SHORT")
             exitIssuedThisBar := true
@@ -2546,7 +2566,7 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
             strategy.exit("MJV6_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Points)
 
         // Time-based exit (bot variables)
-        if quickExitMode and holdingPeriod >= maxHoldingBars
+        if quickExitMode and holdingPeriod >= maxHoldingBars and not runnerActive
             strategy.close("LONG", comment="MJV6_TIME_EXIT_LONG")
             exitIssuedThisBar := true
             lastExitReason := "MJV6_TIME_EXIT"
@@ -2579,7 +2599,7 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
             strategy.exit("MJV6_TP3_S", from_entry="SHORT", qty_percent=10, profit=tp3Points)
             strategy.exit("MJV6_TP4_S", from_entry="SHORT", qty_percent=5, profit=tp4Points)
 
-        if quickExitMode and holdingPeriod >= maxHoldingBars
+        if quickExitMode and holdingPeriod >= maxHoldingBars and not runnerActive
             strategy.close("SHORT", comment="MJV6_TIME_EXIT_SHORT")
             exitIssuedThisBar := true
             lastExitReason := "MJV6_TIME_EXIT"
@@ -2995,7 +3015,7 @@ if enableNuclearExit and strategy.position_size != 0 and holdingPeriod >= nuclea
 v71_rsiNow = rsi
 v71_rsiPrev = rsi[momentumFadeBars]
 v71_inProfit = strategy.position_size > 0 ? (close > entryPrice) : strategy.position_size < 0 ? (close < entryPrice) : false
-if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars and not mesMJV6Active
+if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and holdingPeriod >= momentumFadeBars and not mesMJV6Active and not runnerActive
     if strategy.position_size > 0
         if v71_rsiNow < v71_rsiPrev - momentumFadeThreshold and v71_rsiNow < 50
             if not exitIssuedThisBar
@@ -3036,7 +3056,7 @@ if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice
         exitIssuedThisBar := true
         lastExitReason := "LOSING_AUTO"
 
-if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar and not mesMJV6Active
+if enableMaxHoldExit and strategy.position_size != 0 and holdingPeriod >= maxHoldBars and not exitIssuedThisBar and not mesMJV6Active and not runnerActive
     strategy.close_all(comment="MAX_HOLD")
     exitIssuedThisBar := true
     lastExitReason := "MAX_HOLD"
