@@ -615,8 +615,8 @@ mnqQuickExitBars_5m = input.int(6, "MNQ 5m quick-exit bars", minval=1, maxval=10
 mnqQuickExitLossDol_5m = input.float(25.0, "MNQ 5m quick-exit loss ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
 
 enableMAEProtection = input.bool(true, "🛡️ MAE protection (drawback from peak profit)", group=riskGuardGroup)
-mnqMAEActivateDol_3m = input.float(5.0, "MNQ 3m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
-mnqMAEActivateDol_5m = input.float(5.0, "MNQ 5m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqMAEActivateDol_3m = input.float(4.0, "MNQ 3m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqMAEActivateDol_5m = input.float(4.0, "MNQ 5m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
 
 strengthGateGroup = "🔗 Strong-Signal Correlation Gate"
 requireMultipleStrong = input.bool(false, "Require 2+ Strong Signals - LOOSENED", group=strengthGateGroup)
