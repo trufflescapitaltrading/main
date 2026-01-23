@@ -417,13 +417,12 @@ tradersPostSymbolMGC = input.string("MGCH2026", "TradersPost Symbol - MGC (Updat
 // For Tradovate/TopstepX via TradersPost, continuous symbols like MES1!/MNQ1! can cause routing failures.
 // Always use the configured contract ticker in webhook payloads.
 // Alert Only Mode removed: this script always uses strategy.position_size as the source of truth.
-tpSendExitAlertOnStrategyClose = input.bool(false, "TradersPost: Send EXIT when TradingView strategy position closes (NOT recommended)", group="TradersPost Router", tooltip="OFF by default. Strategy fills can diverge from broker fills (rejections/slippage/manual changes). Leaving this OFF prevents 'EXIT with no broker position' webhooks.")
-tpSameDirectionBehavior = input.string("ignore", "TradersPost: when same-direction signal occurs but position exists", options=["ignore", "add"], group="TradersPost Router")
+// Token-limit optimization: removed optional add-to-position and optional "strategy close" exit alerts.
 tpExitOnReverseSignal = input.bool(true, "TradersPost: send EXIT on reverse signal before new entry", group="TradersPost Router")
 tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day", group="TradersPost Router")
 tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
-tpUseBracketSchema = input.bool(true, "TradersPost: Use bracket schema (stopLoss/takeProfit objects)", group="TradersPost Router", tooltip="Required for brokers that do not support OTO orders (e.g. Tradovate/TopstepX). When enabled, entry signals include stopLoss/stopPrice and takeProfit/limitPrice objects.")
+// TradersPost bracket schema is always used (required for Tradovate/TopstepX; avoids OTO rejection).
 tpInstanceTag = input.string("AUTO", "TradersPost: instance tag (for matching alerts to trades)", group="TradersPost Router", tooltip="Used to match alerts to fills. Set to e.g. TLMNQ_3m, TLmnq_5m, TL33_MNQ_3m. AUTO uses <instrument>_<timeframe>.")
 
 // TradersPost numeric helpers (must be defined before any webhook builders use them).
@@ -3414,81 +3413,24 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
         tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
         entrySigId = tpSignalId("buy", "LONG")
         tradeIdLocal := entrySigId
-        longEntryMessage =
-             tpUseBracketSchema ?
-                 ('{' +
-                  '"ticker":"' + actualTicker + '",' +
-                  '"action":"buy",' +
-                  '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-                  '"orderType":"limit",' +
-                  '"limit":' + tpNum(tpExecPrice) + ',' +
-                  '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
-                  '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
-                  '"trade_id":"' + tradeIdLocal + '",' +
-                  '"instance":"' + tpInstTag + '",' +
-                  '"strategy":"' + tpStrategyName + '",' +
-                  '"timeframe":"' + timeframe.period + '",' +
-                  '"instrument":"' + instrumentName + '",' +
-                  '"signal_type":"' + tpSigType + '",' +
-                  '"priority":"' + tpSelPrio + '",' +
-                  '"confluence":' + tpNumInt(tpConfluence) + ',' +
-                  '"session":"' + tpSession + '",' +
-                  '"signal_price":' + tpNum(tpSignalPrice) + ',' +
-                  '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
-                  '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
-                  '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-                  '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
-                  '"candleDirection":"' + tpCandleDir + '",' +
-                  '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
-                  '"signal_id":"' + entrySigId + '",' +
-                  '"timestamp":"' + str.tostring(time) + '"' +
-                  '}') :
-                 ('{' +
-                  '"ticker":"' + actualTicker + '",' +
-                  '"action":"buy",' +
-                  '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-                  '"price":' + tpNum(tpExecPrice) + ',' +
-                  '"stop_loss":' + tpNum(localSL) + ',' +
-                  '"take_profit":' + tpNum(localTP1) + ',' +
-                  (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
-                  (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
-                  '"trade_id":"' + tradeIdLocal + '",' +
-                  '"instance":"' + tpInstTag + '",' +
-                  '"strategy":"' + tpStrategyName + '",' +
-                  '"timeframe":"' + timeframe.period + '",' +
-                  '"instrument":"' + instrumentName + '",' +
-                  '"signal_type":"' + tpSigType + '",' +
-                  '"priority":"' + tpSelPrio + '",' +
-                  '"confluence":' + tpNumInt(tpConfluence) + ',' +
-                  '"session":"' + tpSession + '",' +
-                  '"signal_price":' + tpNum(tpSignalPrice) + ',' +
-                  '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
-                  '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
-                  '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-                  '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
-                  '"candleDirection":"' + tpCandleDir + '",' +
-                  '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
-                  '"signal_id":"' + entrySigId + '",' +
-                  '"timestamp":"' + str.tostring(time) + '"' +
-                  '}')
-        alert(longEntryMessage, tpAlertFreq)
-    
-    // Same-direction add
-    if entryOK and longCondition and tpLong and enableTradersPostAlerts and not tookLocal and tpSameDirectionBehavior == "add"
-        addSigId = tpSignalId("add", "LONG")
-        addLongMessage = '{' +
+        // Token-limit optimization: single bracket schema payload, minimal fields.
+        longEntryMessage = '{' +
              '"ticker":"' + actualTicker + '",' +
-             '"action":"add",' +
+             '"action":"buy",' +
              '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-             '"price":' + tpNum(tpExecPrice) + ',' +
+             '"orderType":"limit",' +
+             '"limit":' + tpNum(tpExecPrice) + ',' +
+             '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
+             '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
+             '"trade_id":"' + tradeIdLocal + '",' +
+             '"instance":"' + tpInstTag + '",' +
              '"strategy":"' + tpStrategyName + '",' +
              '"timeframe":"' + timeframe.period + '",' +
              '"instrument":"' + instrumentName + '",' +
-             '"signal_id":"' + addSigId + '",' +
+             '"signal_id":"' + entrySigId + '",' +
              '"timestamp":"' + str.tostring(time) + '"' +
              '}'
-        alert(addLongMessage, tpAlertFreq)
-        tookLocal := true
+        alert(longEntryMessage, tpAlertFreq)
     
     if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts
         bool is3m_chart = timeframe.period == "3"
@@ -3505,105 +3447,24 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
         tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
         entrySigId = tpSignalId("sell", "SHORT")
         tradeIdLocal := entrySigId
-        shortEntryMessage =
-             tpUseBracketSchema ?
-                 ('{' +
-                  '"ticker":"' + actualTicker + '",' +
-                  '"action":"sell",' +
-                  '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-                  '"orderType":"limit",' +
-                  '"limit":' + tpNum(tpExecPrice) + ',' +
-                  '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
-                  '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
-                  '"trade_id":"' + tradeIdLocal + '",' +
-                  '"instance":"' + tpInstTag + '",' +
-                  '"strategy":"' + tpStrategyName + '",' +
-                  '"timeframe":"' + timeframe.period + '",' +
-                  '"instrument":"' + instrumentName + '",' +
-                  '"signal_type":"' + tpSigType + '",' +
-                  '"priority":"' + tpSelPrio + '",' +
-                  '"confluence":' + tpNumInt(tpConfluence) + ',' +
-                  '"session":"' + tpSession + '",' +
-                  '"signal_price":' + tpNum(tpSignalPrice) + ',' +
-                  '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
-                  '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
-                  '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-                  '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
-                  '"candleDirection":"' + tpCandleDir + '",' +
-                  '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
-                  '"signal_id":"' + entrySigId + '",' +
-                  '"timestamp":"' + str.tostring(time) + '"' +
-                  '}') :
-                 ('{' +
-                  '"ticker":"' + actualTicker + '",' +
-                  '"action":"sell",' +
-                  '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-                  '"price":' + tpNum(tpExecPrice) + ',' +
-                  '"stop_loss":' + tpNum(localSL) + ',' +
-                  '"take_profit":' + tpNum(localTP1) + ',' +
-                  (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
-                  (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
-                  '"trade_id":"' + tradeIdLocal + '",' +
-                  '"instance":"' + tpInstTag + '",' +
-                  '"strategy":"' + tpStrategyName + '",' +
-                  '"timeframe":"' + timeframe.period + '",' +
-                  '"instrument":"' + instrumentName + '",' +
-                  '"signal_type":"' + tpSigType + '",' +
-                  '"priority":"' + tpSelPrio + '",' +
-                  '"confluence":' + tpNumInt(tpConfluence) + ',' +
-                  '"session":"' + tpSession + '",' +
-                  '"signal_price":' + tpNum(tpSignalPrice) + ',' +
-                  '"mtf_alignment_pct":' + tpNumInt(tpMtfAlignPct) + ',' +
-                  '"fiveStarOK":' + (tpFiveStarOK ? "true" : "false") + ',' +
-                  '"trendOverride":' + ((tpSelPrio == "P2:TREND" or tpSelPrio == "P2:STRONG_TREND") ? "true" : "false") + ',' +
-                  '"impulseOverride":' + (tpSelPrio == "P1:IMPULSE" ? "true" : "false") + ',' +
-                  '"candleDirection":"' + tpCandleDir + '",' +
-                  '"choppy":' + (tpChoppy ? "true" : "false") + ',' +
-                  '"signal_id":"' + entrySigId + '",' +
-                  '"timestamp":"' + str.tostring(time) + '"' +
-                  '}')
-        alert(shortEntryMessage, tpAlertFreq)
-    
-    if entryOK and shortCondition and tpShort and enableTradersPostAlerts and not tookLocal and tpSameDirectionBehavior == "add"
-        addSigId = tpSignalId("add", "SHORT")
-        addShortMessage = '{' +
+        // Token-limit optimization: single bracket schema payload, minimal fields.
+        shortEntryMessage = '{' +
              '"ticker":"' + actualTicker + '",' +
-             '"action":"add",' +
+             '"action":"sell",' +
              '"quantity":' + tpNumInt(tpEntryQty) + ',' +
-             '"price":' + tpNum(tpExecPrice) + ',' +
-             '"strategy":"' + tpStrategyName + '",' +
-             '"timeframe":"' + timeframe.period + '",' +
-             '"instrument":"' + instrumentName + '",' +
-             '"signal_id":"' + addSigId + '",' +
-             '"timestamp":"' + str.tostring(time) + '"' +
-             '}'
-        alert(addShortMessage, tpAlertFreq)
-        tookLocal := true
-    
-    // Strategy-close exit alert (OPTIONAL)
-    if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.position_size[1] != 0 and enableTradersPostAlerts and not tookLocal
-        exitQty = int(math.abs(strategy.position_size[1]))
-        exitDir = (strategy.position_size[1] > 0 ? "LONG" : "SHORT")
-        exitSigId = tpSignalId("exit", exitDir)
-        exitPrice = close
-        exitMessage = '{' +
-             '"ticker":"' + actualTicker + '",' +
-             '"action":"exit",' +
-             '"quantity":' + tpNumInt(exitQty) + ',' +
-             '"price":' + tpNum(exitPrice) + ',' +
-             '"reason":"strategy_close",' +
+             '"orderType":"limit",' +
+             '"limit":' + tpNum(tpExecPrice) + ',' +
+             '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
+             '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
              '"trade_id":"' + tradeIdLocal + '",' +
-             '"entry_signal_id":"' + tradeIdLocal + '",' +
              '"instance":"' + tpInstTag + '",' +
              '"strategy":"' + tpStrategyName + '",' +
              '"timeframe":"' + timeframe.period + '",' +
              '"instrument":"' + instrumentName + '",' +
-             '"signal_id":"' + exitSigId + '",' +
+             '"signal_id":"' + entrySigId + '",' +
              '"timestamp":"' + str.tostring(time) + '"' +
              '}'
-        if exitQty > 0
-            alert(exitMessage, alert.freq_once_per_bar)
-            tookLocal := true
+        alert(shortEntryMessage, tpAlertFreq)
     
     // EOD exit alert
     if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and strategy.position_size != 0 and not tookLocal
