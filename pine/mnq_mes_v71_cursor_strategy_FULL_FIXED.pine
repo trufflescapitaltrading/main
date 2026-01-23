@@ -723,12 +723,13 @@ permOK(tf) =>
 [tf15_c, tf15_e20, tf15_s50] = permOK("15")
 [tf30_c, tf30_e20, tf30_s50] = permOK("30")
 
-mnq5mPermLong = (tf5_c > tf5_e20) and (tf5_e20 > tf5_s50)
-mnq5mPermShort = (tf5_c < tf5_e20) and (tf5_e20 < tf5_s50)
-mnq15mPermLong = (tf15_c > tf15_e20) and (tf15_e20 > tf15_s50)
-mnq15mPermShort = (tf15_c < tf15_e20) and (tf15_e20 < tf15_s50)
-mnq30mPermLong = (tf30_c > tf30_e20) and (tf30_e20 > tf30_s50)
-mnq30mPermShort = (tf30_c < tf30_e20) and (tf30_e20 < tf30_s50)
+// Softer permission: require close on the correct side of EMA20, plus either EMA20 stack OR close vs SMA50.
+mnq5mPermLong = (tf5_c > tf5_e20) and ((tf5_e20 > tf5_s50) or (tf5_c > tf5_s50))
+mnq5mPermShort = (tf5_c < tf5_e20) and ((tf5_e20 < tf5_s50) or (tf5_c < tf5_s50))
+mnq15mPermLong = (tf15_c > tf15_e20) and ((tf15_e20 > tf15_s50) or (tf15_c > tf15_s50))
+mnq15mPermShort = (tf15_c < tf15_e20) and ((tf15_e20 < tf15_s50) or (tf15_c < tf15_s50))
+mnq30mPermLong = (tf30_c > tf30_e20) and ((tf30_e20 > tf30_s50) or (tf30_c > tf30_s50))
+mnq30mPermShort = (tf30_c < tf30_e20) and ((tf30_e20 < tf30_s50) or (tf30_c < tf30_s50))
 
 // Same permission series apply on MES charts (computed from the current chart symbol).
 mes5mPermLong = mnq5mPermLong
@@ -938,7 +939,7 @@ minBodyAtrEntry_eff =
      isMES_3m ? 0.09 :
      isMES_5m ? 0.10 :
      minBodyAtrEntry
-candleQualityOK = (not isDojiBar) and (bodyRatio >= minBodyRatioEntry_eff) and (atr10 <= 0 or bodySize >= atr10 * minBodyAtrEntry_eff)
+candleQualityOK = (not isDojiBar) and (not hardDoji) and (bodyRatio >= minBodyRatioEntry_eff) and (atr10 <= 0 or bodySize >= atr10 * minBodyAtrEntry_eff)
 avgVolume = ta.sma(volume, 20)
 volumeOK = not requireVolumeConfirmation or volume > avgVolume * 0.8
 minCandleSize = currentATR * minPatternSize
@@ -1042,6 +1043,46 @@ for i = 0 to maxRunBars - 1
 
 runUpCloses = math.max(bullOCStreak, upCloseStreak)
 runDownCloses = math.max(bearOCStreak, downCloseStreak)
+
+// ==================== ⚡ Obvious Run + Displacement Trigger (early 2–3 candle trends) ====================
+runTrigGroup = "⚡ Run Trigger (Early Trend Catcher)"
+enableRunTrigger = input.bool(true, "Enable run+displacement trigger (fires early)", group=runTrigGroup)
+mnqRunMinTicks_3m = input.int(20, "MNQ 3m: min displacement ticks over 2 bars", minval=1, maxval=200, group=runTrigGroup)
+mnqRunMinTicks_5m = input.int(24, "MNQ 5m: min displacement ticks over 2 bars", minval=1, maxval=300, group=runTrigGroup)
+mesRunMinTicks_3m = input.int(8, "MES 3m: min displacement ticks over 2 bars", minval=1, maxval=200, group=runTrigGroup)
+mesRunMinTicks_5m = input.int(10, "MES 5m: min displacement ticks over 2 bars", minval=1, maxval=300, group=runTrigGroup)
+
+var int bullRunSimple = 0
+var int bearRunSimple = 0
+if candleBull and not hardDoji
+    bullRunSimple := bullRunSimple + 1
+    bearRunSimple := 0
+else if candleBear and not hardDoji
+    bearRunSimple := bearRunSimple + 1
+    bullRunSimple := 0
+// Doji/tiny-body: do not advance and do not reset
+
+var int closeUpRun = 0
+var int closeDownRun = 0
+if close > close[1]
+    closeUpRun := closeUpRun + 1
+    closeDownRun := 0
+else if close < close[1]
+    closeDownRun := closeDownRun + 1
+    closeUpRun := 0
+
+runUpFast = math.max(bullRunSimple, closeUpRun)
+runDownFast = math.max(bearRunSimple, closeDownRun)
+
+minRunTicks = (isMNQ and is3min) ? mnqRunMinTicks_3m :
+     (isMNQ and is5min) ? mnqRunMinTicks_5m :
+     (isMES and is3min) ? mesRunMinTicks_3m :
+     (isMES and is5min) ? mesRunMinTicks_5m :
+     0
+dispTicks2 = syminfo.mintick > 0 ? math.abs(close - close[2]) / syminfo.mintick : 0.0
+
+runTriggerLong = enableRunTrigger and (runUpFast >= 2 and runUpFast <= 3) and candleBull and not hardDoji and (dispTicks2 >= minRunTicks) and (close > close[2])
+runTriggerShort = enableRunTrigger and (runDownFast >= 2 and runDownFast <= 3) and candleBear and not hardDoji and (dispTicks2 >= minRunTicks) and (close < close[2])
 
 volumeMA = ta.sma(volume, 20)
 isStrongVolume = volume > volumeMA * trendOverrideVolMultiplier
@@ -2039,7 +2080,16 @@ if not tookTradeThisBar
                 selectedPriority := "P0:MOMENTUM"
                 entryPriority := "P0:MOMENTUM"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
-            if canGoLong and earlyTrendLong and candleBull and candleConfirmLong
+            // Run trigger fires earliest on obvious 2–3 candle trends (prevents “P2 on 5th candle”).
+            if canGoLong and runTriggerLong and candleConfirmLong
+                shouldEnterLong := true
+                selectedPriority := "P1:RUN_TREND"
+                entryPriority := "P1:RUN_TREND"
+            else if canGoShort and runTriggerShort and candleConfirmShort
+                shouldEnterShort := true
+                selectedPriority := "P1:RUN_TREND"
+                entryPriority := "P1:RUN_TREND"
+            else if canGoLong and earlyTrendLong and candleBull and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P1:EARLY_TREND"
                 entryPriority := "P1:EARLY_TREND"
@@ -2153,6 +2203,7 @@ if not tookTradeThisBar
         bool mesPriorityAllowed =
              (selectedPriority == "P-1:TREND_START") or
              (selectedPriority == "P1:EARLY_TREND") or
+             (selectedPriority == "P1:RUN_TREND") or
              (selectedPriority == "P1:IGNITION") or
              (selectedPriority == "P1:IMPULSE") or
              (selectedPriority == "P2:CONTINUATION") or
