@@ -424,6 +424,14 @@ tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day", gr
 tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
 tpUseBracketSchema = input.bool(true, "TradersPost: Use bracket schema (stopLoss/takeProfit objects)", group="TradersPost Router", tooltip="Required for brokers that do not support OTO orders (e.g. Tradovate/TopstepX). When enabled, entry signals include stopLoss/stopPrice and takeProfit/limitPrice objects.")
+tpInstanceTag = input.string("AUTO", "TradersPost: instance tag (for matching alerts to trades)", group="TradersPost Router", tooltip="Used to match alerts to fills. Set to e.g. TLMNQ_3m, TLmnq_5m, TL33_MNQ_3m. AUTO uses <instrument>_<timeframe>.")
+
+// TradersPost numeric helpers (must be defined before any webhook builders use them).
+tpNum(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpNumInt(x) =>
+    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+
 contractTicker = (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 actualTicker = contractTicker
 
@@ -591,6 +599,25 @@ holdGroup = "⏱️ Max Hold Bars"
 enableMaxHoldExit = input.bool(false, "Force Exit After Max Hold - DISABLED", group=holdGroup)
 maxHoldBars = input.int(200, "Max Hold Bars - WIDE", minval=5, maxval=500, group=holdGroup)
 
+riskGuardGroup = "🛡️ Per-Trade Risk Guards (MNQ 3m/5m)"
+enablePerTradeHardStop = input.bool(true, "🚨 Hard max loss per trade (market exit)", group=riskGuardGroup)
+mnqHardStopDol_3m = input.float(50.0, "MNQ 3m hard max loss ($/contract)", minval=5, maxval=300, step=1, group=riskGuardGroup)
+mnqHardStopDol_5m = input.float(60.0, "MNQ 5m hard max loss ($/contract)", minval=5, maxval=300, step=1, group=riskGuardGroup)
+
+enableRedTimeStop = input.bool(true, "⏰ Time stop if red (PnL<0)", group=riskGuardGroup)
+mnqRedTimeStopBars_3m = input.int(20, "MNQ 3m time stop bars (PnL<0)", minval=3, maxval=200, group=riskGuardGroup)
+mnqRedTimeStopBars_5m = input.int(12, "MNQ 5m time stop bars (PnL<0)", minval=3, maxval=200, group=riskGuardGroup)
+
+enableQuickExitRed = input.bool(true, "⚡ Quick exit if still losing after N bars", group=riskGuardGroup)
+mnqQuickExitBars_3m = input.int(10, "MNQ 3m quick-exit bars", minval=1, maxval=100, group=riskGuardGroup)
+mnqQuickExitLossDol_3m = input.float(20.0, "MNQ 3m quick-exit loss ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqQuickExitBars_5m = input.int(6, "MNQ 5m quick-exit bars", minval=1, maxval=100, group=riskGuardGroup)
+mnqQuickExitLossDol_5m = input.float(25.0, "MNQ 5m quick-exit loss ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+
+enableMAEProtection = input.bool(true, "🛡️ MAE protection (drawback from peak profit)", group=riskGuardGroup)
+mnqMAEActivateDol_3m = input.float(15.0, "MNQ 3m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqMAEActivateDol_5m = input.float(20.0, "MNQ 5m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+
 strengthGateGroup = "🔗 Strong-Signal Correlation Gate"
 requireMultipleStrong = input.bool(false, "Require 2+ Strong Signals - LOOSENED", group=strengthGateGroup)
 minStrongSignals = input.int(2, "Min Strong Signals", minval=1, maxval=5, group=strengthGateGroup)
@@ -676,6 +703,15 @@ isMES_5m = isMES and is5min
 // Must be declared early because Harmony references it before the gating section.
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
 htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 5m permission gate (used to prevent MNQ 3m entries against 5m structure).
+mnq3mGuardGroup = "🧭 MNQ 3m Permission"
+mnq3mRequire5mPermission = input.bool(true, "MNQ 3m: require 5m trend permission", group=mnq3mGuardGroup)
+htf5mClose = request.security(syminfo.tickerid, "5", close, barmerge.gaps_off, barmerge.lookahead_off)
+htf5mEma20 = request.security(syminfo.tickerid, "5", ta.ema(close, 20), barmerge.gaps_off, barmerge.lookahead_off)
+htf5mSma50 = request.security(syminfo.tickerid, "5", ta.sma(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+mnq5mPermLong = (htf5mClose > htf5mEma20) and (htf5mEma20 > htf5mSma50)
+mnq5mPermShort = (htf5mClose < htf5mEma20) and (htf5mEma20 < htf5mSma50)
 
 tfMultiplier1m = isMYM ? baseTfMultiplier1m * 1.05 : isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
 tfMultiplier2m = isMYM ? baseTfMultiplier2m * 1.04 : isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
@@ -1641,6 +1677,8 @@ var bool isShortPosition = false
 var float currentProfitDollars = 0.0
 var int originalQty = 0
 var int finalContractQty = 1
+// TradersPost correlation: stable per-trade id to match entries/exits in logs.
+var string tpTradeId = ""
 
 // V71 Win Rate Optimization Variables
 var float v71_trailingStop = na
@@ -1697,6 +1735,8 @@ if strategy.position_size != 0 and strategy.position_size[1] == 0
     v71_profitBarsCount := 0
     v71_entryRSI := rsi
     v71_tp1Target := na
+    // If we haven't set a tradeId yet (should be set on entry alert), fall back to a stable bar-based id.
+    tpTradeId := tpTradeId == "" ? (str.tostring(time) + "_" + str.tostring(bar_index)) : tpTradeId
 
 if strategy.position_size != 0 and not na(entryPrice)
     currentProfit := isLongPosition ? (close - entryPrice) : (entryPrice - close)
@@ -1726,6 +1766,7 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0
     v71_profitBarsCount := 0
     v71_entryRSI := na
     v71_tp1Target := na
+    tpTradeId := ""
 
 safeATR = math.max(atrMain, syminfo.mintick * 10)
 timeframeMultiplier = autoTimeframeOptimization ? (is1min ? tfMultiplier1m * scalpingMultiplier * finalSessionMultiplier : is2min ? tfMultiplier2m * finalSessionMultiplier : is3min ? tfMultiplier3m * finalSessionMultiplier : is5min ? tfMultiplier5m * finalSessionMultiplier : is10min ? tfMultiplier10m * finalSessionMultiplier : is15min ? tfMultiplier15m * finalSessionMultiplier : is30min ? tfMultiplier30m * finalSessionMultiplier : is1hour ? tfMultiplier1h * finalSessionMultiplier : is2hour ? tfMultiplier2h * finalSessionMultiplier : is4hour ? tfMultiplier4h * finalSessionMultiplier : 1.0 * finalSessionMultiplier) : 1.0 * finalSessionMultiplier
@@ -1920,6 +1961,11 @@ if isMES and enableMesHighWinEntryGate
     if not enableFilterHarmony
         canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
         canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
+
+// MNQ 3m: require 5m permission (reduces chop / against-structure entries).
+if mnq3mRequire5mPermission and isMNQ and is3min
+    canGoLong := canGoLong and mnq5mPermLong
+    canGoShort := canGoShort and mnq5mPermShort
 
 if not tookTradeThisBar
     if enablePrioritySystem
@@ -3096,6 +3142,74 @@ if useEndOfDayExits and strategy.position_size != 0 and eodWindowStart and not e
     exitIssuedThisBar := true
     lastExitReason := "EOD_EXIT"
 
+// ==================== 🛡️ PER-TRADE RISK GUARDS (MNQ 3m/5m) ====================
+// These are "hard" safety exits to prevent 1h+ red holds and oversized losers on scalping timeframes.
+mnqIs3m = isMNQ and is3min
+mnqIs5m = isMNQ and is5min
+qtyForGuards = math.max(originalQty, 1)
+mnqHardStopDol = mnqIs3m ? mnqHardStopDol_3m : mnqIs5m ? mnqHardStopDol_5m : na
+mnqRedStopBars = mnqIs3m ? mnqRedTimeStopBars_3m : mnqIs5m ? mnqRedTimeStopBars_5m : na
+mnqQuickBars = mnqIs3m ? mnqQuickExitBars_3m : mnqIs5m ? mnqQuickExitBars_5m : na
+mnqQuickLossDol = mnqIs3m ? mnqQuickExitLossDol_3m : mnqIs5m ? mnqQuickExitLossDol_5m : na
+mnqMaeActivateDol = mnqIs3m ? mnqMAEActivateDol_3m : mnqIs5m ? mnqMAEActivateDol_5m : na
+
+tpExitWebhook(reason) =>
+    dirStr = strategy.position_size > 0 ? "LONG" : "SHORT"
+    exitSigIdLocal = str.tostring(time) + "_" + str.tostring(bar_index) + "_exit_" + dirStr
+    tradeIdLocal = (tpTradeId != "" ? tpTradeId : (str.tostring(time) + "_" + str.tostring(bar_index)))
+    '{' +
+     '"ticker":"' + actualTicker + '",' +
+     '"action":"exit",' +
+     '"quantity":' + tpNumInt(int(math.abs(strategy.position_size))) + ',' +
+     '"price":' + tpNum(close) + ',' +
+     '"reason":"' + reason + '",' +
+     '"trade_id":"' + tradeIdLocal + '",' +
+     '"entry_signal_id":"' + tradeIdLocal + '",' +
+     '"instance":"' + tpInstTag + '",' +
+     '"strategy":"' + tpStrategyName + '",' +
+     '"timeframe":"' + timeframe.period + '",' +
+     '"instrument":"' + instrumentName + '",' +
+     '"signal_id":"' + exitSigIdLocal + '",' +
+     '"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+
+if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIssuedThisBar and not mesMJV6Active
+    // 1) Hard max-loss (per contract).
+    if enablePerTradeHardStop and not na(mnqHardStopDol) and currentProfitDollars <= -(mnqHardStopDol * qtyForGuards)
+        strategy.close_all(comment="HARD_STOP")
+        exitIssuedThisBar := true
+        lastExitReason := "HARD_STOP"
+        if enableTradersPostAlerts and not tookTradeThisBar
+            alert(tpExitWebhook("hard_stop"), alert.freq_once_per_bar)
+            tookTradeThisBar := true
+
+    // 2) Quick exit (losing after N bars).
+    if enableQuickExitRed and not exitIssuedThisBar and not na(mnqQuickBars) and holdingPeriod >= mnqQuickBars and not na(mnqQuickLossDol) and currentProfitDollars <= -(mnqQuickLossDol * qtyForGuards)
+        strategy.close_all(comment="QUICK_EXIT_RED")
+        exitIssuedThisBar := true
+        lastExitReason := "QUICK_EXIT_RED"
+        if enableTradersPostAlerts and not tookTradeThisBar
+            alert(tpExitWebhook("quick_exit_red"), alert.freq_once_per_bar)
+            tookTradeThisBar := true
+
+    // 3) Time-stop if red.
+    if enableRedTimeStop and not exitIssuedThisBar and not na(mnqRedStopBars) and holdingPeriod >= mnqRedStopBars and currentProfitDollars < 0
+        strategy.close_all(comment="TIME_STOP_RED")
+        exitIssuedThisBar := true
+        lastExitReason := "TIME_STOP_RED"
+        if enableTradersPostAlerts and not tookTradeThisBar
+            alert(tpExitWebhook("time_stop_red"), alert.freq_once_per_bar)
+            tookTradeThisBar := true
+
+    // 4) MAE drawback protection (only after some peak profit was achieved).
+    if enableMAEProtection and not exitIssuedThisBar and not na(mnqMaeActivateDol) and peakProfit >= (mnqMaeActivateDol * qtyForGuards) and currentProfitDollars <= (peakProfit * maeDrawbackPercent)
+        strategy.close_all(comment="MAE_PROTECT")
+        exitIssuedThisBar := true
+        lastExitReason := "MAE_PROTECT"
+        if enableTradersPostAlerts and not tookTradeThisBar
+            alert(tpExitWebhook("mae_protection"), alert.freq_once_per_bar)
+            tookTradeThisBar := true
+
 if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
     lossThresholdDollars = (strategy.equity * losingTradeThreshold / 100)
     if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0 and not exitIssuedThisBar
@@ -3137,11 +3251,7 @@ tpExecPrice = entryTimingMode == "Next Bar Open" ? open : close
 tpSignalPrice = entryTimingMode == "Next Bar Open" ? close[1] : close
 tpEntryQty = entryTimingMode == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
 
-tpNum(x) =>
-    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
-
-tpNumInt(x) =>
-    tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
+tpInstTag = tpInstanceTag == "AUTO" ? (instrumentName + "_" + timeframe.period) : tpInstanceTag
 
 tpSession =
      isLondonSession ? "LONDON" :
@@ -3165,6 +3275,9 @@ if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat 
              '"quantity":' + tpNumInt(exitQty) + ',' +
              '"price":' + tpNum(exitPrice) + ',' +
              '"reason":"reverse_signal",' +
+             '"trade_id":"' + tpTradeId + '",' +
+             '"entry_signal_id":"' + tpTradeId + '",' +
+             '"instance":"' + tpInstTag + '",' +
              '"strategy":"' + tpStrategyName + '",' +
              '"timeframe":"' + timeframe.period + '",' +
              '"instrument":"' + instrumentName + '",' +
@@ -3191,6 +3304,7 @@ if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 an
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     entrySigId = tpSignalId("buy", "LONG")
+    tpTradeId := entrySigId
     longEntryMessage =
          tpUseBracketSchema ?
              ('{' +
@@ -3201,10 +3315,13 @@ if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 an
               '"limit":' + tpNum(tpExecPrice) + ',' +
               '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
               '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
+              '"trade_id":"' + tpTradeId + '",' +
+              '"instance":"' + tpInstTag + '",' +
               '"strategy":"' + tpStrategyName + '",' +
               '"timeframe":"' + timeframe.period + '",' +
               '"instrument":"' + instrumentName + '",' +
               '"signal_type":"' + tpSigType + '",' +
+              '"priority":"' + tpSelPrio + '",' +
               '"confluence":' + tpNumInt(tpConfluence) + ',' +
               '"session":"' + tpSession + '",' +
               '"signal_price":' + tpNum(tpSignalPrice) + ',' +
@@ -3226,10 +3343,13 @@ if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 an
               '"take_profit":' + tpNum(localTP1) + ',' +
               (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
               (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
+              '"trade_id":"' + tpTradeId + '",' +
+              '"instance":"' + tpInstTag + '",' +
               '"strategy":"' + tpStrategyName + '",' +
               '"timeframe":"' + timeframe.period + '",' +
               '"instrument":"' + instrumentName + '",' +
               '"signal_type":"' + tpSigType + '",' +
+              '"priority":"' + tpSelPrio + '",' +
               '"confluence":' + tpNumInt(tpConfluence) + ',' +
               '"session":"' + tpSession + '",' +
               '"signal_price":' + tpNum(tpSignalPrice) + ',' +
@@ -3275,6 +3395,7 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 
     slDol = useManualDollarOverrides and manualDollarSL > 0 ? manualDollarSL : (currentSL_pts * safePointValue)
     tpDol = useManualDollarOverrides and manualDollarTP > 0 ? manualDollarTP : (currentTP1_pts * safePointValue)
     entrySigId = tpSignalId("sell", "SHORT")
+    tpTradeId := entrySigId
     shortEntryMessage =
          tpUseBracketSchema ?
              ('{' +
@@ -3285,10 +3406,13 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 
               '"limit":' + tpNum(tpExecPrice) + ',' +
               '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
               '"stopLoss":{"stopPrice":' + tpNum(localSL) + '},' +
+              '"trade_id":"' + tpTradeId + '",' +
+              '"instance":"' + tpInstTag + '",' +
               '"strategy":"' + tpStrategyName + '",' +
               '"timeframe":"' + timeframe.period + '",' +
               '"instrument":"' + instrumentName + '",' +
               '"signal_type":"' + tpSigType + '",' +
+              '"priority":"' + tpSelPrio + '",' +
               '"confluence":' + tpNumInt(tpConfluence) + ',' +
               '"session":"' + tpSession + '",' +
               '"signal_price":' + tpNum(tpSignalPrice) + ',' +
@@ -3310,10 +3434,13 @@ if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 
               '"take_profit":' + tpNum(localTP1) + ',' +
               (enableDollarStops ? ('"stop_loss_amount":' + tpNum(slDol) + ',') : "") +
               (enableDollarStops ? ('"take_profit_amount":' + tpNum(tpDol) + ',') : "") +
+              '"trade_id":"' + tpTradeId + '",' +
+              '"instance":"' + tpInstTag + '",' +
               '"strategy":"' + tpStrategyName + '",' +
               '"timeframe":"' + timeframe.period + '",' +
               '"instrument":"' + instrumentName + '",' +
               '"signal_type":"' + tpSigType + '",' +
+              '"priority":"' + tpSelPrio + '",' +
               '"confluence":' + tpNumInt(tpConfluence) + ',' +
               '"session":"' + tpSession + '",' +
               '"signal_price":' + tpNum(tpSignalPrice) + ',' +
@@ -3358,6 +3485,9 @@ if tpSendExitAlertOnStrategyClose and strategy.position_size == 0 and strategy.p
          '"quantity":' + tpNumInt(exitQty) + ',' +
          '"price":' + tpNum(exitPrice) + ',' +
          '"reason":"strategy_close",' +
+         '"trade_id":"' + tpTradeId + '",' +
+         '"entry_signal_id":"' + tpTradeId + '",' +
+         '"instance":"' + tpInstTag + '",' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
@@ -3378,6 +3508,9 @@ if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersP
          '"quantity":' + tpNumInt(int(math.abs(strategy.position_size))) + ',' +
          '"price":' + tpNum(exitPrice) + ',' +
          '"reason":"eod_exit",' +
+         '"trade_id":"' + tpTradeId + '",' +
+         '"entry_signal_id":"' + tpTradeId + '",' +
+         '"instance":"' + tpInstTag + '",' +
          '"strategy":"' + tpStrategyName + '",' +
          '"timeframe":"' + timeframe.period + '",' +
          '"instrument":"' + instrumentName + '",' +
