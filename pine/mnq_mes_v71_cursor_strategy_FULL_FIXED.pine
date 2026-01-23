@@ -615,8 +615,8 @@ mnqQuickExitBars_5m = input.int(6, "MNQ 5m quick-exit bars", minval=1, maxval=10
 mnqQuickExitLossDol_5m = input.float(25.0, "MNQ 5m quick-exit loss ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
 
 enableMAEProtection = input.bool(true, "🛡️ MAE protection (drawback from peak profit)", group=riskGuardGroup)
-mnqMAEActivateDol_3m = input.float(15.0, "MNQ 3m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
-mnqMAEActivateDol_5m = input.float(20.0, "MNQ 5m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqMAEActivateDol_3m = input.float(5.0, "MNQ 3m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
+mnqMAEActivateDol_5m = input.float(5.0, "MNQ 5m MAE activate at peak profit ($/contract)", minval=1, maxval=200, step=1, group=riskGuardGroup)
 
 strengthGateGroup = "🔗 Strong-Signal Correlation Gate"
 requireMultipleStrong = input.bool(false, "Require 2+ Strong Signals - LOOSENED", group=strengthGateGroup)
@@ -704,14 +704,39 @@ isMES_5m = isMES and is5min
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
 htf5mBear = request.security(syminfo.tickerid, "5", (close < open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
 
-// 5m permission gate (used to prevent MNQ 3m entries against 5m structure).
-mnq3mGuardGroup = "🧭 MNQ 3m Permission"
-mnq3mRequire5mPermission = input.bool(true, "MNQ 3m: require 5m trend permission", group=mnq3mGuardGroup)
-htf5mClose = request.security(syminfo.tickerid, "5", close, barmerge.gaps_off, barmerge.lookahead_off)
-htf5mEma20 = request.security(syminfo.tickerid, "5", ta.ema(close, 20), barmerge.gaps_off, barmerge.lookahead_off)
-htf5mSma50 = request.security(syminfo.tickerid, "5", ta.sma(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
-mnq5mPermLong = (htf5mClose > htf5mEma20) and (htf5mEma20 > htf5mSma50)
-mnq5mPermShort = (htf5mClose < htf5mEma20) and (htf5mEma20 < htf5mSma50)
+// Higher-TF permission chain
+permGroup = "🧭 Higher-TF Permission Chain"
+mnq3mRequire5mPermission = input.bool(true, "MNQ 3m requires MNQ 5m OK", group=permGroup)
+mnq5mRequire15mPermission = input.bool(true, "MNQ 5m requires MNQ 15m OK", group=permGroup)
+mnq15mRequire30mPermission = input.bool(true, "MNQ 15m requires MNQ 30m OK", group=permGroup)
+mes3mRequire5mPermission = input.bool(true, "MES 3m requires MES 5m OK", group=permGroup)
+mes5mRequire15mPermission = input.bool(true, "MES 5m requires MES 15m OK", group=permGroup)
+mes15mRequire30mPermission = input.bool(true, "MES 15m requires MES 30m OK", group=permGroup)
+
+permOK(tf) =>
+    c = request.security(syminfo.tickerid, tf, close, barmerge.gaps_off, barmerge.lookahead_off)
+    e20 = request.security(syminfo.tickerid, tf, ta.ema(close, 20), barmerge.gaps_off, barmerge.lookahead_off)
+    s50 = request.security(syminfo.tickerid, tf, ta.sma(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+    [c, e20, s50]
+
+[tf5_c, tf5_e20, tf5_s50] = permOK("5")
+[tf15_c, tf15_e20, tf15_s50] = permOK("15")
+[tf30_c, tf30_e20, tf30_s50] = permOK("30")
+
+mnq5mPermLong = (tf5_c > tf5_e20) and (tf5_e20 > tf5_s50)
+mnq5mPermShort = (tf5_c < tf5_e20) and (tf5_e20 < tf5_s50)
+mnq15mPermLong = (tf15_c > tf15_e20) and (tf15_e20 > tf15_s50)
+mnq15mPermShort = (tf15_c < tf15_e20) and (tf15_e20 < tf15_s50)
+mnq30mPermLong = (tf30_c > tf30_e20) and (tf30_e20 > tf30_s50)
+mnq30mPermShort = (tf30_c < tf30_e20) and (tf30_e20 < tf30_s50)
+
+// Same permission series apply on MES charts (computed from the current chart symbol).
+mes5mPermLong = mnq5mPermLong
+mes5mPermShort = mnq5mPermShort
+mes15mPermLong = mnq15mPermLong
+mes15mPermShort = mnq15mPermShort
+mes30mPermLong = mnq30mPermLong
+mes30mPermShort = mnq30mPermShort
 
 tfMultiplier1m = isMYM ? baseTfMultiplier1m * 1.05 : isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
 tfMultiplier2m = isMYM ? baseTfMultiplier2m * 1.04 : isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
@@ -1962,10 +1987,28 @@ if isMES and enableMesHighWinEntryGate
         canGoLong := canGoLong and mesSessionOK and mesConfluenceOK and mesMtfOK_Long and mesMandatoryOK_Long and (not isChoppy)
         canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
 
-// MNQ 3m: require 5m permission (reduces chop / against-structure entries).
-if mnq3mRequire5mPermission and isMNQ and is3min
-    canGoLong := canGoLong and mnq5mPermLong
-    canGoShort := canGoShort and mnq5mPermShort
+// Higher-TF permission chains (reduces against-structure chop).
+if isMNQ
+    if is3min and mnq3mRequire5mPermission
+        canGoLong := canGoLong and mnq5mPermLong
+        canGoShort := canGoShort and mnq5mPermShort
+    if is5min and mnq5mRequire15mPermission
+        canGoLong := canGoLong and mnq15mPermLong
+        canGoShort := canGoShort and mnq15mPermShort
+    if is15min and mnq15mRequire30mPermission
+        canGoLong := canGoLong and mnq30mPermLong
+        canGoShort := canGoShort and mnq30mPermShort
+
+if isMES
+    if is3min and mes3mRequire5mPermission
+        canGoLong := canGoLong and mes5mPermLong
+        canGoShort := canGoShort and mes5mPermShort
+    if is5min and mes5mRequire15mPermission
+        canGoLong := canGoLong and mes15mPermLong
+        canGoShort := canGoShort and mes15mPermShort
+    if is15min and mes15mRequire30mPermission
+        canGoLong := canGoLong and mes30mPermLong
+        canGoShort := canGoShort and mes30mPermShort
 
 if not tookTradeThisBar
     if enablePrioritySystem
