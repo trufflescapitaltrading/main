@@ -712,6 +712,7 @@ mnq15mRequire30mPermission = input.bool(true, "MNQ 15m requires MNQ 30m OK", gro
 mes3mRequire5mPermission = input.bool(true, "MES 3m requires MES 5m OK", group=permGroup)
 mes5mRequire15mPermission = input.bool(true, "MES 5m requires MES 15m OK", group=permGroup)
 mes15mRequire30mPermission = input.bool(true, "MES 15m requires MES 30m OK", group=permGroup)
+mes3mAllowBigMoveBypass = input.bool(true, "MES 3m: allow big-move bypass of 5m permission", group=permGroup, tooltip="Prevents MES 3m from going dead when 5m permission lags. Only bypasses on strong 2-bar displacement run triggers.")
 
 permOK(tf) =>
     c = request.security(syminfo.tickerid, tf, close, barmerge.gaps_off, barmerge.lookahead_off)
@@ -1083,6 +1084,11 @@ dispTicks2 = syminfo.mintick > 0 ? math.abs(close - close[2]) / syminfo.mintick 
 
 runTriggerLong = enableRunTrigger and (runUpFast >= 2 and runUpFast <= 3) and candleBull and not hardDoji and (dispTicks2 >= minRunTicks) and (close > close[2])
 runTriggerShort = enableRunTrigger and (runDownFast >= 2 and runDownFast <= 3) and candleBear and not hardDoji and (dispTicks2 >= minRunTicks) and (close < close[2])
+
+// Run trigger should not be starved by the global candle-confirm gate; it still hard-blocks doji/tiny-body candles.
+runTrigMinBodyPct = input.float(0.18, "Run trigger: min body/range", minval=0.05, maxval=0.60, step=0.01, group=runTrigGroup)
+runTrigMinBodyAtr = input.float(0.05, "Run trigger: min body (×ATR10)", minval=0.00, maxval=0.30, step=0.01, group=runTrigGroup)
+runTriggerCandleOK = (not hardDoji) and (totalRange > 0) and (bodyRatio >= runTrigMinBodyPct) and (atr10 <= 0 or bodySize >= atr10 * runTrigMinBodyAtr)
 
 volumeMA = ta.sma(volume, 20)
 isStrongVolume = volume > volumeMA * trendOverrideVolMultiplier
@@ -2050,8 +2056,10 @@ if isMNQ
 
 if isMES
     if is3min and mes3mRequire5mPermission
-        canGoLong := canGoLong and mes5mPermLong
-        canGoShort := canGoShort and mes5mPermShort
+        // Allow bypass on strong “run trigger” displacement so MES 3m does not go dead.
+        bigMoveBypass = mes3mAllowBigMoveBypass and enableRunTrigger and (dispTicks2 >= (minRunTicks * 2))
+        canGoLong := canGoLong and (mes5mPermLong or (bigMoveBypass and runTriggerLong))
+        canGoShort := canGoShort and (mes5mPermShort or (bigMoveBypass and runTriggerShort))
     if is5min and mes5mRequire15mPermission
         canGoLong := canGoLong and mes15mPermLong
         canGoShort := canGoShort and mes15mPermShort
@@ -2081,11 +2089,11 @@ if not tookTradeThisBar
                 entryPriority := "P0:MOMENTUM"
         if not shouldEnterLong and not shouldEnterShort and allowPriority1Early
             // Run trigger fires earliest on obvious 2–3 candle trends (prevents “P2 on 5th candle”).
-            if canGoLong and runTriggerLong and candleConfirmLong
+            if canGoLong and runTriggerLong and runTriggerCandleOK
                 shouldEnterLong := true
                 selectedPriority := "P1:RUN_TREND"
                 entryPriority := "P1:RUN_TREND"
-            else if canGoShort and runTriggerShort and candleConfirmShort
+            else if canGoShort and runTriggerShort and runTriggerCandleOK
                 shouldEnterShort := true
                 selectedPriority := "P1:RUN_TREND"
                 entryPriority := "P1:RUN_TREND"
