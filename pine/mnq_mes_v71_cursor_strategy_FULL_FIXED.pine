@@ -432,6 +432,9 @@ tpNum(x) =>
 tpNumInt(x) =>
     tpNumericFormat == "numbers" ? str.tostring(x) : '"' + str.tostring(x) + '"'
 
+tpSignalId(action, dir) =>
+    str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
+
 contractTicker = (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 actualTicker = contractTicker
 
@@ -3367,9 +3370,6 @@ f_traderspostAlerts() =>
          isNYSession ? "NY" :
          isAsianSession ? "ASIAN" :
          isUAESession ? "UAE" : "OTHER"
-    
-    tpSignalId(action, dir) =>
-        str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
     
     // Reverse-signal exit alert (optional).
     if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat and not tookTradeThisBar
