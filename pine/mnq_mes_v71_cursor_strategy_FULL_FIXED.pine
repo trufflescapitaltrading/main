@@ -750,7 +750,7 @@ tfMultiplier2h = isMYM ? baseTfMultiplier2h * 0.97 : isMNQ ? baseTfMultiplier2h 
 tfMultiplier4h = isMYM ? baseTfMultiplier4h * 0.96 : isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
 
 // ==================== 🔢 CALCULATIONS START ====================
-sessionTZ = input.string("America/New_York", "Session timezone (time filters)", group=sessionGroup, tooltip="All session/no-trade/EOD times are interpreted in this timezone. For TopstepX/Tradovate CME hours, America/New_York is typically correct; use America/Chicago if you want CST display-aligned behavior.")
+sessionTZ = input.string("America/Chicago", "Session timezone (time filters)", group=sessionGroup, tooltip="All session/no-trade/EOD times are interpreted in this timezone. For TopstepX/Tradovate trading windows, America/Chicago (CST) is typically correct; use America/New_York if you want ET behavior.")
 currentHourTZ = hour(time, sessionTZ)
 currentMinuteTZ = minute(time, sessionTZ)
 currentTime = currentHourTZ * 100 + currentMinuteTZ
@@ -784,6 +784,7 @@ isNYSession = enableNYSession and ((nyStart <= nyEnd and currentTime >= nyStart 
 isUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
 
 instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
+tpInstTag = tpInstanceTag == "AUTO" ? (instrumentName + "_" + timeframe.period) : tpInstanceTag
 isOptimalForAsian = str.contains(asianBestInstruments, instrumentName)
 isOptimalForLondon = str.contains(londonBestInstruments, instrumentName)
 isOptimalForNY = str.contains(nyBestInstruments, instrumentName)
@@ -911,6 +912,12 @@ dojiAtrPct_eff =
 isDojiBar =
      (totalRange > 0 and bodySize <= totalRange * dojiRangePct_eff) or
      (atr10 > 0 and bodySize <= atr10 * dojiAtrPct_eff)
+
+// HARD DOJI/TINY-BODY BLOCK (never allow entries on these, regardless of priority)
+hardDojiGroup = "🚫 Doji Hard Block"
+hardDojiMaxBodyPct = input.float(0.20, "Hard doji: max body/range", minval=0.05, maxval=0.40, step=0.01, group=hardDojiGroup)
+hardMinBodyTicks = input.int(4, "Hard doji: min body ticks", minval=1, maxval=20, group=hardDojiGroup)
+hardDoji = (totalRange > 0 and (bodySize / totalRange) <= hardDojiMaxBodyPct) or (bodySize <= syminfo.mintick * hardMinBodyTicks)
 
 // ==================== ✅ Candle Quality Gate (ATR-relative) ====================
 minBodyRatioEntry = input.float(0.35, "Min body ratio for ALL entries", minval=0.15, maxval=0.80, step=0.01)
@@ -1252,10 +1259,11 @@ impulseShort = enableImpulseOverride and candleBear and candleQualityOK and impu
 
 // EARLY TREND START (captures first 1-2 bars of new trend)
 // Uses SuperTrend flip + alignment + non-doji body to enter earlier than P2 streak logic.
-earlyTrendBodyOK = not isDojiBar and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
+earlyTrendBodyOK = (not isDojiBar) and (not hardDoji) and bodyRatio >= 0.35 and (atr10 <= 0 or bodySize >= atr10 * 0.15)
 // NOTE: Avoid referencing SuperTrend vars here (trend/trendChange) to prevent ordering compile errors.
-earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and (useFastEmaForEarlyTrend ? trendAlignedLongFast : trendAlignedLong) and canEnterNow and (hullMicroTurn or slopeFast == 1)
-earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and (useFastEmaForEarlyTrend ? trendAlignedShortFast : trendAlignedShort) and canEnterNow and (hullMicroTurn or slopeFast == -1)
+// Early trend must be EARLY: never fire if we are already 3+ candles into a run.
+earlyTrendLong = candleBull and earlyTrendBodyOK and hullAnyBullish and (useFastEmaForEarlyTrend ? trendAlignedLongFast : trendAlignedLong) and canEnterNow and (hullMicroTurn or slopeFast == 1) and (runUpCloses < 3)
+earlyTrendShort = candleBear and earlyTrendBodyOK and hullAnyBearish and (useFastEmaForEarlyTrend ? trendAlignedShortFast : trendAlignedShort) and canEnterNow and (hullMicroTurn or slopeFast == -1) and (runDownCloses < 3)
 
 // ==================== ⚡ TREND IGNITION + CONTINUATION (STRUCTURAL EARLY ENTRY FIX) ====================
 tibGroup = "⚡ Trend Ignition Engine"
@@ -3293,8 +3301,6 @@ tpCandleDir =
 tpExecPrice = entryTimingMode == "Next Bar Open" ? open : close
 tpSignalPrice = entryTimingMode == "Next Bar Open" ? close[1] : close
 tpEntryQty = entryTimingMode == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
-
-tpInstTag = tpInstanceTag == "AUTO" ? (instrumentName + "_" + timeframe.period) : tpInstanceTag
 
 tpSession =
      isLondonSession ? "LONDON" :
