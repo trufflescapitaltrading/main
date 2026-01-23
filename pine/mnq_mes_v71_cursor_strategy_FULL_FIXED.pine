@@ -760,7 +760,8 @@ currentMinuteTZ = minute(time, sessionTZ)
 currentTime = currentHourTZ * 100 + currentMinuteTZ
 
 isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
-isNoTradeZone = enableNoTradeZone and ((noTradeStart <= noTradeEnd and currentTime >= noTradeStart and currentTime < noTradeEnd) or (noTradeStart > noTradeEnd and (currentTime >= noTradeStart or currentTime < noTradeEnd)))
+// 24/7 means: do NOT block entries with time windows.
+isNoTradeZone = (not enable24_7Trading) and enableNoTradeZone and ((noTradeStart <= noTradeEnd and currentTime >= noTradeStart and currentTime < noTradeEnd) or (noTradeStart > noTradeEnd and (currentTime >= noTradeStart or currentTime < noTradeEnd)))
 
 isNYOpen_opt = currentTime >= optNyOpenStart and currentTime <= optNyOpenEnd
 isNYClose_opt = currentTime >= optNyCloseStart and currentTime <= optNyCloseEnd
@@ -778,8 +779,8 @@ inEodWindow =
      ((endOfDayTime <= eodBlockEndTime and currentTime >= endOfDayTime and currentTime < eodBlockEndTime) or
       (endOfDayTime > eodBlockEndTime and (currentTime >= endOfDayTime or currentTime < eodBlockEndTime)))
 eodWindowStart = inEodWindow and not nz(inEodWindow[1], false)
-canTradeNow = (enable24_7Trading or isTradingHours) and not isNoTradeZone
-canEnterNow = canTradeNow and not (blockEntriesDuringEODWindow and inEodWindow)
+canTradeNow = enable24_7Trading ? true : (isTradingHours and not isNoTradeZone)
+canEnterNow = canTradeNow and (enable24_7Trading ? true : (not (blockEntriesDuringEODWindow and inEodWindow)))
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
