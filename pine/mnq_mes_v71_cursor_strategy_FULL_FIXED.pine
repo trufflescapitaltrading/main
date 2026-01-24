@@ -103,14 +103,14 @@ mesRestrictToPminus1P1P2 = input.bool(true, "MES: Only allow P-1/P1/P2 entries",
 
 // ==================== 🎯 FILTER HARMONY (Make filters cooperate) ====================
 filterHarmonyGroup = "🎯 Filter Harmony (Quality Scoring)"
-enableFilterHarmony = input.bool(true, "✅ Enable Filter Harmony (recommended)", group=filterHarmonyGroup, tooltip="Replaces many hard-block gates with a unified 0–100 quality score so filters work together instead of blocking each other. Keeps only true safety limits as hard stops.")
+enableFilterHarmony = input.bool(true, "✅ Enable Filter Harmony (recommended)", group=filterHarmonyGroup)
 fhMinQuality = input.float(70.0, "Min quality to enter (%)", minval=40.0, maxval=95.0, step=1.0, group=filterHarmonyGroup)
-fhStrongOverrideFactor = input.float(0.85, "Strong-signal threshold factor", minval=0.60, maxval=0.95, step=0.01, group=filterHarmonyGroup, tooltip="Strong signals can enter at MinQuality × factor (ex: 70%×0.85=59.5%)")
-fhTieTolerance = input.float(5.0, "Tie tolerance (%)", minval=0.0, maxval=20.0, step=1.0, group=filterHarmonyGroup, tooltip="If long/short quality are within this %, prefer trend-aligned / momentum side.")
+fhStrongOverrideFactor = input.float(0.85, "Strong-signal threshold factor", minval=0.60, maxval=0.95, step=0.01, group=filterHarmonyGroup)
+fhTieTolerance = input.float(5.0, "Tie tolerance (%)", minval=0.0, maxval=20.0, step=1.0, group=filterHarmonyGroup)
 fhGrayZonePenalty = input.float(10.0, "Gray-zone penalty (points)", minval=0.0, maxval=30.0, step=1.0, group=filterHarmonyGroup)
 fhAllowSwingInGrayZone = input.bool(false, "Allow swing signals in gray zone if quality high", group=filterHarmonyGroup)
-fhAvoidSidewaysEntries = input.bool(true, "✅ Avoid sideways/chop/gray-zone entries", group=filterHarmonyGroup, tooltip="Blocks entries in chop/gray-zone/ranging unless a very strong impulse/ignition is present.")
-fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only if VERY strong", group=filterHarmonyGroup, tooltip="When enabled, only very-strong trend signals can bypass the sideways/chop block.")
+fhAvoidSidewaysEntries = input.bool(true, "✅ Avoid sideways/chop/gray-zone entries", group=filterHarmonyGroup)
+fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only if VERY strong", group=filterHarmonyGroup)
 
 // Strategy Tester fix: if you set Alert Only Mode = ON, TradingView strategy tester shows no trades.
 // This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
@@ -172,7 +172,7 @@ timingGroup = "🕐 Entry Timing"
 // - Intrabar entries can LOOK like they fired on the “wrong color” candle because the candle flips color before close.
 // - “Next Bar Open” uses the previous CLOSED candle signal, then enters at the next bar open (earlier than waiting for another full candle, but stable).
 entryTimingMode = input.string("Next Bar Open", "Entry timing mode", options=["Bar Close","Next Bar Open","Intrabar"], group=timingGroup)
-useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup, tooltip="Reduces lag vs EMA9/21/50 stack; helps capture 2–3 candle runs earlier.")
+useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup)
 
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
 mesGuardGroup = "🛡️ MES Anti-Chop Guard"
@@ -423,7 +423,7 @@ tpSendEODExitAlert = input.bool(true, "TradersPost: send EXIT at end-of-day", gr
 tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy name", group="TradersPost Router")
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
 // TradersPost bracket schema is always used (required for Tradovate/TopstepX; avoids OTO rejection).
-tpInstanceTag = input.string("AUTO", "TradersPost: instance tag (for matching alerts to trades)", group="TradersPost Router", tooltip="Used to match alerts to fills. Set to e.g. TLMNQ_3m, TLmnq_5m, TL33_MNQ_3m. AUTO uses <instrument>_<timeframe>.")
+tpInstanceTag = input.string("AUTO", "TradersPost: instance tag (for matching alerts to trades)", group="TradersPost Router")
 
 // TradersPost numeric helpers (must be defined before any webhook builders use them).
 tpNum(x) =>
@@ -527,7 +527,7 @@ minBarsBeforeSignalReversal = input.int(2, "Min Bars Before Signal Reversal", mi
 useSignalReversalExits = input.bool(false, "Signal Reversal Exits - DISABLED", group=exitControlsGroup)
 useEndOfDayExits = input.bool(true, "End of Day Exits", group=exitControlsGroup)
 endOfDayTime = input.int(1550, "End of Day Time (ET)", minval=1500, maxval=1700, group=exitControlsGroup)
-eodBlockEndTime = input.int(1800, "EOD block end time (ET)", minval=1600, maxval=2359, group=exitControlsGroup, tooltip="Defines the EOD window as [EOD time, end). Default 18:00 ET aligns with CME session reset; prevents random EOD exits later in the evening.")
+eodBlockEndTime = input.int(1800, "EOD block end time (ET)", minval=1600, maxval=2359, group=exitControlsGroup)
 blockEntriesDuringEODWindow = input.bool(true, "Block entries during EOD window", group=exitControlsGroup)
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 losingTradeThreshold = input.float(2.0, "Losing Trade Threshold (%)", minval=1.0, maxval=5.0, group=exitControlsGroup)
@@ -714,7 +714,7 @@ mnq15mRequire30mPermission = input.bool(true, "MNQ 15m requires MNQ 30m OK", gro
 mes3mRequire5mPermission = input.bool(true, "MES 3m requires MES 5m OK", group=permGroup)
 mes5mRequire15mPermission = input.bool(true, "MES 5m requires MES 15m OK", group=permGroup)
 mes15mRequire30mPermission = input.bool(true, "MES 15m requires MES 30m OK", group=permGroup)
-mes3mAllowBigMoveBypass = input.bool(true, "MES 3m: allow big-move bypass of 5m permission", group=permGroup, tooltip="Prevents MES 3m from going dead when 5m permission lags. Only bypasses on strong 2-bar displacement run triggers.")
+mes3mAllowBigMoveBypass = input.bool(true, "MES 3m: allow big-move bypass of 5m permission", group=permGroup)
 
 permOK(tf) =>
     c = request.security(syminfo.tickerid, tf, close, barmerge.gaps_off, barmerge.lookahead_off)
@@ -754,7 +754,7 @@ tfMultiplier2h = isMYM ? baseTfMultiplier2h * 0.97 : isMNQ ? baseTfMultiplier2h 
 tfMultiplier4h = isMYM ? baseTfMultiplier4h * 0.96 : isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
 
 // ==================== 🔢 CALCULATIONS START ====================
-sessionTZ = input.string("America/Chicago", "Session timezone (time filters)", group=sessionGroup, tooltip="All session/no-trade/EOD times are interpreted in this timezone. For TopstepX/Tradovate trading windows, America/Chicago (CST) is typically correct; use America/New_York if you want ET behavior.")
+sessionTZ = input.string("America/Chicago", "Session timezone (time filters)", group=sessionGroup)
 currentHourTZ = hour(time, sessionTZ)
 currentMinuteTZ = minute(time, sessionTZ)
 currentTime = currentHourTZ * 100 + currentMinuteTZ
@@ -899,7 +899,7 @@ lowerWickRatio = totalRange > 0 ? lowerWick / totalRange : 0
 // Stronger doji/tiny-body detection: range% OR ATR-relative
 dojiRangePct = input.float(0.05, "Doji: body <= range%", minval=0.02, maxval=0.15, step=0.01)
 dojiAtrPct = input.float(0.10, "Doji: body <= ATR%", minval=0.03, maxval=0.30, step=0.01)
-autoTuneDojiFilter = input.bool(true, "Auto-tune Doji filter (MNQ/MES 3m/5m)", group="🧠 Entry Block-Reason Instrumentation", tooltip="Classifies more tiny-body candles as doji on MNQ/MES to prevent doji entries/exits.")
+autoTuneDojiFilter = input.bool(true, "Auto-tune Doji filter (MNQ/MES 3m/5m)", group="🧠 Entry Block-Reason Instrumentation")
 dojiRangePct_eff =
      not autoTuneDojiFilter ? dojiRangePct :
      (isMNQ and is3min) ? 0.06 :
@@ -1299,8 +1299,8 @@ rangeOK = (atr10 > 0) and ((high - low) >= atr10 * impulseRangeMinATR)
 bodyOK = (totalRange > 0) and (bodyRatio >= impulseBodyMin)
 // Volume can lag in clean trends; allow “price-only impulse” when body/range/ATR conditions are strong and trend is aligned.
 impulseGroup2 = "Impulse Volume Mode"
-allowPriceOnlyImpulse = input.bool(false, "Allow price-only impulse (trend aligned) if volume normal", group=impulseGroup2, tooltip="OFF by default to preserve historical expectancy. If enabled, applies to non-MES instruments only.")
-impulseHugeMoveMult = input.float(1.35, "Impulse: price-displacement override (×ATR10)", minval=1.10, maxval=2.50, step=0.05, group=impulseGroup2, tooltip="Lets truly huge candles qualify even without a volume spike. Disabled on MES to preserve expectancy.")
+allowPriceOnlyImpulse = input.bool(false, "Allow price-only impulse (trend aligned) if volume normal", group=impulseGroup2)
+impulseHugeMoveMult = input.float(1.35, "Impulse: price-displacement override (×ATR10)", minval=1.10, maxval=2.50, step=0.05, group=impulseGroup2)
 impulseHugeMove = (atr10 > 0) and (barMove >= atr10 * impulseATRMult_eff * impulseHugeMoveMult)
 impulseVolOK_Long = volSurgeNow or ((not isMES) and allowPriceOnlyImpulse and trendAlignedLongFast and impulseHugeMove)
 impulseVolOK_Short = volSurgeNow or ((not isMES) and allowPriceOnlyImpulse and trendAlignedShortFast and impulseHugeMove)
@@ -3495,73 +3495,6 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 tpTradeId := newTradeIdTmp
 tookTradeThisBar := newTookTmp
 
-// ==================== 📊 VISUAL INDICATORS ====================
-hullMainColor = slopeMain == 1 ? color.new(color.green, 50) : slopeMain == -1 ? color.new(color.red, 50) : color.new(color.gray, 70)
-hullFastColor = slopeFast == 1 ? color.new(color.lime, 30) : slopeFast == -1 ? color.new(color.orange, 30) : color.new(color.gray, 50)
-plot(hullMain, "Hull Main", color=hullMainColor, linewidth=3)
-plot(hullFast, "Hull Fast", color=hullFastColor, linewidth=2)
-plot(upperEnv, "Upper Envelope", color=color.new(color.blue, 80), linewidth=1)
-plot(lowerEnv, "Lower Envelope", color=color.new(color.blue, 80), linewidth=1)
-plot(smaBasis, "SMA Basis", color=color.new(color.gray, 70), linewidth=1)
-plot(sma9, "SMA 9", color=color.new(color.yellow, 60), linewidth=1)
-plot(sma50, "SMA 50", color=color.new(color.orange, 60), linewidth=1)
-plot(sma180, "SMA 180", color=color.new(color.purple, 70), linewidth=1)
-plot(ema20, "EMA 20", color=color.new(color.aqua, 60), linewidth=1)
-plot(tsl, "Swing Line", color=swingColor, linewidth=2)
-plot(emaShort, "EMA 9", color=color.new(color.blue, 0), linewidth=2)
-plot(emaMedium, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
-plot(emaLong, "EMA 50 Filter", color=color.new(color.gray, 50), linewidth=1)
-trendColor = trend == 1 ? color.new(color.green, 95) : trend == -1 ? color.new(color.red, 95) : color.new(color.gray, 98)
-bgcolor(trendColor, title="SuperTrend Background")
-grayZoneBgColor = isSignalGrayZone ? color.new(color.gray, 92) : na
-bgcolor(grayZoneBgColor, title="Gray Zone")
-choppyBgColor = isChoppy ? color.new(color.red, 95) : na
-bgcolor(choppyBgColor, title="Choppy Market")
-bgcolor(profitTargetReached ? color.new(color.green, 95) : na, title="Profit Target Reached")
-optimalSessionBg = isOptimalSession ? color.new(color.green, 97) : na
-bgcolor(isOptimalSession ? optimalSessionBg : na, title="Optimal Session")
-
-// Filter Harmony debug (Data Window only)
-plot(fhQualityLong_dbg, "FH Quality Long", color=color.new(color.green, 0), display=display.data_window)
-plot(fhQualityShort_dbg, "FH Quality Short", color=color.new(color.red, 0), display=display.data_window)
-
-// ==================== 📊 PERFORMANCE METRICS TABLE ====================
-var table perfTable = table.new(position.top_right, 2, 14, border_width=1)
-winRateAll = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
-targetProgress = dailyProfitTarget > 0 ? (dailyPnL / dailyProfitTarget) * 100 : 0
-if barstate.islast
-    table.cell(perfTable, 0, 0, "🏆 WIN RATE", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 0, str.tostring(winRateAll, "#.#") + "%", text_color=winRateAll >= 70 ? color.green : winRateAll >= 60 ? color.yellow : color.red, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 1, "TRADES", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 1, str.tostring(strategy.closedtrades), text_color=color.white, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 2, "NET P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 2, "$" + str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 3, "DAILY P&L", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 3, "$" + str.tostring(dailyPnL, "#.##"), text_color=dailyPnL >= 0 ? color.green : color.red, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 4, "TARGET", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 4, str.tostring(targetProgress, "#") + "%", text_color=profitTargetReached ? color.green : color.white, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 5, "HTF LONG", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 5, str.tostring(htfAlignLongCount) + "/3", text_color=htfAlignLongCount >= 1 ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 6, "HTF SHORT", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 6, str.tostring(htfAlignShortCount) + "/3", text_color=htfAlignShortCount >= 1 ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 7, "ADX", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 7, str.tostring(adxValue, "#.#"), text_color=adxValue > choppyADXThreshold ? color.green : color.gray, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 8, "RSI", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(perfTable, 1, 8, str.tostring(rsi, "#.#"), text_color=color.white, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 9, "MODE", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    modeText = hasMomentumOverrideLong or hasMomentumOverrideShort ? "MOMENTUM" : impulseLong or impulseShort ? "IMPULSE" : hasTrendOverrideBull or hasTrendOverrideBear ? "TREND" : "NORMAL"
-    modeColor = hasMomentumOverrideLong or hasMomentumOverrideShort ? color.yellow : impulseLong or impulseShort ? color.aqua : hasTrendOverrideBull or hasTrendOverrideBear ? color.lime : color.white
-    table.cell(perfTable, 1, 9, modeText, text_color=modeColor, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 10, "V71 OPT", text_color=color.white, bgcolor=color.new(color.purple, 70))
-    v71StatusText = v71_trailingActive ? "TRAIL" : v71_profitLockActive ? "LOCK" : strategy.position_size != 0 ? "ACTIVE" : "READY"
-    v71StatusColor = v71_trailingActive ? color.lime : v71_profitLockActive ? color.aqua : color.white
-    table.cell(perfTable, 1, 10, v71StatusText, text_color=v71StatusColor, bgcolor=color.new(color.gray, 85))
-    table.cell(perfTable, 0, 11, "VOL ADJ", text_color=color.white, bgcolor=color.new(color.purple, 70))
-    table.cell(perfTable, 1, 11, str.tostring(v71_volAdjust, "#.##") + "x", text_color=v71_volAdjust < 1.0 ? color.orange : color.white, bgcolor=color.new(color.gray, 85))
-
-    table.cell(perfTable, 0, 12, "BLOCK", text_color=color.white, bgcolor=color.new(color.red, 70))
-    table.cell(perfTable, 1, 12, lastBlockReason, text_color=lastBlockReason == "NONE" ? color.green : color.white, bgcolor=color.new(color.gray, 85))
-
-    table.cell(perfTable, 0, 13, "LAST EXIT", text_color=color.white, bgcolor=color.new(color.orange, 70))
-    table.cell(perfTable, 1, 13, lastExitReason, text_color=color.white, bgcolor=color.new(color.gray, 85))
+// ==================== 📊 VISUALS / TABLE REMOVED ====================
+// Token-limit optimization: removed plots/bgcolors/perf table (trading logic unchanged).
 
