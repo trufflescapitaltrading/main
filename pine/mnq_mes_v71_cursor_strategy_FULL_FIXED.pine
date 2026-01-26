@@ -796,18 +796,18 @@ inEodWindow =
      ((endOfDayTime <= eodBlockEndTime and currentTime >= endOfDayTime and currentTime < eodBlockEndTime) or
       (endOfDayTime > eodBlockEndTime and (currentTime >= endOfDayTime or currentTime < eodBlockEndTime)))
 eodWindowStart = inEodWindow and not nz(inEodWindow[1], false)
-canTradeNow =
-     enable24_7Trading ? true :
-     ((tradeWhen24x7Off == "Sessions" ? tradeAllowedBySessions : isTradingHours) and not isNoTradeZone)
-canEnterNow = canTradeNow and (enable24_7Trading ? true : (not (blockEntriesDuringEODWindow and inEodWindow)))
-optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
-
 isAsianSession = enableAsianSession and ((asianStart <= asianEnd and currentTime >= asianStart and currentTime < asianEnd) or (asianStart > asianEnd and (currentTime >= asianStart or currentTime < asianEnd)))
 isLondonSession = enableLondonSession and ((londonStart <= londonEnd and currentTime >= londonStart and currentTime < londonEnd) or (londonStart > londonEnd and (currentTime >= londonStart or currentTime < londonEnd)))
 isNYSession = enableNYSession and ((nyStart <= nyEnd and currentTime >= nyStart and currentTime <= nyEnd) or (nyStart > nyEnd and (currentTime >= nyStart or currentTime <= nyEnd)))
 isUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeStart and currentTime < uaeEnd) or (uaeStart > uaeEnd and (currentTime >= uaeStart or currentTime < uaeEnd)))
 
 tradeAllowedBySessions = isAsianSession or isLondonSession or isNYSession or isUAESession
+
+canTradeNow =
+     enable24_7Trading ? true :
+     ((tradeWhen24x7Off == "Sessions" ? tradeAllowedBySessions : isTradingHours) and not isNoTradeZone)
+canEnterNow = canTradeNow and (enable24_7Trading ? true : (not (blockEntriesDuringEODWindow and inEodWindow)))
+optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
 instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
 tpInstTag = tpInstanceTag == "AUTO" ? (instrumentName + "_" + timeframe.period) : tpInstanceTag
