@@ -6,6 +6,10 @@ profitTargetGroup = "💰 Daily Profit Target"
 enableDailyProfitTarget = input.bool(true, "Enable Daily Profit Target", group=profitTargetGroup)
 dailyProfitTarget = input.float(1500.0, "Daily Profit Target ($)", minval=500, maxval=5000, group=profitTargetGroup)
 
+// ==================== 🔒 DIRECTION ENFORCEMENT (Tripwire) ====================
+dirGuardGroup = "🔒 Direction Enforcement"
+dirTripwire = input.bool(false, "Debug: throw error if entry violates candle color", group=dirGuardGroup)
+
 // ==================== 🎯 PRICE MOMENTUM OVERRIDE ====================
 momentumOverrideGroup = "🎯 PRICE MOMENTUM OVERRIDE"
 enableMomentumOverride = input.bool(true, "✅ Enable Price Momentum Override", group=momentumOverrideGroup)
@@ -2576,6 +2580,8 @@ if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBull[sigOff] 
     allowEntryLong := false
 
 if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0
+    if dirTripwire and not candleBullStrict
+        runtime.error("DIR TRIPWIRE: attempted LONG entry without strict green candle.")
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := 1
         biasLockUntilBar := bar_index + biasLockBars
@@ -2598,6 +2604,8 @@ if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBear[sigOff] 
     allowEntryShort := false
 
 if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0
+    if dirTripwire and not candleBearStrict
+        runtime.error("DIR TRIPWIRE: attempted SHORT entry without strict red candle.")
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
