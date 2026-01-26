@@ -895,6 +895,9 @@ grayZoneWithBuffer = isSignalGrayZone or (grayZoneEnabled and grayFactorCount >=
 currentATR = ta.atr(14)
 candleBull = close > open
 candleBear = close < open
+// “Strict” candle direction: require at least 1 tick difference (prevents near-doji candles being treated as green/red).
+candleBullStrict = close > open + syminfo.mintick
+candleBearStrict = close < open - syminfo.mintick
 bodySize = math.abs(close - open)
 upperWick = high - math.max(open, close)
 lowerWick = math.min(open, close) - low
@@ -1883,6 +1886,12 @@ entryTimingMode_eff = (forceBarCloseForStrictCandleDirection and requireCandleDi
 mesFixedActive = isMES and mesUseFixedDollarSLTP and (timeframe.period == "3" or timeframe.period == "5")
 mesSL_pts = mesFixedActive ? ((timeframe.period == "3" ? mesFixedSLDol_3m : mesFixedSLDol_5m) / safePointValue) : mes_customSL
 mesTP_pts = mesFixedActive ? (mesFixedTPDol / safePointValue) : mes_customTP
+// Safety check: if fixed-$ conversion is wrong for any reason, block MES entries.
+mesExpectedSLDol = timeframe.period == "3" ? mesFixedSLDol_3m : timeframe.period == "5" ? mesFixedSLDol_5m : na
+mesExpectedTPDol = mesFixedTPDol
+mesFixedConfigOK =
+     not mesFixedActive or
+     ((math.abs((mesSL_pts * safePointValue) - mesExpectedSLDol) <= 0.50) and (math.abs((mesTP_pts * safePointValue) - mesExpectedTPDol) <= 0.50))
 safePrice = close > 0 ? close : 1.0
 riskAmountDollars = math.max(strategy.equity * effectiveRiskPercent / 100, 0)
 futuresStopDistance = math.max(safeATR * (is1min ? (isMYM ? 1.8 : 2.0) : is2min ? (isMYM ? 2.0 : 2.2) : is3min ? (isMYM ? 2.2 : 2.4) : is5min ? (isMYM ? 2.4 : 2.6) : is10min ? (isMYM ? 2.6 : 2.8) : is15min ? (isMYM ? 2.8 : 3.0) : is30min ? (isMYM ? 3.0 : 3.2) : is1hour ? (isMYM ? 3.2 : 3.4) : is2hour ? (isMYM ? 3.4 : 3.6) : is4hour ? (isMYM ? 3.6 : 3.8) : (isMYM ? 2.6 : 2.8)), syminfo.mintick * 10)
@@ -2397,8 +2406,11 @@ shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 
 // Absolute enforcement: never allow a long on a red candle, never allow a short on a green candle.
-shouldEnterLong := shouldEnterLong and candleBull
-shouldEnterShort := shouldEnterShort and candleBear
+shouldEnterLong := shouldEnterLong and candleBullStrict
+shouldEnterShort := shouldEnterShort and candleBearStrict
+// Extra safety: block MES entries if fixed-$ SL/TP config is ever off.
+shouldEnterLong := shouldEnterLong and (not isMES or mesFixedConfigOK)
+shouldEnterShort := shouldEnterShort and (not isMES or mesFixedConfigOK)
 
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
 // htf5mBull/htf5mBear are declared earlier (for Filter Harmony scoring).
