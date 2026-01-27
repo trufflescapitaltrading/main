@@ -26,7 +26,7 @@ enableSwingSignals = input.bool(true, "Enable BUY/SELL Swing Signals", group=sig
 swingSignalPriority = input.bool(true, "Add Swing to Priority System", group=signalGroup)
 swingInjectToBase = input.bool(false, "Allow Swing to feed base signals", group=signalGroup)
 grayZoneEnabled = input.bool(true, "Enable Gray Zone", group=signalGroup)
-grayADXThreshold = input.float(25.0, "Gray Zone: ADX Below", minval=10.0, maxval=30.0, group=signalGroup)
+grayADXThreshold = input.float(20.0, "Gray Zone: ADX Below", minval=10.0, maxval=30.0, group=signalGroup)
 grayATRMultiplier = input.float(0.75, "Gray Zone: ATR Compression", minval=0.4, maxval=1.2, group=signalGroup)
 grayBBWidthThreshold = input.float(0.015, "Gray Zone: BB Width Below", minval=0.005, maxval=0.030, group=signalGroup)
 grayMinFactors = input.int(2, "Gray Zone: Min Factors", minval=2, maxval=6, group=signalGroup)
@@ -460,9 +460,6 @@ mtf_tf1 = input.timeframe("15", "V8: MTF 1")
 mtf_tf2 = input.timeframe("60", "V8: MTF 2")
 mtf_tf3 = input.timeframe("240", "V8: MTF 3")
 mtfAlignThreshold = input.int(33, "V8: MTF Alignment % Threshold", minval=0, maxval=100)
-mtfStrictGroup = "V8: MTF Strict (SMA50 15m+60m)"
-enableMTFStrictFilter = input.bool(true, "✅ MTF STRICT: require 15m+60m SMA50 alignment", group=mtfStrictGroup)
-mtfStrictSmaLen = input.int(50, "MTF STRICT: SMA length", minval=10, maxval=200, group=mtfStrictGroup)
 
 enableDollarStops = input.bool(true, "V8: Send Dollar-based SL/TP")
 includeSignalPrice = input.bool(true, "V8: Include signalPrice in webhook")
@@ -1297,19 +1294,6 @@ mtfDirectionalPctLong = math.round((mtfBullCount / 3.0) * 100.0)
 mtfDirectionalPctShort = math.round((mtfBearCount / 3.0) * 100.0)
 mtfLongOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctLong >= mtfAlignThreshold)
 mtfShortOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctShort >= mtfAlignThreshold)
-
-// MTF STRICT FILTER (requested): 15m and 60m must both be above/below SMA50.
-// Applies only on MNQ/MES 3m/5m charts to avoid breaking other instruments/timeframes.
-mtfStrictApplies = enableMTFStrictFilter and (isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m)
-mtf15_Long = request.security(syminfo.tickerid, "15", close > ta.sma(close, mtfStrictSmaLen), barmerge.gaps_off, barmerge.lookahead_off)
-mtf60_Long = request.security(syminfo.tickerid, "60", close > ta.sma(close, mtfStrictSmaLen), barmerge.gaps_off, barmerge.lookahead_off)
-mtf15_Short = request.security(syminfo.tickerid, "15", close < ta.sma(close, mtfStrictSmaLen), barmerge.gaps_off, barmerge.lookahead_off)
-mtf60_Short = request.security(syminfo.tickerid, "60", close < ta.sma(close, mtfStrictSmaLen), barmerge.gaps_off, barmerge.lookahead_off)
-mtfStrictLongOK = (not mtfStrictApplies) or (mtf15_Long and mtf60_Long)
-mtfStrictShortOK = (not mtfStrictApplies) or (mtf15_Short and mtf60_Short)
-
-mtfLongOK := mtfLongOK and mtfStrictLongOK
-mtfShortOK := mtfShortOK and mtfStrictShortOK
 effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasTrendOverrideBull or hasMomentumOverrideLong
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasTrendOverrideBear or hasMomentumOverrideShort
