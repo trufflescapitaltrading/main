@@ -711,11 +711,6 @@ isMNQ_5m = isMNQ and is5min
 isMES_3m = isMES and is3min
 isMES_5m = isMES and is5min
 
-// 3m unstarve toggles (globals): do not hard-block entries by regime/strict/strength filters on 3m (still enforced on 5m+).
-trendOnlyEff = enableTrendOnly and not is3min
-strictEntryEff = enableStrictEntryFilter and not is3min
-strengthGateEff = requireMultipleStrong and not is3min
-
 // 5m candle-color confirmation (used by entry logic + Filter Harmony scoring)
 // Must be declared early because Harmony references it before the gating section.
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
@@ -1996,6 +1991,11 @@ var string selectedPriority = "NONE"
 shouldEnterLong := false
 shouldEnterShort := false
 selectedPriority := "NONE"
+
+// 3m unstarve: do not hard-block entries by regime/strength/strict filters on 3m (still enforced on 5m+).
+trendOnlyEff = enableTrendOnly and not is3min
+strictEntryEff = enableStrictEntryFilter and not is3min
+strengthGateEff = requireMultipleStrong and not is3min
 
 bool routerLongRegimeOK = trendOnlyEff ? (trendRegimeOK or bypassLong) : true
 bool routerShortRegimeOK = trendOnlyEff ? (trendRegimeOK or bypassShort) : true
