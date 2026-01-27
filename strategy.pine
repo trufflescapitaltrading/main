@@ -128,6 +128,11 @@ profitLogicModeGroup = "📈 Profit Logic Mode"
 useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
 useMJV6UltraProfitLogic = input.bool(true, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
 mjv6UltraActive = useMJV6UltraProfitLogic
+mnqMJV6Group = "📈 MNQ MJV6 Ultra Tuning"
+mnqMJV6TPMult_3m = input.float(1.25, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6TPMult_5m = input.float(1.35, "MNQ 5m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_3m = input.float(1.00, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_5m = input.float(1.10, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 useV20KenyaPerfectProfit_eff = useV20KenyaPerfectProfit and not useOriginalProfitLogic and not mjv6UltraActive
 useMJV6MesProfitLogic_eff = useMJV6MesProfitLogic and not useOriginalProfitLogic and not mjv6UltraActive
 enableMnq3mWinRateBooster_eff = enableMnq3mWinRateBooster and not useOriginalProfitLogic and not mjv6UltraActive
@@ -2424,9 +2429,11 @@ v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? vol
 // Overrides other profit modules when enabled.
 if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and not mnqKenyaActive
     float mjvAtr = atr10
-    float mjvFuturesTPDistance = mjvAtr * tpMultiplier
-    float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
-    float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6)
+    float mjvTpMult = (isMNQ_3m ? mnqMJV6TPMult_3m : isMNQ_5m ? mnqMJV6TPMult_5m : tpMultiplier)
+    float mjvStopMult = (isMNQ_3m ? mnqMJV6StopMult_3m : isMNQ_5m ? mnqMJV6StopMult_5m : (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6))
+    float mjvFuturesTPDistance = mjvAtr * mjvTpMult
+    float mjvUltraQuickTP = mjvAtr * (mjvTpMult * 0.5)
+    float mjvStopDistance = mjvAtr * mjvStopMult
     float mjvEntryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
     if strategy.position_size > 0
         float stopLoss = mjvEntryPrice - mjvStopDistance
@@ -3089,7 +3096,8 @@ tpExitWebhook(reason) =>
      '"signal_id":"' + exitSigIdLocal + '",' +
      '"timestamp":"' + str.tostring(time) + '"' +
      '}'
-if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIssuedThisBar and not mesMJV6Active
+mnqRiskGuardsActive = not (mjv6UltraActive and isMNQ)
+if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIssuedThisBar and not mesMJV6Active and mnqRiskGuardsActive
     // 1) Hard max-loss (per contract).
     if enablePerTradeHardStop and not na(mnqHardStopDol) and currentProfitDollars <= -(mnqHardStopDol * qtyForGuards)
         strategy.close_all(comment="HARD_STOP")
@@ -3226,6 +3234,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
              '"ticker":"' + actualTicker + '",' +
              '"action":"buy",' +
              '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+             '"price":' + tpNum(tpExecPrice) + ',' +
              '"orderType":"limit",' +
              '"limit":' + tpNum(tpExecPrice) + ',' +
              '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
@@ -3260,6 +3269,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
              '"ticker":"' + actualTicker + '",' +
              '"action":"sell",' +
              '"quantity":' + tpNumInt(tpEntryQty) + ',' +
+             '"price":' + tpNum(tpExecPrice) + ',' +
              '"orderType":"limit",' +
              '"limit":' + tpNum(tpExecPrice) + ',' +
              '"takeProfit":{"limitPrice":' + tpNum(localTP1) + '},' +
