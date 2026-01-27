@@ -2440,12 +2440,9 @@ shouldEnterShort := shouldEnterShort and (not mtfStrictNeed or mtfStrictShortOK)
 // - Outside Harmony mode: it remains a gate, with strong-signal bypass.
 htfCandleColorOK_Long = (not require5mCandleColorConfirm) or (not is3min) or htf5mBull or strictBypassLong
 htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or htf5mBear or strictBypassShort
-// 3m 5m-color confirm can starve 3m; apply it only to lower-priority entries (P3+ / HARMONY / SWING).
-need5mColor =
-     require5mCandleColorConfirm and is3min and
-     not (str.startswith(selectedPriority, "P-1") or str.startswith(selectedPriority, "P0") or str.startswith(selectedPriority, "P1") or str.startswith(selectedPriority, "P2"))
-shouldEnterLong := shouldEnterLong and (not need5mColor or htfCandleColorOK_Long)
-shouldEnterShort := shouldEnterShort and (not need5mColor or htfCandleColorOK_Short)
+if not enableFilterHarmony
+    shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
+    shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
 
 // ==================== 🧷 LTF CONFIRM (Intrabar Safety) ====================
 // Only used when intrabar entries are allowed; prevents "looks wrong-color by close".
