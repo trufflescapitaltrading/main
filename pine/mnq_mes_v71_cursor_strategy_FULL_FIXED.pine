@@ -172,7 +172,6 @@ timingGroup = "🕐 Entry Timing"
 // - Intrabar entries can LOOK like they fired on the “wrong color” candle because the candle flips color before close.
 // - “Next Bar Open” uses the previous CLOSED candle signal, then enters at the next bar open (earlier than waiting for another full candle, but stable).
 entryTimingMode = input.string("Next Bar Open", "Entry timing mode", options=["Bar Close","Next Bar Open","Intrabar"], group=timingGroup)
-// Hard guarantee: entries execute on the candle that matches direction (prevents “entry prints on opposite color”).
 forceBarCloseForStrictCandleDirection = input.bool(true, "STRICT: enforce candle color on executed bar (forces Bar Close)", group=timingGroup)
 useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup)
 
@@ -1647,9 +1646,8 @@ finalConfluenceOK = totalConfluenceScore >= requiredConfluence
 
 // Body strength can unintentionally starve trades. In Harmony mode, allow candleQualityOK to satisfy it.
 bodyStrong = (not requireBodyStrength) or (atr10 > 0 and bodySize >= atr10 * minBodyPctOfATR) or (enableFilterHarmony and candleQualityOK)
-// Hard direction enforcement (cannot be bypassed by settings or priority/Filter Harmony routing).
-longBarOK = bodyStrong and candleBullStrict
-shortBarOK = bodyStrong and candleBearStrict
+longBarOK = bodyStrong and (not requireCandleDirection or candleBull)
+shortBarOK = bodyStrong and (not requireCandleDirection or candleBear)
 
 // Candle confirmation:
 // - Doji/spinning top are *not* treated as confirmations (prevents P1/P2 firing on dojis).
@@ -1881,8 +1879,8 @@ riskMultiplier := math.max(math.min(riskMultiplier, 5.0), 0.1)
 effectiveRiskPercent = math.max(math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5), 0.1)
 safePointValue = syminfo.pointvalue > 0 ? syminfo.pointvalue : 1.0
 
-// GUARANTEE: Always execute entries on Bar Close so the entry marker is on the correct candle color.
-entryTimingMode_eff = "Bar Close"
+// Enforce strict candle-color entries on the executed bar (prevents “long on red / short on green” when using Next Bar Open/Intrabar).
+entryTimingMode_eff = (forceBarCloseForStrictCandleDirection and requireCandleDirection) ? "Bar Close" : entryTimingMode
 
 // MES fixed $ SL/TP overrides (converted to points using point value).
 mesFixedActive = isMES and mesUseFixedDollarSLTP and (timeframe.period == "3" or timeframe.period == "5")
@@ -2330,8 +2328,8 @@ if not tookTradeThisBar
 
         // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
         // Also: NEVER enter on doji/tiny-body candles (strict requirement for entries).
-        fhDojiBlock = isDojiBar
-        fhTier4Block = isTier4Pattern
+        fhDojiBlock = isDojiBar or (entryTimingMode_eff == "Next Bar Open" and isDojiBar[1])
+        fhTier4Block = isTier4Pattern or (entryTimingMode_eff == "Next Bar Open" and isTier4Pattern[1])
         // Sideways/chop/gray-zone block (trend-only trading):
         fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
         // Allow earlier trend entries: “veryStrongTrend” can be too late on 3m/5m.
@@ -2542,12 +2540,12 @@ if strategy.position_size == 0
              (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
              "OTHER"
 
-selectedPriorityForLog = selectedPriority
+selectedPriorityForLog = entryTimingMode_eff == "Next Bar Open" ? selectedPriority[1] : selectedPriority
 if longCondition and strategy.position_size == 0
-    sigOff2 = 0
+    sigOff2 = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
     activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong[sigOff2] ? "MOMENTUM" : impulseLong[sigOff2] ? "IMPULSE" : hasTrendOverrideBull[sigOff2] ? "TREND" : microBuySignal[sigOff2] ? "MICRO" : instantBuySignal[sigOff2] ? "INSTANT" : scalpBuySignal[sigOff2] ? "SCALP" : strongBuySignal[sigOff2] ? "STRONG" : swingBuySignal[sigOff2] ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0
-    sigOff2 = 0
+    sigOff2 = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
     activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort[sigOff2] ? "MOMENTUM" : impulseShort[sigOff2] ? "IMPULSE" : hasTrendOverrideBear[sigOff2] ? "TREND" : microSellSignal[sigOff2] ? "MICRO" : instantSellSignal[sigOff2] ? "INSTANT" : scalpSellSignal[sigOff2] ? "SCALP" : strongSellSignal[sigOff2] ? "STRONG" : swingSellSignal[sigOff2] ? "SWING" : "NORMAL"
 else if strategy.position_size == 0
     activeSignalType := "NONE"
@@ -2568,8 +2566,8 @@ getActiveQty(baseQty) =>
         qty := m2k_customQty
     qty
 
-// Bar-close execution only (guaranteed candle direction).
-sigOff = 0
+// When using Next Bar Open, the entry is triggered on the new bar but the signal is from the previous bar.
+sigOff = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
 
 bool allowEntryLong = true
 if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBull[sigOff] and not (impulseLong[sigOff] and candleBull[sigOff]) and not hasMomentumOverrideLong[sigOff]
@@ -2581,7 +2579,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
     // Use signal-bar sizing when entering on next bar open
-    int qtyForEntry = finalContractQty
+    int qtyForEntry = entryTimingMode_eff == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQty = getActiveQty(qtyForEntry)
     strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -2602,7 +2600,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
-    int qtyForEntryS = finalContractQty
+    int qtyForEntryS = entryTimingMode_eff == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQtyS = getActiveQty(qtyForEntryS)
     strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -3408,19 +3406,22 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
     // Alert frequency must follow entry timing mode.
     tpAlertFreq = entryTimingMode_eff == "Bar Close" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
     
-    // Bar-close execution only (guaranteed candle direction).
-    tpSigType = activeSignalType
-    tpSelPrio = selectedPriority
-    tpConfluence = totalConfluenceScore
-    tpMtfAlignPct = mtf_alignment_pct
-    tpFiveStarOK = fiveStarOK
-    tpChoppy = isChoppy
-    tpCandleDir = candleBullStrict ? "GREEN" : candleBearStrict ? "RED" : "NEUTRAL"
+    // When using "Next Bar Open", the entry decision is based on the PREVIOUS closed bar.
+    tpSigType = entryTimingMode_eff == "Next Bar Open" ? activeSignalType[1] : activeSignalType
+    tpSelPrio = entryTimingMode_eff == "Next Bar Open" ? selectedPriority[1] : selectedPriority
+    tpConfluence = entryTimingMode_eff == "Next Bar Open" ? totalConfluenceScore[1] : totalConfluenceScore
+    tpMtfAlignPct = entryTimingMode_eff == "Next Bar Open" ? mtf_alignment_pct[1] : mtf_alignment_pct
+    tpFiveStarOK = entryTimingMode_eff == "Next Bar Open" ? fiveStarOK[1] : fiveStarOK
+    tpChoppy = entryTimingMode_eff == "Next Bar Open" ? isChoppy[1] : isChoppy
+    tpCandleDir =
+         entryTimingMode_eff == "Next Bar Open" ?
+             (candleBull[1] ? "GREEN" : candleBear[1] ? "RED" : "NEUTRAL") :
+             (candleBull ? "GREEN" : candleBear ? "RED" : "NEUTRAL")
     
     // Execution price vs signal price.
-    tpExecPrice = close
-    tpSignalPrice = close
-    tpEntryQty = finalContractQty
+    tpExecPrice = entryTimingMode_eff == "Next Bar Open" ? open : close
+    tpSignalPrice = entryTimingMode_eff == "Next Bar Open" ? close[1] : close
+    tpEntryQty = entryTimingMode_eff == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
     
     tpSession =
          isLondonSession ? "LONDON" :
