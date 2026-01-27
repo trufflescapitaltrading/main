@@ -68,19 +68,19 @@ mnq3mBoosterBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Targ
 mnq3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mnq3mBoosterGroup)
 // ==================== 🎯 MES 3m WIN-RATE BOOSTER (DEFAULT ON) ====================
 mes3mBoosterGroup = "🎯 MES 3m Win-Rate Booster"
-enableMes3mWinRateBooster = input.bool(true, "Enable MES 3m Win-Rate Booster (single contract)", group=mes3mBoosterGroup)
+enableMes3mWinRateBooster = input.bool(false, "Enable MES 3m Win-Rate Booster (single contract)", group=mes3mBoosterGroup)
 mes3mBoosterTargetPctOfTP1 = input.float(0.60, "Target = TP1 × pct (0.30–1.00)", minval=0.30, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
 mes3mBoosterBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes3mBoosterGroup)
 mes3mBoosterUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes3mBoosterGroup)
 // ==================== 🎯 MES 5m WIN-RATE BOOSTER (DEFAULT ON) ====================
 mes5mBoosterGroup = "🎯 MES 5m Win-Rate Booster"
-enableMes5mWinRateBooster = input.bool(true, "Enable MES 5m Win-Rate Booster (single contract)", group=mes5mBoosterGroup)
+enableMes5mWinRateBooster = input.bool(false, "Enable MES 5m Win-Rate Booster (single contract)", group=mes5mBoosterGroup)
 mes5mTargetSLMult = input.float(0.90, "Target = SL × mult", minval=0.30, maxval=2.00, step=0.05, group=mes5mBoosterGroup)
 mes5mBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × pct", minval=0.20, maxval=1.00, step=0.05, group=mes5mBoosterGroup)
 mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes5mBoosterGroup)
 // ==================== 🔥 MES MJV6 PROFIT LOGIC (SIMPLIFIED LADDER) ====================
 mesProfitGroup = "🔥 MES Profit Logic (MJV6)"
-useMJV6MesProfitLogic = input.bool(true, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
+useMJV6MesProfitLogic = input.bool(false, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
 mesMJV6HighWinProtect = input.bool(true, "MES MJV6: High-Win protections (early BE + earlier trail)", group=mesProfitGroup)
 mesMJV6TPScale = input.float(0.85, "MES MJV6: TP scale (smaller = higher WR)", minval=0.50, maxval=1.20, step=0.05, group=mesProfitGroup)
 mesMJV6BETriggerPct = input.float(0.35, "MES MJV6: Move stop to BE after TP distance × pct", minval=0.10, maxval=0.90, step=0.05, group=mesProfitGroup)
@@ -113,15 +113,23 @@ kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
 kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
-useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
+useV20KenyaPerfectProfit = input.bool(false, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
 // MNQ 3m expectancy fix:
 // The classic Kenya 60/25/10/5 ladder can go negative at ~50–55% WR because losses are full-size while wins are often partial.
 // This booster is SINGLE-CONTRACT ONLY and is designed to lift MNQ 3m WR + expectancy without changing multi-contract behavior.
-kenyaMnq3mUseSingleBooster = input.bool(true, "MNQ 3m: Kenya SINGLE booster (1 contract)", group=kenyaGroup)
+kenyaMnq3mUseSingleBooster = input.bool(false, "MNQ 3m: Kenya SINGLE booster (1 contract)", group=kenyaGroup)
 kenyaMnq3mTargetPctOfTP1 = input.float(0.75, "MNQ 3m booster: target = TP1 × pct", minval=0.40, maxval=1.00, step=0.05, group=kenyaGroup)
 kenyaMnq3mBETriggerPctOfTarget = input.float(0.55, "MNQ 3m booster: move stop to BE after target × pct", minval=0.20, maxval=1.00, step=0.05, group=kenyaGroup)
 kenyaMnq3mUseFeesForBE = input.bool(true, "MNQ 3m booster: BE includes fees/slippage", group=kenyaGroup)
+profitLogicModeGroup = "📈 Profit Logic Mode"
+useOriginalProfitLogic = input.bool(true, "Use ORIGINAL profit logic (disable V20/MJV6/boosters)", group=profitLogicModeGroup)
+useV20KenyaPerfectProfit_eff = useV20KenyaPerfectProfit and not useOriginalProfitLogic
+useMJV6MesProfitLogic_eff = useMJV6MesProfitLogic and not useOriginalProfitLogic
+enableMnq3mWinRateBooster_eff = enableMnq3mWinRateBooster and not useOriginalProfitLogic
+enableMes3mWinRateBooster_eff = enableMes3mWinRateBooster and not useOriginalProfitLogic
+enableMes5mWinRateBooster_eff = enableMes5mWinRateBooster and not useOriginalProfitLogic
+kenyaMnq3mUseSingleBooster_eff = kenyaMnq3mUseSingleBooster and not useOriginalProfitLogic
 // ==================== 🏆 WIN RATE OPTIMIZATION V71 ====================
 winOptGroup = "🏆 WIN RATE OPTIMIZATION V71"
 enableAdaptiveTrailing = input.bool(true, "✅ Enable Adaptive Trailing Stop", group=winOptGroup)
@@ -406,12 +414,12 @@ require5Star = input.bool(false, "V8: Require 5-Star Entry Gate")
 minMESRangePoints = input.float(5.0, "V8: Min MES Range (points)", minval=0.0, maxval=20.0)
 usePointRangeCheck = input.bool(true, "V8: Enable Min Range Check")
 minStarsRequired = input.int(3, "V8: Minimum Stars Required", minval=1, maxval=5)
-enableMTF = input.bool(false, "V8: Enable Multi-Timeframe Checks")
-mtfMode = input.string("Confirmation", "V8: MTF Mode", options=["Confirmation", "Filter", "Advisory"])
+enableMTF = input.bool(true, "V8: Enable Multi-Timeframe Checks")
+mtfMode = input.string("Filter", "V8: MTF Mode", options=["Confirmation", "Filter", "Advisory"])
 mtf_tf1 = input.timeframe("15", "V8: MTF 1")
 mtf_tf2 = input.timeframe("60", "V8: MTF 2")
 mtf_tf3 = input.timeframe("240", "V8: MTF 3")
-mtfAlignThreshold = input.int(33, "V8: MTF Alignment % Threshold", minval=0, maxval=100)
+mtfAlignThreshold = input.int(50, "V8: MTF Alignment % Threshold", minval=0, maxval=100)
 mtfStrictGroup = "V8: MTF Strict (SMA50 15m+60m)"
 enableMTFStrictFilter = input.bool(true, "✅ MTF STRICT: require 15m+60m SMA50 alignment", group=mtfStrictGroup)
 mtfStrictSmaLen = input.int(50, "MTF STRICT: SMA length", minval=10, maxval=200, group=mtfStrictGroup)
@@ -1162,8 +1170,8 @@ mtf60_Short = request.security(syminfo.tickerid, "60", close < ta.sma(close, mtf
 mtfStrictLongOK = (not mtfStrictApplies) or (mtf15_Long and mtf60_Long)
 mtfStrictShortOK = (not mtfStrictApplies) or (mtf15_Short and mtf60_Short)
 effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
-htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned) or hasTrendOverrideBull or hasMomentumOverrideLong
-htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned) or hasTrendOverrideBear or hasMomentumOverrideShort
+htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned)
+htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned)
 // Sideways detection
 priceHigh = ta.highest(high, 20)
 priceLow = ta.lowest(low, 20)
@@ -1269,6 +1277,9 @@ tibShort =
      enableTIB and candleBear and not isDojiBar and bodyRatio >= tibBodyMin_eff and rangeExpOK and (rsiDelta <= -tibRsiDeltaMin_eff) and vwapDistOK and canEnterNow and
      (trendAlignedShort or trendAlignedShortFast) and
      ((breakDn and volOK_TIB) or (tibRunBypass and runDownCloses >= 2 and tibVolOK_Loose))
+// Impulse/breakout classifier (allowed in sideways conditions).
+impulseBreakoutLong = impulseLong or runTriggerLong or tibLong
+impulseBreakoutShort = impulseShort or runTriggerShort or tibShort
 var int lastIgnBar = na
 var int lastIgnDir = 0
 if tibLong
@@ -1423,6 +1434,10 @@ rangingMarket =
      (runUpCloses < 2 and runDownCloses < 2) and
      (not trendAlignedLongFast and not trendAlignedShortFast)
 moderateTrend = not strongTrend and not rangingMarket
+// Sideways/consolidation block (only allow impulse/breakout trades).
+sidewaysBlocked = isChoppy or rangingMarket or isSignalGrayZone
+sidewaysAllowedLong = not sidewaysBlocked or impulseBreakoutLong
+sidewaysAllowedShort = not sidewaysBlocked or impulseBreakoutShort
 currentVol = ta.atr(volatilityPeriod)
 avgVol = ta.sma(ta.atr(volatilityPeriod), volatilityPeriod)
 normalVolatility = currentVol <= avgVol * 1.1
@@ -1803,24 +1818,26 @@ trendOnlyShortGate = (not enableMandatoryTrendOnly) or mandatoryShortOK or stric
 if enableFilterHarmony
     fhStrongLong = strictBypassLong or bypassLong or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBull
     fhStrongShort = strictBypassShort or bypassShort or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBear
+    fhImpulseBreakoutLong = impulseBreakoutLong
+    fhImpulseBreakoutShort = impulseBreakoutShort
     fhRegimeLongOK = (not enableTrendOnly) or trendRegimeOK or fhStrongLong
     fhRegimeShortOK = (not enableTrendOnly) or trendRegimeOK or fhStrongShort
     fhBiasLongOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == 1 or fhStrongLong
     fhBiasShortOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == -1 or fhStrongShort
     fhCooldownLongOK = oppCooldownOK or fhStrongLong
     fhCooldownShortOK = oppCooldownOK or fhStrongShort
-    fhVolLongOK = volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong)) or fhStrongLong
-    fhVolShortOK = volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort)) or fhStrongShort
-    fhHtfLongOK = htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong)) or fhStrongLong
-    fhHtfShortOK = htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort)) or fhStrongShort
+    fhVolLongOK = volRegimeOK or (allowImpulseBypassVol and fhImpulseBreakoutLong)
+    fhVolShortOK = volRegimeOK or (allowImpulseBypassVol and fhImpulseBreakoutShort)
+    fhHtfLongOK = htfConfirmLongOK or (allowImpulseBypassHTF and fhImpulseBreakoutLong)
+    fhHtfShortOK = htfConfirmShortOK or (allowImpulseBypassHTF and fhImpulseBreakoutShort)
     // STRICT FILTER (ADX+RSI) becomes “soft” in Filter Harmony mode.
     // Do NOT hard-block canGoLong/canGoShort here; the quality score already penalizes weak conditions.
     fhStrictLongOK = true
     fhStrictShortOK = true
     fhMandatoryLongOK = (not enableMandatoryTrendOnly) or mandatoryLongOK or fhStrongLong
     fhMandatoryShortOK = (not enableMandatoryTrendOnly) or mandatoryShortOK or fhStrongShort
-    fhMtfLongOK = (not enableMTF or mtfMode != "Filter") or mtfLongOK or fhStrongLong
-    fhMtfShortOK = (not enableMTF or mtfMode != "Filter") or mtfShortOK or fhStrongShort
+    fhMtfLongOK = (not enableMTF or mtfMode != "Filter") or mtfLongOK or fhImpulseBreakoutLong
+    fhMtfShortOK = (not enableMTF or mtfMode != "Filter") or mtfShortOK or fhImpulseBreakoutShort
     // Strength gate can starve trades if set too strict; in Harmony mode treat it as “soft”
     // when a clearly strong setup exists (impulse/ignition/continuation/override).
     fhStrengthLongOK = strengthGateLongOK or fhStrongLong
@@ -1828,8 +1845,8 @@ if enableFilterHarmony
     canGoLong := canGoLong and fhRegimeLongOK and fhBiasLongOK and fhCooldownLongOK and fhVolLongOK and fhHtfLongOK and fhStrengthLongOK and fhMandatoryLongOK and fhMtfLongOK
     canGoShort := canGoShort and fhRegimeShortOK and fhBiasShortOK and fhCooldownShortOK and fhVolShortOK and fhHtfShortOK and fhStrengthShortOK and fhMandatoryShortOK and fhMtfShortOK
 else
-    canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and (htfConfirmLongOK or (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
-    canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and (htfConfirmShortOK or (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
+    canGoLong := canGoLong and routerLongRegimeOK and allowLongByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and impulseBreakoutLong)) and (htfConfirmLongOK or (allowImpulseBypassHTF and impulseBreakoutLong)) and strengthGateLongOK and (v71_strictEntryOK or strictBypassLong)
+    canGoShort := canGoShort and routerShortRegimeOK and allowShortByBias and cooldownOK and (volRegimeOK or (allowImpulseBypassVol and impulseBreakoutShort)) and (htfConfirmShortOK or (allowImpulseBypassHTF and impulseBreakoutShort)) and strengthGateShortOK and (v71_strictEntryOK or strictBypassShort)
     canGoLong := canGoLong and trendOnlyLongGate
     canGoShort := canGoShort and trendOnlyShortGate
     // MTF filter mode gates (directional).
@@ -2105,17 +2122,17 @@ if not tookTradeThisBar
         fhDojiBlock = isDojiBar
         fhTier4Block = isTier4Pattern
         // Sideways/chop/gray-zone block (trend-only trading):
-        fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
+        fhSidewaysBad = sidewaysBlocked
         // Allow earlier trend entries: “veryStrongTrend” can be too late on 3m/5m.
         // Use strongTrend OR veryStrongTrend when deciding sideways bypass.
         fhVeryStrongLong = fhStrongLong2 and (veryStrongTrend or strongTrend)
         fhVeryStrongShort = fhStrongShort2 and (veryStrongTrend or strongTrend)
-        fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongLong : fhStrongLong2)
-        fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongShort : fhStrongShort2)
-        // In Harmony mode, treat the permission chain as a filter with strong-signal bypass
-        // so P-1/P0/P1/P2 entries aren't starved on MNQ/MES 3m.
-        bool fhPermLongOK = permLongOK or fhStrongLong2
-        bool fhPermShortOK = permShortOK or fhStrongShort2
+        fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or impulseBreakoutLong
+        fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or impulseBreakoutShort
+        // In Harmony mode, treat the permission chain as a filter with impulse/breakout bypass
+        // so only true breakouts can ignore higher-TF alignment.
+        bool fhPermLongOK = permLongOK or impulseBreakoutLong
+        bool fhPermShortOK = permShortOK or impulseBreakoutShort
         fhCandidateLong = canGoLong and fhPermLongOK and fhRawLong and longBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysLong
         fhCandidateShort = canGoShort and fhPermShortOK and fhRawShort and shortBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysShort
         fhAllowLong = fhCandidateLong and fhOkLong
@@ -2180,12 +2197,12 @@ shouldEnterShort := shouldEnterShort and candleBearStrict
 // Extra safety: block MES entries if fixed-$ SL/TP config is ever off.
 shouldEnterLong := shouldEnterLong and (not isMES or mesFixedConfigOK)
 shouldEnterShort := shouldEnterShort and (not isMES or mesFixedConfigOK)
-// MTF STRICT filter should improve WR, but can starve 3m if applied to every priority.
-// Apply it only to lower-priority entries (P3+ / HARMONY / NO_PRIORITY / SWING), and allow P-1/P0/P1/P2 to bypass.
+// MTF STRICT filter should improve WR, but can starve 3m if applied indiscriminately.
+// Apply it to all entries except explicit impulse/breakout trades.
 mtfStrictNeed =
      enableMTFStrictFilter and mtfStrictApplies and
      (shouldEnterLong or shouldEnterShort) and
-     not (str.startswith(selectedPriority, "P-1") or str.startswith(selectedPriority, "P0") or str.startswith(selectedPriority, "P1") or str.startswith(selectedPriority, "P2"))
+     not (impulseBreakoutLong or impulseBreakoutShort)
 shouldEnterLong := shouldEnterLong and (not mtfStrictNeed or mtfStrictLongOK)
 shouldEnterShort := shouldEnterShort and (not mtfStrictNeed or mtfStrictShortOK)
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
@@ -2198,6 +2215,9 @@ htfCandleColorOK_Short = (not require5mCandleColorConfirm) or (not is3min) or ht
 if not enableFilterHarmony
     shouldEnterLong := shouldEnterLong and htfCandleColorOK_Long
     shouldEnterShort := shouldEnterShort and htfCandleColorOK_Short
+// Sideways/consolidation block (only allow impulse/breakout trades).
+shouldEnterLong := shouldEnterLong and sidewaysAllowedLong
+shouldEnterShort := shouldEnterShort and sidewaysAllowedShort
 // ==================== 🧷 LTF CONFIRM (Intrabar Safety) ====================
 // Only used when intrabar entries are allowed; prevents "looks wrong-color by close".
 ltfGroup = "🧷 Intrabar LTF Confirm"
@@ -2266,12 +2286,13 @@ if strategy.position_size == 0
              (enableTrendOnly and not routerLongRegimeOK and not bypassLong) ? "TREND_ONLY" :
              (enableBestSideRouter and not allowLongByBias) ? "BIAS_LOCK" :
              (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
-             (not volRegimeOK and not (allowImpulseBypassVol and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "VOL_REGIME" :
-             (not htfConfirmLongOK and not (allowImpulseBypassHTF and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))) ? "HTF_ALIGN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and impulseBreakoutLong)) ? "VOL_REGIME" :
+             (not htfConfirmLongOK and not (allowImpulseBypassHTF and impulseBreakoutLong)) ? "HTF_ALIGN" :
              (not strengthGateLongOK) ? "STRENGTH" :
              (not (v71_strictEntryOK or strictBypassLong)) ? "STRICT_FILTER" :
              (not trendOnlyLongGate) ? "MANDATORY_TREND" :
              (not mtfLongOK) ? "MTF_FILTER" :
+             (sidewaysBlocked and not impulseBreakoutLong) ? "SIDEWAYS" :
              (not candleConfirmLong) ? "CANDLE_CONFIRM" :
              (not dedupeLongOK) ? "DEDUPE" :
              (not htfCandleColorOK_Long) ? "5M_COLOR" :
@@ -2290,12 +2311,13 @@ if strategy.position_size == 0
              (enableTrendOnly and not routerShortRegimeOK and not bypassShort) ? "TREND_ONLY" :
              (enableBestSideRouter and not allowShortByBias) ? "BIAS_LOCK" :
              (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
-             (not volRegimeOK and not (allowImpulseBypassVol and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "VOL_REGIME" :
-             (not htfConfirmShortOK and not (allowImpulseBypassHTF and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))) ? "HTF_ALIGN" :
+             (not volRegimeOK and not (allowImpulseBypassVol and impulseBreakoutShort)) ? "VOL_REGIME" :
+             (not htfConfirmShortOK and not (allowImpulseBypassHTF and impulseBreakoutShort)) ? "HTF_ALIGN" :
              (not strengthGateShortOK) ? "STRENGTH" :
              (not (v71_strictEntryOK or strictBypassShort)) ? "STRICT_FILTER" :
              (not trendOnlyShortGate) ? "MANDATORY_TREND" :
              (not mtfShortOK) ? "MTF_FILTER" :
+             (sidewaysBlocked and not impulseBreakoutShort) ? "SIDEWAYS" :
              (not candleConfirmShort) ? "CANDLE_CONFIRM" :
              (not dedupeShortOK) ? "DEDUPE" :
              (not htfCandleColorOK_Short) ? "5M_COLOR" :
@@ -2419,7 +2441,7 @@ ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 is3m_chart_profit = timeframe.period == "3"
 kenyaActive_profit = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart_profit
 // IMPORTANT: When using MJV6 MES profit logic, do not run V20 on MES (prevents profit-module conflicts).
-v20Active_profit = useV20KenyaPerfectProfit and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit and not (isMES and useMJV6MesProfitLogic)
+v20Active_profit = useV20KenyaPerfectProfit_eff and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit and not (isMES and useMJV6MesProfitLogic_eff)
 if v20Active_profit and strategy.position_size > 0
     float avgPrice = strategy.position_avg_price
     float localStopLoss = avgPrice - exitSL
@@ -2497,7 +2519,7 @@ if v20Active_profit and strategy.position_size < 0
 // ==================== LEGACY PROFIT SYSTEM (disabled when V20 module is on) ====================
 // ==================== ✅ MES PROFIT LOGIC (FROM YOUR POSTED MJV6 SCRIPT) ====================
 // Runs BEFORE the legacy long/short blocks and prevents double exit management.
-if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.position_size != 0
+if not v20Active_profit and isMES and useMJV6MesProfitLogic_eff and strategy.position_size != 0
     // Use the same “ATR source” your bot already uses here (atr10)
     float mjvAtr = atr10
     // From your posted script:
@@ -2581,7 +2603,7 @@ if mesFixedActive and strategy.position_size != 0
         strategy.exit("MES_HARD_BRACKET_L", from_entry="LONG", stop=avgPxMes - mesSL_pts, limit=avgPxMes + mesTP_pts)
     else
         strategy.exit("MES_HARD_BRACKET_S", from_entry="SHORT", stop=avgPxMes + mesSL_pts, limit=avgPxMes - mesTP_pts)
-if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic)
+if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic_eff)
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
@@ -2609,7 +2631,7 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
         // MNQ 3m SINGLE booster (1 contract) improves expectancy at moderate WR by using a smaller target + BE protection.
         localStopLoss = localEntryPrice - currentSL
         bool kenyaSingle = math.abs(strategy.position_size) == 1
-        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
+        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster_eff and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
         // Fees-aware BE offset (points)
         float kenyaBEOffsetPts = 0.0
         if kenyaSingleBooster and kenyaMnq3mUseFeesForBE and enableFeeModel
@@ -2689,7 +2711,7 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
         bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
         if math.abs(strategy.position_size) == 1
             // Optional MNQ 3m booster: smaller target + BE protection to lift WR.
-            bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+            bool useMnq3mBooster = enableMnq3mWinRateBooster_eff and isMNQ and is3m_chart and highWinRateMode
             float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
             int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
             float beOffsetPts = 0.0
@@ -2699,11 +2721,11 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
                 slipPts = slippageTicksOneWay * syminfo.mintick
                 beOffsetPts := (roundTripFees / safePointValue) + slipPts
             // Optional MES 3m booster: same idea, but defaults ON to push WR toward ~83%.
-            bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
+            bool useMes3mBooster = enableMes3mWinRateBooster_eff and isMes3m and highWinRateMode
             float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
             int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
             // Optional MES 5m booster: target based on SL (handles intentional tight stops).
-            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            bool useMes5mBooster = enableMes5mWinRateBooster_eff and isMes5m and highWinRateMode
             float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
             int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
             float boosterBEStop = localEntryPrice + beOffsetPts
@@ -2748,7 +2770,7 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
                 strategy.exit("V71_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
             if useSL
                 strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
-if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV6MesProfitLogic)
+if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV6MesProfitLogic_eff)
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
@@ -2774,7 +2796,7 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
     if kenyaActive
         localStopLoss = localEntryPrice + currentSL
         bool kenyaSingle = math.abs(strategy.position_size) == 1
-        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
+        bool kenyaSingleBooster = kenyaMnq3mUseSingleBooster_eff and kenyaSingle and isMNQ and is3m_chart and highWinRateMode
         float kenyaBEOffsetPts = 0.0
         if kenyaSingleBooster and kenyaMnq3mUseFeesForBE and enableFeeModel
             oneWayFeesK = commissionPerContract + extraFeesPerContract
@@ -2853,7 +2875,7 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
         bool v71_useQuickScalp = enableQuickScalpExit and holdingPeriod <= quickScalpBars and highWinRateMode
         if math.abs(strategy.position_size) == 1
             // Optional MNQ 3m booster: smaller target + BE protection to lift WR.
-            bool useMnq3mBooster = enableMnq3mWinRateBooster and isMNQ and is3m_chart and highWinRateMode
+            bool useMnq3mBooster = enableMnq3mWinRateBooster_eff and isMNQ and is3m_chart and highWinRateMode
             float boosterTargetPts = currentTP1 * mnq3mBoosterTargetPctOfTP1
             int boosterTargetTicks = math.round(boosterTargetPts / syminfo.mintick)
             float beOffsetPts = 0.0
@@ -2863,11 +2885,11 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
                 slipPts = slippageTicksOneWay * syminfo.mintick
                 beOffsetPts := (roundTripFees / safePointValue) + slipPts
             // Optional MES 3m booster: smaller target + BE protection (defaults ON) to lift WR.
-            bool useMes3mBooster = enableMes3mWinRateBooster and isMes3m and highWinRateMode
+            bool useMes3mBooster = enableMes3mWinRateBooster_eff and isMes3m and highWinRateMode
             float mesTargetPts = currentTP1 * mes3mBoosterTargetPctOfTP1
             int mesTargetTicks = math.round(mesTargetPts / syminfo.mintick)
             // Optional MES 5m booster: target based on SL (handles intentional tight stops).
-            bool useMes5mBooster = enableMes5mWinRateBooster and isMes5m and highWinRateMode
+            bool useMes5mBooster = enableMes5mWinRateBooster_eff and isMes5m and highWinRateMode
             float mes5mTargetPts = math.min(currentTP1, currentSL * mes5mTargetSLMult)
             int mes5mTargetTicks = math.round(mes5mTargetPts / syminfo.mintick)
             float boosterBEStop = localEntryPrice - beOffsetPts
@@ -2912,7 +2934,7 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
 // ==================== 🛡️ SAFETY EXITS ====================
 getBackupSL() =>
     isMES ? backupSL_MES : isMNQ ? backupSL_MNQ : backupSL_Default
-mesMJV6Active = isMES and useMJV6MesProfitLogic
+mesMJV6Active = isMES and useMJV6MesProfitLogic_eff
 if enableBackupSL and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
     backupSLDistance = getBackupSL()
     if strategy.position_size > 0
