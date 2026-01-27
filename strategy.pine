@@ -110,6 +110,7 @@ backtestGroup = "🧪 Backtest / Live Mode"
 forceStrategyOrdersForBacktest = input.bool(true, "✅ Force strategy orders in backtest (even if Alert Only Mode)", group=backtestGroup)
 // ==================== 🔥 MNQ 3m/5m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m/5m Profit Logic (Kenya)"
+mnqProfitMode = input.string("MJV6 Ultra", "MNQ Profit Mode", options=["MJV6 Ultra","Kenya"], group=kenyaGroup)
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
 useKenyaMnq5mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 5m", group=kenyaGroup)
 kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
@@ -423,6 +424,8 @@ mtf_tf1 = input.timeframe("15", "V8: MTF 1")
 mtf_tf2 = input.timeframe("60", "V8: MTF 2")
 mtf_tf3 = input.timeframe("240", "V8: MTF 3")
 mtfAlignThreshold = input.int(50, "V8: MTF Alignment % Threshold", minval=0, maxval=100)
+mtfAlignThreshold_eff =
+     (isMNQ_3m or isMNQ_5m) ? math.max(mtfAlignThreshold, 67) : mtfAlignThreshold
 mtfStrictGroup = "V8: MTF Strict (SMA50 15m+60m)"
 enableMTFStrictFilter = input.bool(true, "✅ MTF STRICT: require 15m+60m SMA50 alignment", group=mtfStrictGroup)
 mtfStrictSmaLen = input.int(50, "MTF STRICT: SMA length", minval=10, maxval=200, group=mtfStrictGroup)
@@ -641,7 +644,9 @@ isMNQ_3m = isMNQ and is3min
 isMNQ_5m = isMNQ and is5min
 isMES_3m = isMES and is3min
 isMES_5m = isMES and is5min
-mnqKenyaActive = (isMNQ_3m and useKenyaMnq3mProfitLogic) or (isMNQ_5m and useKenyaMnq5mProfitLogic)
+mnqKenyaActive =
+     (mnqProfitMode == "Kenya") and
+     ((isMNQ_3m and useKenyaMnq3mProfitLogic) or (isMNQ_5m and useKenyaMnq5mProfitLogic))
 // 5m candle-color confirmation (used by entry logic + Filter Harmony scoring)
 // Must be declared early because Harmony references it before the gating section.
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
@@ -1162,8 +1167,8 @@ mtfBullCount = (mtfBull1 ? 1 : 0) + (mtfBull2 ? 1 : 0) + (mtfBull3 ? 1 : 0)
 mtfBearCount = 3 - mtfBullCount
 mtfDirectionalPctLong = math.round((mtfBullCount / 3.0) * 100.0)
 mtfDirectionalPctShort = math.round((mtfBearCount / 3.0) * 100.0)
-mtfLongOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctLong >= mtfAlignThreshold)
-mtfShortOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctShort >= mtfAlignThreshold)
+mtfLongOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctLong >= mtfAlignThreshold_eff)
+mtfShortOK = (not enableMTF) or (mtfMode != "Filter") or (mtfDirectionalPctShort >= mtfAlignThreshold_eff)
 // MTF STRICT FILTER (requested): 15m and 60m must both be above/below SMA50.
 // Applies only on MNQ/MES 3m/5m charts to avoid breaking other instruments/timeframes.
 mtfStrictApplies = enableMTFStrictFilter and (isMNQ_3m or isMNQ_5m or isMES_3m or isMES_5m)
@@ -1173,7 +1178,9 @@ mtf15_Short = request.security(syminfo.tickerid, "15", close < ta.sma(close, mtf
 mtf60_Short = request.security(syminfo.tickerid, "60", close < ta.sma(close, mtfStrictSmaLen), barmerge.gaps_off, barmerge.lookahead_off)
 mtfStrictLongOK = (not mtfStrictApplies) or (mtf15_Long and mtf60_Long)
 mtfStrictShortOK = (not mtfStrictApplies) or (mtf15_Short and mtf60_Short)
-effMinHTFAligned = (isMES and enableMesAntiChop) ? mesMinHTFAligned : minHTFAligned
+effMinHTFAligned =
+     (isMES and enableMesAntiChop) ? mesMinHTFAligned :
+     ((isMNQ_3m or isMNQ_5m) ? math.max(minHTFAligned, 2) : minHTFAligned)
 htfConfirmLongOK = (not enableHTFConfirm) or (htfAlignLongCount >= effMinHTFAligned)
 htfConfirmShortOK = (not enableHTFConfirm) or (htfAlignShortCount >= effMinHTFAligned)
 // Sideways detection
@@ -1284,6 +1291,13 @@ tibShort =
 // Impulse/breakout classifier (allowed in sideways conditions).
 impulseBreakoutLong = impulseLong or runTriggerLong or tibLong
 impulseBreakoutShort = impulseShort or runTriggerShort or tibShort
+mnqStrictTF = isMNQ_3m or isMNQ_5m
+mnqStrictLongOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutLong
+mnqStrictShortOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutShort
+mnqAtrExpLongOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutLong
+mnqAtrExpShortOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutShort
+mnqTrendLongOK = (not mnqStrictTF) or trendAlignedLongFast or trendAlignedLong or impulseBreakoutLong
+mnqTrendShortOK = (not mnqStrictTF) or trendAlignedShortFast or trendAlignedShort or impulseBreakoutShort
 var int lastIgnBar = na
 var int lastIgnDir = 0
 if tibLong
@@ -1856,6 +1870,10 @@ else
     // MTF filter mode gates (directional).
     canGoLong := canGoLong and mtfLongOK
     canGoShort := canGoShort and mtfShortOK
+// MNQ 3m/5m strict trend gating (avoid sideways unless impulse/breakout).
+if mnqStrictTF
+    canGoLong := canGoLong and mnqStrictLongOK and mnqAtrExpLongOK and mnqTrendLongOK
+    canGoShort := canGoShort and mnqStrictShortOK and mnqAtrExpShortOK and mnqTrendShortOK
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE (MES-only) ====================
 // In Filter Harmony mode, these become *quality inputs* (soft influence) instead of hard blocks
 // so you don’t get “no trades” in strategy tester / extended sessions.
@@ -2117,8 +2135,8 @@ if not tookTradeThisBar
         fhQualityLong_dbg := fhQualityLong
         fhQualityShort_dbg := fhQualityShort
         // Eligibility (threshold + strong-signal discount)
-        fhMinLong = fhMinQuality
-        fhMinShort = fhMinQuality
+        fhMinLong = fhMinQuality + ((isMNQ_3m or isMNQ_5m) ? 5.0 : 0.0)
+        fhMinShort = fhMinQuality + ((isMNQ_3m or isMNQ_5m) ? 5.0 : 0.0)
         fhOkLong = fhQualityLong >= fhMinLong or (fhStrongLong2 and fhQualityLong >= (fhMinLong * fhStrongOverrideFactor))
         fhOkShort = fhQualityShort >= fhMinShort or (fhStrongShort2 and fhQualityShort >= (fhMinShort * fhStrongOverrideFactor))
         // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
