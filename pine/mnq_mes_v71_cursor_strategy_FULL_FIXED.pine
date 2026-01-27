@@ -1470,7 +1470,7 @@ adxValue = adx(14, 14)
 effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
 
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
-v71_strictEntryOK = not strictEntryEff or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
+v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
 
 // Early trend strength flag (used before `strongTrend` is defined later in the script)
 strongTrendEarly = trendStrength > 0.15
@@ -1823,8 +1823,8 @@ strongCountShort =
      (veryStrongTrend ? 1 : 0) +
      (finalConfluenceOK ? 1 : 0) +
      (trendAlignedShort ? 1 : 0)
-strengthGateLongOK = (not strengthGateEff) or (strongCountLong >= minStrongSignals) or (allowImpulseBypassStrength and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))
-strengthGateShortOK = (not strengthGateEff) or (strongCountShort >= minStrongSignals) or (allowImpulseBypassStrength and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))
+strengthGateLongOK = (not requireMultipleStrong) or (strongCountLong >= minStrongSignals) or (allowImpulseBypassStrength and (impulseLong or hasTrendOverrideBull or hasMomentumOverrideLong))
+strengthGateShortOK = (not requireMultipleStrong) or (strongCountShort >= minStrongSignals) or (allowImpulseBypassStrength and (impulseShort or hasTrendOverrideBear or hasMomentumOverrideShort))
 
 if strategy.position_size != 0 and strategy.position_size[1] == 0
     entryPrice := strategy.position_avg_price
@@ -1992,13 +1992,8 @@ shouldEnterLong := false
 shouldEnterShort := false
 selectedPriority := "NONE"
 
-// 3m unstarve: do not hard-block entries by regime/strength/strict filters on 3m (still enforced on 5m+).
-trendOnlyEff = enableTrendOnly and not is3min
-strictEntryEff = enableStrictEntryFilter and not is3min
-strengthGateEff = requireMultipleStrong and not is3min
-
-bool routerLongRegimeOK = trendOnlyEff ? (trendRegimeOK or bypassLong) : true
-bool routerShortRegimeOK = trendOnlyEff ? (trendRegimeOK or bypassShort) : true
+bool routerLongRegimeOK = enableTrendOnly ? trendRegimeOK or bypassLong : true
+bool routerShortRegimeOK = enableTrendOnly ? trendRegimeOK or bypassShort : true
 bool allowLongByBias = not enableBestSideRouter or biasDir == 0 or biasDir == 1 or bypassLong
 bool allowShortByBias = not enableBestSideRouter or biasDir == 0 or biasDir == -1 or bypassShort
 bool cooldownOK = oppCooldownOK or bypassLong or bypassShort
@@ -2019,8 +2014,8 @@ if enableFilterHarmony
     fhStrongLong = strictBypassLong or bypassLong or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBull
     fhStrongShort = strictBypassShort or bypassShort or (finalConfluenceOK and starScore >= 4) or hasStrongTrendOverrideBear
 
-    fhRegimeLongOK = (not trendOnlyEff) or trendRegimeOK or fhStrongLong
-    fhRegimeShortOK = (not trendOnlyEff) or trendRegimeOK or fhStrongShort
+    fhRegimeLongOK = (not enableTrendOnly) or trendRegimeOK or fhStrongLong
+    fhRegimeShortOK = (not enableTrendOnly) or trendRegimeOK or fhStrongShort
     fhBiasLongOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == 1 or fhStrongLong
     fhBiasShortOK = (not enableBestSideRouter) or biasDir == 0 or biasDir == -1 or fhStrongShort
     fhCooldownLongOK = oppCooldownOK or fhStrongLong
