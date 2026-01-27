@@ -2609,21 +2609,25 @@ bool allowEntryLong = true
 if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBull[sigOff] and not (impulseLong[sigOff] and candleBull[sigOff]) and not hasMomentumOverrideLong[sigOff]
     allowEntryLong := false
 
-// Debug-only: scream if an entry would violate direction.
-if dirTripwire and longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and not candleBullStrict
-    runtime.error("DIR TRIPWIRE: attempted LONG entry without strict green candle.")
-
-// Absolute last-line-of-defense direction gate at execution.
-if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0 and candleBullStrict
+if longCondition and strategy.position_size == 0 and allowEntryLong and finalContractQty > 0
+    // Absolute last-line-of-defense direction gate at execution.
+    if not candleBullStrict
+        shouldEnterLong := false
+    else
+    if dirTripwire and not candleBullStrict
+        runtime.error("DIR TRIPWIRE: attempted LONG entry without strict green candle.")
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := 1
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
+    // Use signal-bar sizing when entering on next bar open
     int qtyForEntry = finalContractQty
     int tradeQty = getActiveQty(qtyForEntry)
     strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
+    // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastLongSignalBar := bar_index
+    // Router state for cooldown correctness.
     if lastSignalDir == -1
         lastOppositeEntryBar := bar_index
     lastSignalDir := 1
@@ -2633,10 +2637,13 @@ bool allowEntryShort = true
 if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBear[sigOff] and not (impulseShort[sigOff] and candleBear[sigOff]) and not hasMomentumOverrideShort[sigOff]
     allowEntryShort := false
 
-if dirTripwire and shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and not candleBearStrict
-    runtime.error("DIR TRIPWIRE: attempted SHORT entry without strict red candle.")
-
-if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0 and candleBearStrict
+if shortCondition and strategy.position_size == 0 and allowEntryShort and finalContractQty > 0
+    // Absolute last-line-of-defense direction gate at execution.
+    if not candleBearStrict
+        shouldEnterShort := false
+    else
+    if dirTripwire and not candleBearStrict
+        runtime.error("DIR TRIPWIRE: attempted SHORT entry without strict red candle.")
     if enableBestSideRouter and not bypassLong and not bypassShort
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
@@ -2644,8 +2651,10 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
     int qtyForEntryS = finalContractQty
     int tradeQtyS = getActiveQty(qtyForEntryS)
     strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
+    // Even in alert-only mode we must advance internal state to avoid duplicate signals.
     tookTradeThisBar := true
     lastShortSignalBar := bar_index
+    // Router state for cooldown correctness.
     if lastSignalDir == 1
         lastOppositeEntryBar := bar_index
     lastSignalDir := -1
