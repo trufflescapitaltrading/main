@@ -2095,34 +2095,31 @@ if isMES and enableMesHighWinEntryGate
         canGoShort := canGoShort and mesSessionOK and mesConfluenceOK and mesMtfOK_Short and mesMandatoryOK_Short and (not isChoppy)
 
 // Higher-TF permission chains (reduces against-structure chop).
-// IMPORTANT: do NOT hard-block all entries here (it can starve 3m). Instead compute permission gates and
-// apply them only to lower-priority entries (P3+ / HARMONY), while allowing P-1/P0/P1/P2 to still trade.
-bool permLongOK = true
-bool permShortOK = true
-
 if isMNQ
     if is3min and mnq3mRequire5mPermission
+        // Allow bypass on strong “run trigger” displacement so MNQ 3m does not go dead.
         bigMoveBypassMNQ = mnq3mAllowBigMoveBypass and enableRunTrigger and (dispTicks2 >= (minRunTicks * 2))
-        permLongOK := permLongOK and (mnq5mPermLong or (bigMoveBypassMNQ and runTriggerLong))
-        permShortOK := permShortOK and (mnq5mPermShort or (bigMoveBypassMNQ and runTriggerShort))
+        canGoLong := canGoLong and (mnq5mPermLong or (bigMoveBypassMNQ and runTriggerLong))
+        canGoShort := canGoShort and (mnq5mPermShort or (bigMoveBypassMNQ and runTriggerShort))
     if is5min and mnq5mRequire15mPermission
-        permLongOK := permLongOK and mnq15mPermLong
-        permShortOK := permShortOK and mnq15mPermShort
+        canGoLong := canGoLong and mnq15mPermLong
+        canGoShort := canGoShort and mnq15mPermShort
     if is15min and mnq15mRequire30mPermission
-        permLongOK := permLongOK and mnq30mPermLong
-        permShortOK := permShortOK and mnq30mPermShort
+        canGoLong := canGoLong and mnq30mPermLong
+        canGoShort := canGoShort and mnq30mPermShort
 
 if isMES
     if is3min and mes3mRequire5mPermission
+        // Allow bypass on strong “run trigger” displacement so MES 3m does not go dead.
         bigMoveBypass = mes3mAllowBigMoveBypass and enableRunTrigger and (dispTicks2 >= (minRunTicks * 2))
-        permLongOK := permLongOK and (mes5mPermLong or (bigMoveBypass and runTriggerLong))
-        permShortOK := permShortOK and (mes5mPermShort or (bigMoveBypass and runTriggerShort))
+        canGoLong := canGoLong and (mes5mPermLong or (bigMoveBypass and runTriggerLong))
+        canGoShort := canGoShort and (mes5mPermShort or (bigMoveBypass and runTriggerShort))
     if is5min and mes5mRequire15mPermission
-        permLongOK := permLongOK and mes15mPermLong
-        permShortOK := permShortOK and mes15mPermShort
+        canGoLong := canGoLong and mes15mPermLong
+        canGoShort := canGoShort and mes15mPermShort
     if is15min and mes15mRequire30mPermission
-        permLongOK := permLongOK and mes30mPermLong
-        permShortOK := permShortOK and mes30mPermShort
+        canGoLong := canGoLong and mes30mPermLong
+        canGoShort := canGoShort and mes30mPermShort
 
 if not tookTradeThisBar
     if enablePrioritySystem
@@ -2211,47 +2208,47 @@ if not tookTradeThisBar
                 selectedPriority := "P2:TREND"
                 entryPriority := "P2:TREND"
         if not shouldEnterLong and not shouldEnterShort and allowPriority3
-            if canGoLong and permLongOK and is5Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
+            if canGoLong and is5Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P3:5STAR"
                 entryPriority := "P3:5STAR"
-            else if canGoShort and permShortOK and is5Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
+            else if canGoShort and is5Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
                 shouldEnterShort := true
                 selectedPriority := "P3:5STAR"
                 entryPriority := "P3:5STAR"
         if not shouldEnterLong and not shouldEnterShort and allowPriority4
-            if canGoLong and permLongOK and is4Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
+            if canGoLong and is4Star and ultraBuySignal and candleBull and emaTrendOK_Long and momentumOK_Long and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P4:4STAR"
                 entryPriority := "P4:4STAR"
-            else if canGoShort and permShortOK and is4Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
+            else if canGoShort and is4Star and ultraSellSignal and candleBear and emaTrendOK_Short and momentumOK_Short and candleConfirmShort
                 shouldEnterShort := true
                 selectedPriority := "P4:4STAR"
                 entryPriority := "P4:4STAR"
         if not shouldEnterLong and not shouldEnterShort and allowPriority5
-            if canGoLong and permLongOK and is3Star and ultraBuySignal and candleBull and emaTrendOK_Long and candleConfirmLong
+            if canGoLong and is3Star and ultraBuySignal and candleBull and emaTrendOK_Long and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P5:3STAR"
                 entryPriority := "P5:3STAR"
-            else if canGoShort and permShortOK and is3Star and ultraSellSignal and candleBear and emaTrendOK_Short and candleConfirmShort
+            else if canGoShort and is3Star and ultraSellSignal and candleBear and emaTrendOK_Short and candleConfirmShort
                 shouldEnterShort := true
                 selectedPriority := "P5:3STAR"
                 entryPriority := "P5:3STAR"
         if not shouldEnterLong and not shouldEnterShort and allowPriority6
-            if canGoLong and permLongOK and is2Star and ultraBuySignal and candleBull and candleConfirmLong
+            if canGoLong and is2Star and ultraBuySignal and candleBull and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P6:2STAR"
                 entryPriority := "P6:2STAR"
-            else if canGoShort and permShortOK and is2Star and ultraSellSignal and candleBear and candleConfirmShort
+            else if canGoShort and is2Star and ultraSellSignal and candleBear and candleConfirmShort
                 shouldEnterShort := true
                 selectedPriority := "P6:2STAR"
                 entryPriority := "P6:2STAR"
         if not shouldEnterLong and not shouldEnterShort and allowPriority7
-            if canGoLong and permLongOK and swingBuySignal and candleBull and signalAllowsLong and not isSignalGrayZone and candleConfirmLong
+            if canGoLong and swingBuySignal and candleBull and signalAllowsLong and not isSignalGrayZone and candleConfirmLong
                 shouldEnterLong := true
                 selectedPriority := "P7:SWING"
                 entryPriority := "P7:SWING"
-            else if canGoShort and permShortOK and swingSellSignal and candleBear and signalAllowsShort and not isSignalGrayZone and candleConfirmShort
+            else if canGoShort and swingSellSignal and candleBear and signalAllowsShort and not isSignalGrayZone and candleConfirmShort
                 shouldEnterShort := true
                 selectedPriority := "P7:SWING"
                 entryPriority := "P7:SWING"
@@ -2369,9 +2366,8 @@ if not tookTradeThisBar
         fhAllowSidewaysLong = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongLong : fhStrongLong2)
         fhAllowSidewaysShort = not fhAvoidSidewaysEntries or (not fhSidewaysBad) or (fhSidewaysBypassOnlyIfVeryStrong ? fhVeryStrongShort : fhStrongShort2)
 
-        // In Harmony mode, treat HTF permission chain as a strict filter for entries (improves WR).
-        fhCandidateLong = canGoLong and permLongOK and fhRawLong and longBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysLong
-        fhCandidateShort = canGoShort and permShortOK and fhRawShort and shortBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysShort
+        fhCandidateLong = canGoLong and fhRawLong and longBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysLong
+        fhCandidateShort = canGoShort and fhRawShort and shortBarOK and not fhDojiBlock and not fhTier4Block and fhAllowSidewaysShort
 
         fhAllowLong = fhCandidateLong and fhOkLong
         fhAllowShort = fhCandidateShort and fhOkShort
