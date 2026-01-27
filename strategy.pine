@@ -108,9 +108,10 @@ fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only 
 // This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
 backtestGroup = "🧪 Backtest / Live Mode"
 forceStrategyOrdersForBacktest = input.bool(true, "✅ Force strategy orders in backtest (even if Alert Only Mode)", group=backtestGroup)
-// ==================== 🔥 MNQ 3m "KENYA" PROFIT LOGIC (AS POSTED) ====================
-kenyaGroup = "🔥 MNQ 3m Profit Logic (Kenya)"
+// ==================== 🔥 MNQ 3m/5m "KENYA" PROFIT LOGIC (AS POSTED) ====================
+kenyaGroup = "🔥 MNQ 3m/5m Profit Logic (Kenya)"
 useKenyaMnq3mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 3m", group=kenyaGroup)
+useKenyaMnq5mProfitLogic = input.bool(true, "Use Kenya 60/25/10/5 ladder on MNQ 5m", group=kenyaGroup)
 kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entries (restore original behavior)", group=kenyaGroup)
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 useV20KenyaPerfectProfit = input.bool(false, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
@@ -640,6 +641,7 @@ isMNQ_3m = isMNQ and is3min
 isMNQ_5m = isMNQ and is5min
 isMES_3m = isMES and is3min
 isMES_5m = isMES and is5min
+mnqKenyaActive = (isMNQ_3m and useKenyaMnq3mProfitLogic) or (isMNQ_5m and useKenyaMnq5mProfitLogic)
 // 5m candle-color confirmation (used by entry logic + Filter Harmony scoring)
 // Must be declared early because Harmony references it before the gating section.
 htf5mBull = request.security(syminfo.tickerid, "5", (close > open) and (math.abs(close - open) > (high - low) * 0.05), barmerge.gaps_off, barmerge.lookahead_off)
@@ -2401,7 +2403,7 @@ v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 // ==================== 🔥 MJV6 ULTRA PROFIT LOGIC (AS PROVIDED) ====================
 // Overrides other profit modules when enabled.
-if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
+if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and not mnqKenyaActive
     float mjvAtr = atr10
     float mjvFuturesTPDistance = mjvAtr * tpMultiplier
     float mjvUltraQuickTP = mjvAtr * (tpMultiplier * 0.5)
@@ -2489,7 +2491,7 @@ ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 // - Default behavior: V20 module runs on 5m+ (protects 3m expectancy).
 // - Kenya ladder always wins on MNQ 3m when enabled.
 is3m_chart_profit = timeframe.period == "3"
-kenyaActive_profit = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart_profit
+kenyaActive_profit = mnqKenyaActive
 // IMPORTANT: When using MJV6 MES profit logic, do not run V20 on MES (prevents profit-module conflicts).
 v20Active_profit = (not mjv6UltraActive) and useV20KenyaPerfectProfit_eff and (not is3m_chart_profit or v20AllowOn3m) and not kenyaActive_profit and not (isMES and useMJV6MesProfitLogic_eff)
 if (not mjv6UltraActive) and v20Active_profit and strategy.position_size > 0
@@ -2657,7 +2659,7 @@ if (not mjv6UltraActive) and not v20Active_profit and strategy.position_size > 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-    bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
+    bool kenyaActive = mnqKenyaActive
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
     bool isMes3m = isMES and is3m_chart
@@ -2824,7 +2826,7 @@ if (not mjv6UltraActive) and not v20Active_profit and strategy.position_size < 0
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-    bool kenyaActive = useKenyaMnq3mProfitLogic and isMNQ and is3m_chart
+    bool kenyaActive = mnqKenyaActive
     bool isMnqWinTF = isMNQ and (is3min or is5min)  // used for TP1 targeting / BE behaviors
     bool isMnq5m = isMNQ and is5min
     bool isMes3m = isMES and is3m_chart
@@ -3022,7 +3024,7 @@ if enableMomentumFadeExit and strategy.position_size != 0 and v71_inProfit and h
                 lastExitReason := "V71_MOM_FADE"
 strongOpposingBuy = (impulseLong or hasMomentumOverrideLong) and candleBull and not isDojiBar
 strongOpposingSell = (impulseShort or hasMomentumOverrideShort) and candleBear and not isDojiBar
-kenyaActiveNow = kenyaEnableSignalReversal and useKenyaMnq3mProfitLogic and isMNQ and timeframe.period == "3"
+kenyaActiveNow = kenyaEnableSignalReversal and isMNQ and ((timeframe.period == "3" and useKenyaMnq3mProfitLogic) or (timeframe.period == "5" and useKenyaMnq5mProfitLogic))
 if (useSignalReversalExits or kenyaActiveNow) and strategy.position_size != 0 and holdingPeriod >= minBarsBeforeSignalReversal and not mesMJV6Active and not mjv6UltraActive
     if strategy.position_size > 0 and strongOpposingSell
         if not exitIssuedThisBar
