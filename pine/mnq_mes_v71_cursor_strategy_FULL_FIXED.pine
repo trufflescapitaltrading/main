@@ -172,7 +172,6 @@ timingGroup = "🕐 Entry Timing"
 // - Intrabar entries can LOOK like they fired on the “wrong color” candle because the candle flips color before close.
 // - “Next Bar Open” uses the previous CLOSED candle signal, then enters at the next bar open (earlier than waiting for another full candle, but stable).
 entryTimingMode = input.string("Next Bar Open", "Entry timing mode", options=["Bar Close","Next Bar Open","Intrabar"], group=timingGroup)
-forceBarCloseForStrictCandleDirection = input.bool(true, "STRICT: enforce candle color on executed bar (forces Bar Close)", group=timingGroup)
 useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup)
 
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
@@ -321,14 +320,8 @@ var bool isChoppy = false
 // ==================== 📊 PER-INSTRUMENT SETTINGS ====================
 perInstGroup = "Per-Instrument Trade Settings"
 mes_useCustom = input.bool(true, "MES: Use Custom SL/TP/Size", group=perInstGroup)
-// MES hard overrides (requested): fixed $ SL by timeframe + fixed $ TP per contract.
-mesUseFixedDollarSLTP = input.bool(true, "MES 3m/5m: Use FIXED $ SL/TP (hard)", group=perInstGroup)
-mesFixedSLDol_3m = input.float(35.0, "MES 3m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedSLDol_5m = input.float(45.0, "MES 5m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedTPDol = input.float(80.0, "MES 3m/5m: Take Profit ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-// Fallbacks (points) for non-3m/5m or when fixed $ overrides are disabled.
-mes_customSL = input.float(14.0, "MES: Stop Loss (points) [fallback]", group=perInstGroup)
-mes_customTP = input.float(16.0, "MES: Take Profit (points) [fallback]", group=perInstGroup)
+mes_customSL = input.float(14.0, "MES: Stop Loss (points)", group=perInstGroup)
+mes_customTP = input.float(18.0, "MES: Take Profit (points)", group=perInstGroup)
 mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=50, group=perInstGroup)
 
 // FOR 3-MINUTE CHART (OPTIMIZED)
@@ -1875,14 +1868,6 @@ riskMultiplier := math.max(math.min(riskMultiplier, 5.0), 0.1)
 
 effectiveRiskPercent = math.max(math.min(adjustedRiskPercent * riskMultiplier * tradeFrequencyBoost, 4.5), 0.1)
 safePointValue = syminfo.pointvalue > 0 ? syminfo.pointvalue : 1.0
-
-// Enforce strict candle-color entries on the executed bar (prevents “long on red / short on green” when using Next Bar Open/Intrabar).
-entryTimingMode_eff = (forceBarCloseForStrictCandleDirection and requireCandleDirection) ? "Bar Close" : entryTimingMode
-
-// MES fixed $ SL/TP overrides (converted to points using point value).
-mesFixedActive = isMES and mesUseFixedDollarSLTP and (timeframe.period == "3" or timeframe.period == "5")
-mesSL_pts = mesFixedActive ? ((timeframe.period == "3" ? mesFixedSLDol_3m : mesFixedSLDol_5m) / safePointValue) : mes_customSL
-mesTP_pts = mesFixedActive ? (mesFixedTPDol / safePointValue) : mes_customTP
 safePrice = close > 0 ? close : 1.0
 riskAmountDollars = math.max(strategy.equity * effectiveRiskPercent / 100, 0)
 futuresStopDistance = math.max(safeATR * (is1min ? (isMYM ? 1.8 : 2.0) : is2min ? (isMYM ? 2.0 : 2.2) : is3min ? (isMYM ? 2.2 : 2.4) : is5min ? (isMYM ? 2.4 : 2.6) : is10min ? (isMYM ? 2.6 : 2.8) : is15min ? (isMYM ? 2.8 : 3.0) : is30min ? (isMYM ? 3.0 : 3.2) : is1hour ? (isMYM ? 3.2 : 3.4) : is2hour ? (isMYM ? 3.4 : 3.6) : is4hour ? (isMYM ? 3.6 : 3.8) : (isMYM ? 2.6 : 2.8)), syminfo.mintick * 10)
@@ -2319,8 +2304,8 @@ if not tookTradeThisBar
 
         // Candidate must have some signal + satisfy base safety (canGoLong/Short already includes safety).
         // Also: NEVER enter on doji/tiny-body candles (strict requirement for entries).
-        fhDojiBlock = isDojiBar or (entryTimingMode_eff == "Next Bar Open" and isDojiBar[1])
-        fhTier4Block = isTier4Pattern or (entryTimingMode_eff == "Next Bar Open" and isTier4Pattern[1])
+        fhDojiBlock = isDojiBar or (entryTimingMode == "Next Bar Open" and isDojiBar[1])
+        fhTier4Block = isTier4Pattern or (entryTimingMode == "Next Bar Open" and isTier4Pattern[1])
         // Sideways/chop/gray-zone block (trend-only trading):
         fhSidewaysBad = isSignalGrayZone or isChoppy or rangingMarket
         // Allow earlier trend entries: “veryStrongTrend” can be too late on 3m/5m.
@@ -2396,10 +2381,6 @@ sameBarOK = not (enableDedupe and dedupeSameBar and tookTradeThisBar)
 shouldEnterLong := shouldEnterLong and dedupeLongOK and sameBarOK
 shouldEnterShort := shouldEnterShort and dedupeShortOK and sameBarOK
 
-// Absolute enforcement: never allow a long on a red candle, never allow a short on a green candle.
-shouldEnterLong := shouldEnterLong and candleBull
-shouldEnterShort := shouldEnterShort and candleBear
-
 // 3m entries: require 5m candle color confirmation (prevents wrong-direction entries).
 // htf5mBull/htf5mBear are declared earlier (for Filter Harmony scoring).
 // 3m charts: 5m candle-color congruence is a HIGH-QUALITY enhancer.
@@ -2456,20 +2437,20 @@ entryOK_barclose = barstate.isconfirmed
 entryOK_nextopen = barstate.isnew
 
 bool longCondition =
-     (entryTimingMode_eff == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterLong) :
-      entryTimingMode_eff == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterLong) :
+     (entryTimingMode == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterLong) :
+      entryTimingMode == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterLong) :
       // Next Bar Open (default): use previous bar signal to enter earlier + stable
       (entryOK_nextopen and prevCandleOK and shouldEnterLong[1])) and
      not tookTradeThisBar
 
 bool shortCondition =
-     (entryTimingMode_eff == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterShort) :
-      entryTimingMode_eff == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterShort) :
+     (entryTimingMode == "Intrabar" ? (entryOK_intrabar and curCandleOK and shouldEnterShort) :
+      entryTimingMode == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterShort) :
       (entryOK_nextopen and prevCandleOK and shouldEnterShort[1])) and
      not tookTradeThisBar
 
 // Preserve existing downstream logic that expects `entryOK` for alerts/logs.
-entryOK = (entryTimingMode_eff == "Intrabar" ? entryOK_intrabar : entryTimingMode_eff == "Bar Close" ? entryOK_barclose : entryOK_nextopen)
+entryOK = (entryTimingMode == "Intrabar" ? entryOK_intrabar : entryTimingMode == "Bar Close" ? entryOK_barclose : entryOK_nextopen)
 
 // ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
 var string lastBlockReason = "NONE"
@@ -2528,12 +2509,12 @@ if strategy.position_size == 0
              (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
              "OTHER"
 
-selectedPriorityForLog = entryTimingMode_eff == "Next Bar Open" ? selectedPriority[1] : selectedPriority
+selectedPriorityForLog = entryTimingMode == "Next Bar Open" ? selectedPriority[1] : selectedPriority
 if longCondition and strategy.position_size == 0
-    sigOff2 = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
+    sigOff2 = entryTimingMode == "Next Bar Open" ? 1 : 0
     activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideLong[sigOff2] ? "MOMENTUM" : impulseLong[sigOff2] ? "IMPULSE" : hasTrendOverrideBull[sigOff2] ? "TREND" : microBuySignal[sigOff2] ? "MICRO" : instantBuySignal[sigOff2] ? "INSTANT" : scalpBuySignal[sigOff2] ? "SCALP" : strongBuySignal[sigOff2] ? "STRONG" : swingBuySignal[sigOff2] ? "SWING" : "NORMAL"
 else if shortCondition and strategy.position_size == 0
-    sigOff2 = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
+    sigOff2 = entryTimingMode == "Next Bar Open" ? 1 : 0
     activeSignalType := selectedPriorityForLog == "P-1:TREND_START" ? "IGNITION" : selectedPriorityForLog == "P2:CONTINUATION" ? "CONTINUATION" : hasMomentumOverrideShort[sigOff2] ? "MOMENTUM" : impulseShort[sigOff2] ? "IMPULSE" : hasTrendOverrideBear[sigOff2] ? "TREND" : microSellSignal[sigOff2] ? "MICRO" : instantSellSignal[sigOff2] ? "INSTANT" : scalpSellSignal[sigOff2] ? "SCALP" : strongSellSignal[sigOff2] ? "STRONG" : swingSellSignal[sigOff2] ? "SWING" : "NORMAL"
 else if strategy.position_size == 0
     activeSignalType := "NONE"
@@ -2555,7 +2536,7 @@ getActiveQty(baseQty) =>
     qty
 
 // When using Next Bar Open, the entry is triggered on the new bar but the signal is from the previous bar.
-sigOff = entryTimingMode_eff == "Next Bar Open" ? 1 : 0
+sigOff = entryTimingMode == "Next Bar Open" ? 1 : 0
 
 bool allowEntryLong = true
 if require5Star and not fiveStarOK[sigOff] and not hasTrendOverrideBull[sigOff] and not (impulseLong[sigOff] and candleBull[sigOff]) and not hasMomentumOverrideLong[sigOff]
@@ -2567,7 +2548,7 @@ if longCondition and strategy.position_size == 0 and allowEntryLong and finalCon
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
     // Use signal-bar sizing when entering on next bar open
-    int qtyForEntry = entryTimingMode_eff == "Next Bar Open" ? finalContractQty[1] : finalContractQty
+    int qtyForEntry = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQty = getActiveQty(qtyForEntry)
     strategy.entry("LONG", strategy.long, qty=tradeQty, comment="LONG " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -2588,7 +2569,7 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
         biasDir := -1
         biasLockUntilBar := bar_index + biasLockBars
         lastOppositeEntryBar := bar_index
-    int qtyForEntryS = entryTimingMode_eff == "Next Bar Open" ? finalContractQty[1] : finalContractQty
+    int qtyForEntryS = entryTimingMode == "Next Bar Open" ? finalContractQty[1] : finalContractQty
     int tradeQtyS = getActiveQty(qtyForEntryS)
     strategy.entry("SHORT", strategy.short, qty=tradeQtyS, comment="SHORT " + activeSignalType + " " + selectedPriorityForLog)
     // Even in alert-only mode we must advance internal state to avoid duplicate signals.
@@ -2636,7 +2617,7 @@ lockKeepPoints = (syminfo.pointvalue > 0 ? (preTP1KeepDollars / syminfo.pointval
 getExitSLPoints() =>
     float sl = atrMain
     if isMES
-        sl := mesSL_pts
+        sl := mes_customSL
     else if isMNQ
         sl := (timeframe.period == "3" and mnq_useCustom3m) ? mnq_customSL_3m : mnq_customSL
     else if isMYM
@@ -2760,7 +2741,6 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
 
     // From your posted script (stop distance):
     float mjvStopDistance = mjvAtr * (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : is5min ? 1.6 : 1.6)
-    float mjvStopDistanceEff = mesFixedActive ? math.min(mjvStopDistance, mesSL_pts) : mjvStopDistance
 
     // Prefer the bot's persistent entry tracker when available.
     float mjvEntryPrice = not na(entryPrice) ? entryPrice : strategy.position_avg_price
@@ -2776,7 +2756,7 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
 
     // ---- LONG ----
     if strategy.position_size > 0 and not exitIssuedThisBar
-        float stopLoss = mjvEntryPrice - mjvStopDistanceEff
+        float stopLoss = mjvEntryPrice - mjvStopDistance
 
         if useTP and useEnhancedTP
             int tp1Points = math.round((mjvUltraQuickTP * 0.4) / syminfo.mintick)
@@ -2811,7 +2791,7 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
 
     // ---- SHORT ----
     if strategy.position_size < 0 and not exitIssuedThisBar
-        float stopLoss = mjvEntryPrice + mjvStopDistanceEff
+        float stopLoss = mjvEntryPrice + mjvStopDistance
 
         if useTP and useEnhancedTP
             int tp1Points = math.round((mjvUltraQuickTP * 0.5) / syminfo.mintick)
@@ -2839,16 +2819,6 @@ if not v20Active_profit and isMES and useMJV6MesProfitLogic and strategy.positio
                 stopPrice := math.min(stopPrice, mjvEntryPrice - mjvBEOffsetPts)
             strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
 
-// ==================== 🚨 MES FIXED HARD BRACKET (GUARANTEED DIRECTIONAL SL/TP) ====================
-// This enforces the requested hard SL ($35 3m / $45 5m) and TP ($80) per contract on MES 3m/5m,
-// regardless of which profit module is active.
-if mesFixedActive and strategy.position_size != 0
-    float avgPxMes = strategy.position_avg_price
-    if strategy.position_size > 0
-        strategy.exit("MES_HARD_BRACKET_L", from_entry="LONG", stop=avgPxMes - mesSL_pts, limit=avgPxMes + mesTP_pts)
-    else
-        strategy.exit("MES_HARD_BRACKET_S", from_entry="SHORT", stop=avgPxMes + mesSL_pts, limit=avgPxMes - mesTP_pts)
-
 if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic)
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
@@ -2859,11 +2829,11 @@ if not v20Active_profit and strategy.position_size > 0 and not (isMES and useMJV
     bool isMes3m = isMES and is3m_chart
     bool isMes5m = isMES and is5min
 
-    float baseSL = isMES ? mesSL_pts : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
-    float baseTP1 = isMES ? mesTP_pts : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
-    float baseTP2 = isMES ? mesTP_pts * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
-    float baseTP3 = isMES ? mesTP_pts * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
-    float baseTP4 = isMES ? mesTP_pts * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
+    float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
+    float baseTP3 = isMES ? mes_customTP * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
+    float baseTP4 = isMES ? mes_customTP * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
 
     // Apply "high WR" TP/SL multipliers ONLY on MNQ 5m (never in Kenya 3m mode).
     float tpMult = (highWinRateMode and isMnq5m and not kenyaActive) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
@@ -3047,11 +3017,11 @@ if not v20Active_profit and strategy.position_size < 0 and not (isMES and useMJV
     bool isMnq5m = isMNQ and is5min
     bool isMes3m = isMES and is3m_chart
     bool isMes5m = isMES and is5min
-    float baseSL = isMES ? mesSL_pts : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
-    float baseTP1 = isMES ? mesTP_pts : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
-    float baseTP2 = isMES ? mesTP_pts * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
-    float baseTP3 = isMES ? mesTP_pts * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
-    float baseTP4 = isMES ? mesTP_pts * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
+    float baseSL = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+    float baseTP1 = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+    float baseTP2 = isMES ? mes_customTP * 1.5 : (useMnq3m ? mnq_customTP2_3m : mnq_customTP2)
+    float baseTP3 = isMES ? mes_customTP * 2.5 : (useMnq3m ? mnq_customTP3_3m : mnq_customTP3)
+    float baseTP4 = isMES ? mes_customTP * 4.0 : (useMnq3m ? mnq_customTP4_3m : mnq_customTP4)
     float tpMult = (highWinRateMode and isMnq5m and not kenyaActive) ? quickTPMultiplier * v71_volAdjust : v71_volAdjust
     float slMult = (highWinRateMode and isMnq5m and not kenyaActive) ? widerSLMultiplier : 1.0
     float currentSL = kenyaActive ? baseSL : (baseSL * slMult)
@@ -3353,20 +3323,6 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
             alert(tpExitWebhook("mae_protection"), alert.freq_once_per_bar)
             tookTradeThisBar := true
 
-// ==================== 🛡️ PER-TRADE HARD STOPS (MES 3m/5m) ====================
-mesIs3m = isMES and is3min
-mesIs5m = isMES and is5min
-mesHardStopDol = mesIs3m ? mesFixedSLDol_3m : mesIs5m ? mesFixedSLDol_5m : na
-if isMES and (mesIs3m or mesIs5m) and strategy.position_size != 0 and not exitIssuedThisBar
-    // Hard max-loss (per contract) using the requested fixed $ stops.
-    if enablePerTradeHardStop and not na(mesHardStopDol) and currentProfitDollars <= -(mesHardStopDol * qtyForGuards)
-        strategy.close_all(comment="HARD_STOP")
-        exitIssuedThisBar := true
-        lastExitReason := "HARD_STOP"
-        if enableTradersPostAlerts and not tookTradeThisBar
-            alert(tpExitWebhook("hard_stop"), alert.freq_once_per_bar)
-            tookTradeThisBar := true
-
 if useLosingTradeAutoClose and strategy.position_size != 0 and not na(entryPrice) and not mesMJV6Active
     lossThresholdDollars = (strategy.equity * losingTradeThreshold / 100)
     if math.abs(currentProfitDollars) >= lossThresholdDollars and currentProfitDollars < 0 and not exitIssuedThisBar
@@ -3391,25 +3347,25 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
     tpShort = (strategy.position_size < 0)
     tpQty = int(math.abs(strategy.position_size))
     
-    // Alert frequency must follow entry timing mode.
-    tpAlertFreq = entryTimingMode_eff == "Bar Close" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
+    // Alert frequency must follow entryTimingMode, NOT enterOnBarClose.
+    tpAlertFreq = entryTimingMode == "Bar Close" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
     
     // When using "Next Bar Open", the entry decision is based on the PREVIOUS closed bar.
-    tpSigType = entryTimingMode_eff == "Next Bar Open" ? activeSignalType[1] : activeSignalType
-    tpSelPrio = entryTimingMode_eff == "Next Bar Open" ? selectedPriority[1] : selectedPriority
-    tpConfluence = entryTimingMode_eff == "Next Bar Open" ? totalConfluenceScore[1] : totalConfluenceScore
-    tpMtfAlignPct = entryTimingMode_eff == "Next Bar Open" ? mtf_alignment_pct[1] : mtf_alignment_pct
-    tpFiveStarOK = entryTimingMode_eff == "Next Bar Open" ? fiveStarOK[1] : fiveStarOK
-    tpChoppy = entryTimingMode_eff == "Next Bar Open" ? isChoppy[1] : isChoppy
+    tpSigType = entryTimingMode == "Next Bar Open" ? activeSignalType[1] : activeSignalType
+    tpSelPrio = entryTimingMode == "Next Bar Open" ? selectedPriority[1] : selectedPriority
+    tpConfluence = entryTimingMode == "Next Bar Open" ? totalConfluenceScore[1] : totalConfluenceScore
+    tpMtfAlignPct = entryTimingMode == "Next Bar Open" ? mtf_alignment_pct[1] : mtf_alignment_pct
+    tpFiveStarOK = entryTimingMode == "Next Bar Open" ? fiveStarOK[1] : fiveStarOK
+    tpChoppy = entryTimingMode == "Next Bar Open" ? isChoppy[1] : isChoppy
     tpCandleDir =
-         entryTimingMode_eff == "Next Bar Open" ?
+         entryTimingMode == "Next Bar Open" ?
              (candleBull[1] ? "GREEN" : candleBear[1] ? "RED" : "NEUTRAL") :
              (candleBull ? "GREEN" : candleBear ? "RED" : "NEUTRAL")
     
     // Execution price vs signal price.
-    tpExecPrice = entryTimingMode_eff == "Next Bar Open" ? open : close
-    tpSignalPrice = entryTimingMode_eff == "Next Bar Open" ? close[1] : close
-    tpEntryQty = entryTimingMode_eff == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
+    tpExecPrice = entryTimingMode == "Next Bar Open" ? open : close
+    tpSignalPrice = entryTimingMode == "Next Bar Open" ? close[1] : close
+    tpEntryQty = entryTimingMode == "Next Bar Open" ? nz(finalContractQty[1], finalContractQty) : finalContractQty
     
     tpSession =
          isLondonSession ? "LONDON" :
@@ -3446,8 +3402,8 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
     if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 and enableTradersPostAlerts
         bool is3m_chart = timeframe.period == "3"
         bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-        float currentSL_pts = isMES ? mesSL_pts : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
-        float currentTP1_pts = isMES ? mesTP_pts : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+        float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+        float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
         if useManualDollarOverrides and manualDollarSL > 0
             currentSL_pts := manualDollarSL / safePointValue
         if useManualDollarOverrides and manualDollarTP > 0
@@ -3480,8 +3436,8 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
     if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts
         bool is3m_chart = timeframe.period == "3"
         bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
-        float currentSL_pts = isMES ? mesSL_pts : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
-        float currentTP1_pts = isMES ? mesTP_pts : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
+        float currentSL_pts = isMES ? mes_customSL : (useMnq3m ? mnq_customSL_3m : mnq_customSL)
+        float currentTP1_pts = isMES ? mes_customTP : (useMnq3m ? mnq_customTP1_3m : mnq_customTP1)
         if useManualDollarOverrides and manualDollarSL > 0
             currentSL_pts := manualDollarSL / safePointValue
         if useManualDollarOverrides and manualDollarTP > 0
