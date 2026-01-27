@@ -424,8 +424,9 @@ mtf_tf1 = input.timeframe("15", "V8: MTF 1")
 mtf_tf2 = input.timeframe("60", "V8: MTF 2")
 mtf_tf3 = input.timeframe("240", "V8: MTF 3")
 mtfAlignThreshold = input.int(50, "V8: MTF Alignment % Threshold", minval=0, maxval=100)
+mnqMtfStrictTF = isMNQ and (timeframe.period == "3" or timeframe.period == "5")
 mtfAlignThreshold_eff =
-     (isMNQ_3m or isMNQ_5m) ? math.max(mtfAlignThreshold, 67) : mtfAlignThreshold
+     mnqMtfStrictTF ? math.max(mtfAlignThreshold, 67) : mtfAlignThreshold
 mtfStrictGroup = "V8: MTF Strict (SMA50 15m+60m)"
 enableMTFStrictFilter = input.bool(true, "✅ MTF STRICT: require 15m+60m SMA50 alignment", group=mtfStrictGroup)
 mtfStrictSmaLen = input.int(50, "MTF STRICT: SMA length", minval=10, maxval=200, group=mtfStrictGroup)
@@ -1291,13 +1292,6 @@ tibShort =
 // Impulse/breakout classifier (allowed in sideways conditions).
 impulseBreakoutLong = impulseLong or runTriggerLong or tibLong
 impulseBreakoutShort = impulseShort or runTriggerShort or tibShort
-mnqStrictTF = isMNQ_3m or isMNQ_5m
-mnqStrictLongOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutLong
-mnqStrictShortOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutShort
-mnqAtrExpLongOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutLong
-mnqAtrExpShortOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutShort
-mnqTrendLongOK = (not mnqStrictTF) or trendAlignedLongFast or trendAlignedLong or impulseBreakoutLong
-mnqTrendShortOK = (not mnqStrictTF) or trendAlignedShortFast or trendAlignedShort or impulseBreakoutShort
 var int lastIgnBar = na
 var int lastIgnDir = 0
 if tibLong
@@ -1338,6 +1332,13 @@ adxValue = adx(14, 14)
 effMinADXForEntry = (isMES and enableMesAntiChop) ? mesMinADXForEntry : minADXForEntry
 // V71: Strict entry filter (restored as an ENTRY GATE; strong-signal bypass happens later)
 v71_strictEntryOK = not enableStrictEntryFilter or (adxValue >= effMinADXForEntry and rsi >= minRSIRangeLow and rsi <= minRSIRangeHigh)
+mnqStrictTF = isMNQ_3m or isMNQ_5m
+mnqStrictLongOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutLong
+mnqStrictShortOK = (not mnqStrictTF) or v71_strictEntryOK or impulseBreakoutShort
+mnqAtrExpLongOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutLong
+mnqAtrExpShortOK = (not mnqStrictTF) or atrExpandingNow or impulseBreakoutShort
+mnqTrendLongOK = (not mnqStrictTF) or trendAlignedLongFast or trendAlignedLong or impulseBreakoutLong
+mnqTrendShortOK = (not mnqStrictTF) or trendAlignedShortFast or trendAlignedShort or impulseBreakoutShort
 // Early trend strength flag (used before `strongTrend` is defined later in the script)
 strongTrendEarly = trendStrength > 0.15
 // Choppy detection
