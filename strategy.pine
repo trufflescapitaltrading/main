@@ -238,7 +238,7 @@ nuclearExtraFactor = input.float(2.5, "Nuclear Distance Factor", minval=1.5, max
 nuclearMaxBars = input.int(150, "Nuclear Max Bars", minval=10, maxval=500, group=emergencyGroup)
 // ==================== 🕐 SESSION FILTERS (FIXED) ====================
 sessionGroup = "🌍 Trading Sessions & Times"
-enable24_7Trading = input.bool(true, "✅ Enable 24/7 Trading", group=sessionGroup)
+enable24_7Trading = input.bool(false, "✅ Enable 24/7 Trading", group=sessionGroup)
 tradeWhen24x7Off = input.string("Sessions", "When 24/7 is OFF, trade using", options=["Sessions","Trading Hours"], group=sessionGroup)
 enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
 tradingHoursStart = input.int(830, "Start (8:30 AM ET)", minval=0, maxval=2359, group=sessionGroup)
