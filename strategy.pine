@@ -117,9 +117,6 @@ kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entri
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 useV20KenyaPerfectProfit = input.bool(false, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
-// MNQ 3m expectancy fix:
-// The classic Kenya 60/25/10/5 ladder can go negative at ~50–55% WR because losses are full-size while wins are often partial.
-// This booster is SINGLE-CONTRACT ONLY and is designed to lift MNQ 3m WR + expectancy without changing multi-contract behavior.
 kenyaMnq3mUseSingleBooster = input.bool(false, "MNQ 3m: Kenya SINGLE booster (1 contract)", group=kenyaGroup)
 kenyaMnq3mTargetPctOfTP1 = input.float(0.75, "MNQ 3m booster: target = TP1 × pct", minval=0.40, maxval=1.00, step=0.05, group=kenyaGroup)
 kenyaMnq3mBETriggerPctOfTarget = input.float(0.55, "MNQ 3m booster: move stop to BE after target × pct", minval=0.20, maxval=1.00, step=0.05, group=kenyaGroup)
@@ -172,9 +169,6 @@ allowIntrabarForP1P2 = input.bool(true, "Allow intrabar entries for P1/P2 (earli
 require5mCandleColorConfirm = input.bool(true, "3m entries require 5m candle color confirmation", group=entryGroup)
 // ==================== 🕐 ENTRY TIMING (Fix “late entries” + wrong-color candles) ====================
 timingGroup = "🕐 Entry Timing"
-// Key fix:
-// - Intrabar entries can LOOK like they fired on the “wrong color” candle because the candle flips color before close.
-// - “Next Bar Open” uses the previous CLOSED candle signal, then enters at the next bar open (earlier than waiting for another full candle, but stable).
 entryTimingMode = input.string("Next Bar Open", "Entry timing mode", options=["Bar Close","Next Bar Open","Intrabar"], group=timingGroup)
 // Hard guarantee: entries execute on the candle that matches direction (prevents “entry prints on opposite color”).
 forceBarCloseForStrictCandleDirection = input.bool(true, "STRICT: enforce candle color on executed bar (forces Bar Close)", group=timingGroup)
@@ -2422,10 +2416,6 @@ if shortCondition and strategy.position_size == 0 and allowEntryShort and finalC
     lastSignalDir := -1
     lastSignalBar := bar_index
 // ==================== 🔥 PROFIT SYSTEM (60/25/10/5) ====================
-// Restored for MNQ 3m:
-// - mnq_useCustom3m actually controls whether 3m SL/TP settings are used
-// - HighWinRateMode TP/SL multipliers apply to MNQ 3m + 5m
-// - Single-contract mode targets TP1 for MNQ 3m/5m in HighWinRateMode (the "83% WR" behavior)
 // V71: Calculate current volatility adjustment factor
 v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
@@ -3316,5 +3306,3 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 [newTradeIdTmp, newTookTmp] = f_traderspostAlerts(tpTradeId, tookTradeThisBar)
 tpTradeId := newTradeIdTmp
 tookTradeThisBar := newTookTmp
-// ==================== 📊 VISUALS / TABLE REMOVED ====================
-// Token-limit optimization: removed plots/bgcolors/perf table (trading logic unchanged).
