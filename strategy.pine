@@ -89,7 +89,7 @@ mesMJV6TrailActivationRatio = input.float(0.60, "MES MJV6: Trail activation rati
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE ====================
 mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
 enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
-mesOnlyRegularSession = input.bool(true, "MES: Trade only Regular Session (filters chop)", group=mesEntryGateGroup)
+mesOnlyRegularSession = input.bool(false, "MES: Trade only Regular Session (filters chop)", group=mesEntryGateGroup)
 mesForceMandatoryTrend = input.bool(true, "MES: Require Mandatory Trend-Only conditions", group=mesEntryGateGroup)
 mesMinConfluenceScore = input.int(5, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
 mesMinMtfDirectionalPct = input.int(67, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
@@ -247,17 +247,17 @@ enableNoTradeZone = input.bool(false, "🚫 No Trade Zone (BLOCKS trades)", grou
 noTradeStart = input.int(0, "No Trade Start (12:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
 noTradeEnd = input.int(600, "No Trade End (6:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
 enableAsianSession = input.bool(true, "🇯🇵 Asian Session", group=sessionGroup)
-asianStart = input.int(1900, "Asian Start (ET)", minval=0, maxval=2359, group=sessionGroup)
-asianEnd = input.int(300, "Asian End (ET)", minval=0, maxval=2359, group=sessionGroup)
+asianStart = input.int(2000, "Asian Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+asianEnd = input.int(400, "Asian End (ET)", minval=0, maxval=2359, group=sessionGroup)
 enableLondonSession = input.bool(true, "🇬🇧 London Session", group=sessionGroup)
 londonStart = input.int(300, "London Start (ET)", minval=0, maxval=2359, group=sessionGroup)
 londonEnd = input.int(1200, "London End (ET)", minval=0, maxval=2359, group=sessionGroup)
 enableNYSession = input.bool(true, "🇺🇸 NY Session", group=sessionGroup)
-nyStart = input.int(400, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
-nyEnd = input.int(2000, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyStart = input.int(930, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyEnd = input.int(1600, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
 enableUAESession = input.bool(true, "🇦🇪 UAE Session", group=sessionGroup)
-uaeStart = input.int(0, "UAE Start (ET)", minval=0, maxval=2359, group=sessionGroup)
-uaeEnd = input.int(800, "UAE End (ET)", minval=0, maxval=2359, group=sessionGroup)
+uaeStart = input.int(100, "UAE Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+uaeEnd = input.int(900, "UAE End (ET)", minval=0, maxval=2359, group=sessionGroup)
 asianBestInstruments = input.string("MNQ,MES,MGC", "Asian Best Instruments", group=sessionGroup)
 londonBestInstruments = input.string("MGC,MCL,MES", "London Best Instruments", group=sessionGroup)
 nyBestInstruments = input.string("MES,MNQ,MYM", "NY Best Instruments", group=sessionGroup)
@@ -362,7 +362,7 @@ optimalSessionGroup = "🕐 Optimal Liquidity Sessions"
 useOptimalSessionsOnly = input.bool(false, "⚠️ BONUS for Optimal (not blocking)", group=optimalSessionGroup)
 optNyOpenStart = input.int(930, "NY Open Start (ET)", group=optimalSessionGroup)
 optNyOpenEnd = input.int(1130, "NY Open End (ET)", group=optimalSessionGroup)
-optNyCloseStart = input.int(1400, "NY Close Start (ET)", group=optimalSessionGroup)
+optNyCloseStart = input.int(1500, "NY Close Start (ET)", group=optimalSessionGroup)
 optNyCloseEnd = input.int(1600, "NY Close End (ET)", group=optimalSessionGroup)
 optOverlapStart = input.int(800, "London/NY Overlap Start (ET)", group=optimalSessionGroup)
 optOverlapEnd = input.int(1200, "London/NY Overlap End (ET)", group=optimalSessionGroup)
@@ -561,10 +561,10 @@ quickExitMode = input.bool(true, "Quick Exit Mode")
 baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50)
 maxHoldingBars = isMYM ? math.round(baseMaxHolding * 0.95) : isMNQ ? baseMaxHolding : isMES ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : isM2K ? math.round(baseMaxHolding * 1.1) : baseMaxHolding
 enableSessionFilters = input.bool(true, "Enable Session Filters")
-preMarketStart = input.int(600, "Pre-Market Start (ET)", minval=0, maxval=2359)
+preMarketStart = input.int(400, "Pre-Market Start (ET)", minval=0, maxval=2359)
 regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
 regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
-afterHoursEnd = input.int(1700, "After Hours End (ET)", minval=0, maxval=2359)
+afterHoursEnd = input.int(2000, "After Hours End (ET)", minval=0, maxval=2359)
 holdGroup = "⏱️ Max Hold Bars"
 enableMaxHoldExit = input.bool(false, "Force Exit After Max Hold - DISABLED", group=holdGroup)
 maxHoldBars = input.int(200, "Max Hold Bars - WIDE", minval=5, maxval=500, group=holdGroup)
@@ -702,7 +702,7 @@ tfMultiplier1h = isMYM ? baseTfMultiplier1h * 0.98 : isMNQ ? baseTfMultiplier1h 
 tfMultiplier2h = isMYM ? baseTfMultiplier2h * 0.97 : isMNQ ? baseTfMultiplier2h * 0.95 : isMES ? baseTfMultiplier2h * 0.95 : isMCL ? baseTfMultiplier2h : isMGC ? baseTfMultiplier2h * 1.05 : isM2K ? baseTfMultiplier2h * 0.96 : baseTfMultiplier2h
 tfMultiplier4h = isMYM ? baseTfMultiplier4h * 0.96 : isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
 // ==================== 🔢 CALCULATIONS START ====================
-sessionTZ = input.string("America/Chicago", "Session timezone (time filters)", group=sessionGroup)
+sessionTZ = input.string("America/New_York", "Session timezone (time filters)", group=sessionGroup)
 currentHourTZ = hour(time, sessionTZ)
 currentMinuteTZ = minute(time, sessionTZ)
 currentTime = currentHourTZ * 100 + currentMinuteTZ
@@ -2688,7 +2688,7 @@ if (allowMultiProfitModules or not mjv6UltraActive) and mesFixedActive and strat
         strategy.exit("MES_HARD_BRACKET_L", from_entry="LONG", stop=avgPxMes - mesSL_pts, limit=avgPxMes + mesTP_pts)
     else
         strategy.exit("MES_HARD_BRACKET_S", from_entry="SHORT", stop=avgPxMes + mesSL_pts, limit=avgPxMes - mesTP_pts)
-if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size > 0 and not (isMES and useMJV6MesProfitLogic_eff)
+if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size > 0 and (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
@@ -2855,7 +2855,7 @@ if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) a
                 strategy.exit("V71_TP4_L", from_entry="LONG", qty_percent=5, profit=tp4Ticks)
             if useSL
                 strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
-if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size < 0 and not (isMES and useMJV6MesProfitLogic_eff)
+if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size < 0 and (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
     localEntryPrice = strategy.position_avg_price
     bool is3m_chart = timeframe.period == "3"
     bool useMnq3m = isMNQ and is3m_chart and mnq_useCustom3m
