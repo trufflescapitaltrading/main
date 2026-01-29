@@ -1671,8 +1671,6 @@ allowedBearPattern = (enableTier1 and tier1Bear) or (enableTier2 and tier2Bear) 
 
 priceMovePct = math.abs((close - close[momentumLookback]) / close[momentumLookback]) * 100
 
-priceMovePoints = math.abs(close - close[momentumLookback])
-
 momentumUpMove = close > close[momentumLookback] and priceMovePct >= momentumThresholdPct
 
 momentumDownMove = close < close[momentumLookback] and priceMovePct >= momentumThresholdPct
@@ -2176,8 +2174,6 @@ priceLow = ta.lowest(low, 20)
 priceRange = priceHigh - priceLow
 
 priceRangePct = close > 0 ? priceRange / close : 0
-
-isSideways = priceRangePct < 0.015
 
 volBase = ta.sma(volume, 50)
 
