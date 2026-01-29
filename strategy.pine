@@ -91,18 +91,18 @@ mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
 enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
 mesOnlyRegularSession = input.bool(false, "MES: Trade only Regular Session (filters chop)", group=mesEntryGateGroup)
 mesForceMandatoryTrend = input.bool(false, "MES: Require Mandatory Trend-Only conditions", group=mesEntryGateGroup)
-mesMinConfluenceScore = input.int(3, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
-mesMinMtfDirectionalPct = input.int(50, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
-mesRestrictToPminus1P1P2 = input.bool(true, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
+mesMinConfluenceScore = input.int(2, "MES: Min confluence score (0-7)", minval=0, maxval=7, group=mesEntryGateGroup)
+mesMinMtfDirectionalPct = input.int(33, "MES: Min MTF alignment % (Filter mode)", minval=0, maxval=100, group=mesEntryGateGroup)
+mesRestrictToPminus1P1P2 = input.bool(false, "MES: Only allow P-1/P1/P2 entries", group=mesEntryGateGroup)
 // ==================== 🎯 FILTER HARMONY (Make filters cooperate) ====================
 filterHarmonyGroup = "🎯 Filter Harmony (Quality Scoring)"
 enableFilterHarmony = input.bool(true, "✅ Enable Filter Harmony (recommended)", group=filterHarmonyGroup)
-fhMinQuality = input.float(60.0, "Min quality to enter (%)", minval=40.0, maxval=95.0, step=1.0, group=filterHarmonyGroup)
+fhMinQuality = input.float(50.0, "Min quality to enter (%)", minval=40.0, maxval=95.0, step=1.0, group=filterHarmonyGroup)
 fhStrongOverrideFactor = input.float(0.85, "Strong-signal threshold factor", minval=0.60, maxval=0.95, step=0.01, group=filterHarmonyGroup)
 fhTieTolerance = input.float(5.0, "Tie tolerance (%)", minval=0.0, maxval=20.0, step=1.0, group=filterHarmonyGroup)
 fhGrayZonePenalty = input.float(10.0, "Gray-zone penalty (points)", minval=0.0, maxval=30.0, step=1.0, group=filterHarmonyGroup)
 fhAllowSwingInGrayZone = input.bool(false, "Allow swing signals in gray zone if quality high", group=filterHarmonyGroup)
-fhAvoidSidewaysEntries = input.bool(true, "✅ Avoid sideways/chop/gray-zone entries", group=filterHarmonyGroup)
+fhAvoidSidewaysEntries = input.bool(false, "✅ Avoid sideways/chop/gray-zone entries", group=filterHarmonyGroup)
 fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only if VERY strong", group=filterHarmonyGroup)
 // Strategy Tester fix: if you set Alert Only Mode = ON, TradingView strategy tester shows no trades.
 // This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
@@ -125,9 +125,9 @@ kenyaMnq3mTargetPctOfTP1 = input.float(0.75, "MNQ 3m booster: target = TP1 × pc
 kenyaMnq3mBETriggerPctOfTarget = input.float(0.55, "MNQ 3m booster: move stop to BE after target × pct", minval=0.20, maxval=1.00, step=0.05, group=kenyaGroup)
 kenyaMnq3mUseFeesForBE = input.bool(true, "MNQ 3m booster: BE includes fees/slippage", group=kenyaGroup)
 profitLogicModeGroup = "📈 Profit Logic Mode"
-useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
-useMJV6UltraProfitLogic = input.bool(true, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
-allowMultiProfitModules = input.bool(true, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
+useOriginalProfitLogic = input.bool(true, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
+useMJV6UltraProfitLogic = input.bool(false, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
+allowMultiProfitModules = input.bool(false, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
 mjv6UltraActive = useMJV6UltraProfitLogic
 mnqMJV6Group = "📈 MNQ MJV6 Ultra Tuning"
 mnqMJV6TPMult_3m = input.float(1.60, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
@@ -158,7 +158,7 @@ quickScalpBars = input.int(5, "Quick Scalp Max Bars", minval=2, maxval=15, group
 enableVolatilityAdjustedExits = input.bool(true, "✅ Volatility-Adjusted Exits", group=winOptGroup)
 volAdjustFactor = input.float(0.8, "Vol Adjustment Factor", minval=0.5, maxval=1.2)
 enableStrictEntryFilter = input.bool(true, "✅ Strict Entry Filter for Higher WR", group=winOptGroup)
-minADXForEntry = input.float(18.0, "Min ADX for Entry", minval=10, maxval=30, group=winOptGroup)
+minADXForEntry = input.float(14.0, "Min ADX for Entry", minval=10, maxval=30, group=winOptGroup)
 minRSIRangeLow = input.float(35.0, "RSI Range Low", minval=20, maxval=45, group=winOptGroup)
 minRSIRangeHigh = input.float(65.0, "RSI Range High", minval=55, maxval=80, group=winOptGroup)
 // Trend Runner Mode: avoid premature exits during strong multi-candle runs.
@@ -181,10 +181,10 @@ forceBarCloseForStrictCandleDirection = input.bool(true, "STRICT: enforce candle
 useFastEmaForEarlyTrend = input.bool(true, "Use FAST EMA alignment for early trend entries", group=timingGroup)
 // ==================== 🛡️ MES ANTI-CHOP GUARD ====================
 mesGuardGroup = "🛡️ MES Anti-Chop Guard"
-enableMesAntiChop = input.bool(true, "Enable MES stricter filters (reduces chop entries)", group=mesGuardGroup)
-mesMinADXForEntry = input.float(22.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
+enableMesAntiChop = input.bool(false, "Enable MES stricter filters (reduces chop entries)", group=mesGuardGroup)
+mesMinADXForEntry = input.float(15.0, "MES Min ADX", minval=10, maxval=40, group=mesGuardGroup)
 mesConfluenceBoost = input.int(1, "MES Confluence +", minval=0, maxval=5, group=mesGuardGroup)
-mesMinHTFAligned = input.int(2, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
+mesMinHTFAligned = input.int(1, "MES Min HTF Align (1-3)", minval=1, maxval=3, group=mesGuardGroup)
 // ==================== ✅ MANDATORY TREND-ONLY FILTER (NON-NEGOTIABLE) ====================
 trendOnlyGroup = "✅ Mandatory Trend-Only Filter"
 enableMandatoryTrendOnly = input.bool(false, "Enable Mandatory Trend-Only Filter (hard block)", group=trendOnlyGroup)
@@ -223,9 +223,9 @@ trendOverrideVolMultiplier = input.float(0.6, "Volume Multiplier for Override", 
 trendOverrideRangeMultiplier = input.float(0.9, "Range Multiplier for Override", minval=0.5, maxval=3.0, group="Trend Override")
 choppyFilterGroup = "Choppy Market Filter"
 enableChoppyFilter = input.bool(true, "Enable Choppy/Sideways Market Filter", group=choppyFilterGroup)
-choppyADXThreshold = input.float(18.0, "ADX Threshold (below = choppy)", minval=10.0, maxval=35.0, group=choppyFilterGroup)
-choppyATRMultiplier = input.float(0.85, "ATR Multiplier (below avg = choppy)", minval=0.5, maxval=1.2, group=choppyFilterGroup)
-choppyBBWidthThreshold = input.float(0.020, "BB Width Threshold", minval=0.005, maxval=0.050, group=choppyFilterGroup)
+choppyADXThreshold = input.float(15.0, "ADX Threshold (below = choppy)", minval=10.0, maxval=35.0, group=choppyFilterGroup)
+choppyATRMultiplier = input.float(0.80, "ATR Multiplier (below avg = choppy)", minval=0.5, maxval=1.2, group=choppyFilterGroup)
+choppyBBWidthThreshold = input.float(0.018, "BB Width Threshold", minval=0.005, maxval=0.050, group=choppyFilterGroup)
 disableChoppyInTrend = input.bool(true, "Disable Choppy Filter During Trends", group=choppyFilterGroup)
 disableChoppyInPosition = input.bool(false, "Disable Choppy When In Position", group=choppyFilterGroup)
 emergencyGroup = "V8 Emergency Safety System"
@@ -241,8 +241,8 @@ sessionGroup = "🌍 Trading Sessions & Times"
 enable24_7Trading = input.bool(true, "✅ Enable 24/7 Trading", group=sessionGroup)
 tradeWhen24x7Off = input.string("Sessions", "When 24/7 is OFF, trade using", options=["Sessions","Trading Hours"], group=sessionGroup)
 enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
-tradingHoursStart = input.int(400, "Start (4:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
-tradingHoursEnd = input.int(2000, "End (8:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursStart = input.int(830, "Start (8:30 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(1700, "End (5:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
 enableNoTradeZone = input.bool(false, "🚫 No Trade Zone (BLOCKS trades)", group=sessionGroup)
 noTradeStart = input.int(0, "No Trade Start (12:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
 noTradeEnd = input.int(600, "No Trade End (6:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
@@ -253,8 +253,8 @@ enableLondonSession = input.bool(true, "🇬🇧 London Session", group=sessionG
 londonStart = input.int(300, "London Start (ET)", minval=0, maxval=2359, group=sessionGroup)
 londonEnd = input.int(1200, "London End (ET)", minval=0, maxval=2359, group=sessionGroup)
 enableNYSession = input.bool(true, "🇺🇸 NY Session", group=sessionGroup)
-nyStart = input.int(930, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
-nyEnd = input.int(1600, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyStart = input.int(830, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyEnd = input.int(1700, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
 enableUAESession = input.bool(true, "🇦🇪 UAE Session", group=sessionGroup)
 uaeStart = input.int(100, "UAE Start (ET)", minval=0, maxval=2359, group=sessionGroup)
 uaeEnd = input.int(900, "UAE End (ET)", minval=0, maxval=2359, group=sessionGroup)
@@ -271,8 +271,8 @@ enableScalpSignals = input.bool(true, "Enable SCALP Signals")
 enableInstantSignals = input.bool(true, "Enable INSTANT Signals")
 enableMicroSignals = input.bool(true, "Enable MICRO Signals")
 enableDailyTradeLimit = input.bool(true, "Enable Daily Trade Limit")
-maxDailyTrades = input.int(20, "Max Daily Trades", minval=5, maxval=200)
-mnqMaxDailyTrades = input.int(80, "MNQ 3m/5m Max Daily Trades", minval=10, maxval=400, group=sessionGroup)
+maxDailyTrades = input.int(15, "Max Daily Trades", minval=5, maxval=200)
+mnqMaxDailyTrades = input.int(15, "MNQ 3m/5m Max Daily Trades", minval=10, maxval=400, group=sessionGroup)
 var float peakProfit = 0.0
 var int positionBars = 0
 maxLossMGC = 60.0
@@ -317,9 +317,9 @@ perInstGroup = "Per-Instrument Trade Settings"
 mes_useCustom = input.bool(true, "MES: Use Custom SL/TP/Size", group=perInstGroup)
 // MES hard overrides (requested): fixed $ SL by timeframe + fixed $ TP per contract.
 mesUseFixedDollarSLTP = input.bool(true, "MES 3m/5m: Use FIXED $ SL/TP (hard)", group=perInstGroup)
-mesFixedSLDol_3m = input.float(35.0, "MES 3m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedSLDol_5m = input.float(55.0, "MES 5m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedTPDol = input.float(80.0, "MES 3m/5m: Take Profit ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesFixedSLDol_3m = input.float(30.0, "MES 3m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesFixedSLDol_5m = input.float(40.0, "MES 5m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesFixedTPDol = input.float(50.0, "MES 3m/5m: Take Profit ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
 // Fallbacks (points) for non-3m/5m or when fixed $ overrides are disabled.
 mes_customSL = input.float(14.0, "MES: Stop Loss (points) [fallback]", group=perInstGroup)
 mes_customTP = input.float(16.0, "MES: Take Profit (points) [fallback]", group=perInstGroup)
@@ -482,8 +482,8 @@ volRegimeOK = not enableVolRegime or ((not blockLowVol or not lowVolRegime) and 
 // ==================== 📊 STREAK PROTECTION ====================
 streakGroup = "📊 Win/Loss Streak Protection"
 enableStreakProtection = input.bool(true, "Enable Streak Protection", group=streakGroup)
-maxConsecutiveLosses = input.int(3, "Max Consecutive Losses", minval=1, maxval=10, group=streakGroup)
-pauseBarsAfterLossStreak = input.int(30, "Pause Bars After Loss Streak", minval=0, maxval=500, group=streakGroup)
+maxConsecutiveLosses = input.int(2, "Max Consecutive Losses", minval=1, maxval=10, group=streakGroup)
+pauseBarsAfterLossStreak = input.int(20, "Pause Bars After Loss Streak", minval=0, maxval=500, group=streakGroup)
 resetStreakOnNewDay = input.bool(true, "Reset Streak Daily", group=streakGroup)
 var int consecutiveLosses = 0
 var int consecutiveWins = 0
@@ -525,7 +525,7 @@ timeProfitThreshold = input.int(15, "Time Profit Threshold (bars)", minval=5, ma
 prodGroup = "🛡️ Production Safety"
 enableDailyLossCircuit = input.bool(true, "✅ Enable Daily Loss Circuit", group=prodGroup)
 dailyLossMode = input.string("Dollar", "Daily Loss Mode", options=["Percent", "Dollar"], group=prodGroup)
-maxDailyLossDollars = input.float(450.0, "Max Daily Loss ($)", minval=50, maxval=5000, group=prodGroup)
+maxDailyLossDollars = input.float(300.0, "Max Daily Loss ($)", minval=50, maxval=5000, group=prodGroup)
 enableDedupe = input.bool(true, "✅ Enable Dedupe", group=prodGroup)
 dedupeBars = input.int(2, "Dedupe Bars", minval=0, maxval=50, group=prodGroup)
 dedupeSameBar = input.bool(true, "Block 2nd entry same bar", group=prodGroup)
@@ -562,8 +562,8 @@ baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50)
 maxHoldingBars = isMYM ? math.round(baseMaxHolding * 0.95) : isMNQ ? baseMaxHolding : isMES ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : isM2K ? math.round(baseMaxHolding * 1.1) : baseMaxHolding
 enableSessionFilters = input.bool(true, "Enable Session Filters")
 preMarketStart = input.int(400, "Pre-Market Start (ET)", minval=0, maxval=2359)
-regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
-regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
+regularSessionStart = input.int(830, "Regular Session Start (ET)", minval=0, maxval=2359)
+regularSessionEnd = input.int(1700, "Regular Session End (ET)", minval=0, maxval=2359)
 afterHoursEnd = input.int(2000, "After Hours End (ET)", minval=0, maxval=2359)
 holdGroup = "⏱️ Max Hold Bars"
 enableMaxHoldExit = input.bool(false, "Force Exit After Max Hold - DISABLED", group=holdGroup)
@@ -664,9 +664,9 @@ permGroup = "🧭 Higher-TF Permission Chain"
 mnq3mRequire5mPermission = input.bool(true, "MNQ 3m requires MNQ 5m OK", group=permGroup)
 mnq5mRequire15mPermission = input.bool(true, "MNQ 5m requires MNQ 15m OK", group=permGroup)
 mnq15mRequire30mPermission = input.bool(true, "MNQ 15m requires MNQ 30m OK", group=permGroup)
-mes3mRequire5mPermission = input.bool(true, "MES 3m requires MES 5m OK", group=permGroup)
-mes5mRequire15mPermission = input.bool(true, "MES 5m requires MES 15m OK", group=permGroup)
-mes15mRequire30mPermission = input.bool(true, "MES 15m requires MES 30m OK", group=permGroup)
+mes3mRequire5mPermission = input.bool(false, "MES 3m requires MES 5m OK", group=permGroup)
+mes5mRequire15mPermission = input.bool(false, "MES 5m requires MES 15m OK", group=permGroup)
+mes15mRequire30mPermission = input.bool(false, "MES 15m requires MES 30m OK", group=permGroup)
 mnq3mAllowBigMoveBypass = input.bool(true, "MNQ 3m: allow big-move bypass of 5m permission", group=permGroup)
 mes3mAllowBigMoveBypass = input.bool(true, "MES 3m: allow big-move bypass of 5m permission", group=permGroup)
 permOK(tf) =>
