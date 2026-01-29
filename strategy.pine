@@ -106,8 +106,6 @@ fhAvoidSidewaysEntries = input.bool(false, "✅ Avoid sideways/chop/gray-zone en
 fhSidewaysBypassOnlyIfVeryStrong = input.bool(true, "Bypass sideways block only if VERY strong", group=filterHarmonyGroup)
 // Strategy Tester fix: if you set Alert Only Mode = ON, TradingView strategy tester shows no trades.
 // This switch forces strategy orders to still place in backtests while preserving your alert routing logic.
-backtestGroup = "🧪 Backtest / Live Mode"
-forceStrategyOrdersForBacktest = input.bool(true, "✅ Force strategy orders in backtest (even if Alert Only Mode)", group=backtestGroup)
 // ==================== 🔥 MNQ 3m/5m "KENYA" PROFIT LOGIC (AS POSTED) ====================
 kenyaGroup = "🔥 MNQ 3m/5m Profit Logic (Kenya)"
 mnqProfitMode = input.string("MJV6 Ultra", "MNQ Profit Mode", options=["MJV6 Ultra","Kenya"], group=kenyaGroup)
@@ -202,7 +200,6 @@ allowPriority5 = input.bool(true, "P5: 3-Star Entry", group=priorityGroup)
 allowPriority6 = input.bool(false, "P6: 2-Star Entry", group=priorityGroup)
 allowPriority7 = input.bool(false, "P7: Swing Signal", group=priorityGroup)
 group_entryConfirm = "✅ Entry Confirmation"
-requireCandleDirection = input.bool(true, "⚠️ STRICT: Long=Green, Short=Red", group=group_entryConfirm)
 requireBodyStrength = input.bool(false, "Require Body Strength", group=group_entryConfirm)
 minBodyPctOfATR = input.float(0.10, "Min Body % of ATR", minval=0.0, maxval=1.0, step=0.01, group=group_entryConfirm)
 enableImpulseOverride = input.bool(true, "Enable Impulse Override", group=group_entryConfirm)
@@ -598,7 +595,6 @@ baseVolatilityMultiplier = input.float(2.2, "Base Volatility Multiplier", minval
 volatilityMultiplier = isMYM ? baseVolatilityMultiplier * 1.3 : isMNQ ? baseVolatilityMultiplier * 1.2 : isMES ? baseVolatilityMultiplier * 1.2 : isMCL ? baseVolatilityMultiplier * 1.1 : isMGC ? baseVolatilityMultiplier : isM2K ? baseVolatilityMultiplier * 1.15 : baseVolatilityMultiplier
 baseWinRateBoost = input.float(1.8, "Base Win Rate Boost", minval=1.2, maxval=3.0)
 winRateBoost = isMYM ? baseWinRateBoost * 1.1 : isMNQ ? baseWinRateBoost * 1.05 : isMES ? baseWinRateBoost * 1.05 : isMCL ? baseWinRateBoost : isMGC ? baseWinRateBoost * 0.95 : isM2K ? baseWinRateBoost * 1.0 : baseWinRateBoost
-useMarketRegime = input.bool(true, "Use Market Regime Detection")
 baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12)
 baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12)
 trendStrengthPeriod = isMYM ? math.round(baseTrendPeriod * 1.0) : isMNQ ? math.round(baseTrendPeriod * 1.2) : isMES ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isM2K ? math.round(baseTrendPeriod * 1.1) : baseTrendPeriod
@@ -1793,16 +1789,12 @@ var bool tookTradeThisBar = false
 var string entryPriority = "NONE"
 var string activeSignalType = "NONE"
 // Filter Harmony debug (shown in Data Window)
-var float fhQualityLong_dbg = na
-var float fhQualityShort_dbg = na
 // Exit arbitration + diagnostics (prevents multiple conflicting closes per bar).
 var bool exitIssuedThisBar = false
 var string lastExitReason = "NONE"
 if barstate.isnew
     tookTradeThisBar := false
     exitIssuedThisBar := false
-    fhQualityLong_dbg := na
-    fhQualityShort_dbg := na
 bool canEnterNewPosition = strategy.position_size == 0
 maxDailyTrades_eff = (isMNQ_3m or isMNQ_5m) ? mnqMaxDailyTrades : maxDailyTrades
 maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades_eff
@@ -2136,8 +2128,6 @@ if not tookTradeThisBar
              fhTrendLong + fhSignalLong + fhConflLong + fhStarLong + fhPatternScoreLong + fhCandleLong + fhHtfLong + fhMtfLong + fhBiasLong + fhCooldownLong + fhMesLong + fh5mBonusLong - fhGrayPenaltyLong))
         fhQualityShort = math.max(0.0, math.min(100.0,
              fhTrendShort + fhSignalShort + fhConflShort + fhStarShort + fhPatternScoreShort + fhCandleShort + fhHtfShort + fhMtfShort + fhBiasShort + fhCooldownShort + fhMesShort + fh5mBonusShort - fhGrayPenaltyShort))
-        fhQualityLong_dbg := fhQualityLong
-        fhQualityShort_dbg := fhQualityShort
         // Eligibility (threshold + strong-signal discount)
         fhMinLong = fhMinQuality + ((isMNQ_3m or isMNQ_5m) ? 5.0 : 0.0)
         fhMinShort = fhMinQuality + ((isMNQ_3m or isMNQ_5m) ? 5.0 : 0.0)
@@ -2207,7 +2197,6 @@ if not tookTradeThisBar
                      swingSellSignal ? "P7:SWING" :
                      "HARMONY"
                 entryPriority := selectedPriority
-        // (Plots are declared in global scope; we only update *_dbg vars here.)
 var int lastLongSignalBar = na
 var int lastShortSignalBar = na
 barsSinceLongSignal = na(lastLongSignalBar) ? 999999 : (bar_index - lastLongSignalBar)
@@ -2290,65 +2279,7 @@ bool shortCondition =
       entryTimingMode_eff == "Bar Close" ? (entryOK_barclose and curCandleOK and shouldEnterShort) :
       (entryOK_nextopen and prevCandleOK and shouldEnterShort[1])) and
      not tookTradeThisBar
-// Preserve existing downstream logic that expects `entryOK` for alerts/logs.
 entryOK = (entryTimingMode_eff == "Intrabar" ? entryOK_intrabar : entryTimingMode_eff == "Bar Close" ? entryOK_barclose : entryOK_nextopen)
-// ==================== 🧠 ENTRY BLOCK-REASON INSTRUMENTATION ====================
-var string lastBlockReason = "NONE"
-rawLongSignal = (hasTrendStartLong or hasMomentumOverrideLong or impulseLong or hasTrendOverrideBull or tibLong or cpbLong or ultraBuySignal or swingBuySignal)
-rawShortSignal = (hasTrendStartShort or hasMomentumOverrideShort or impulseShort or hasTrendOverrideBear or tibShort or cpbShort or ultraSellSignal or swingSellSignal)
-if strategy.position_size == 0
-    // Default to NONE unless we detect a blocked actionable signal.
-    lastBlockReason := "NONE"
-    // Long-side block reason (only when a long-ish signal exists but no long entry fires)
-    if rawLongSignal and not longCondition
-        lastBlockReason :=
-             not canTradeNow ? "TIME" :
-             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
-             maxTradesReached ? "DAILY_TRADES" :
-             maxLossReached ? "DAILY_LOSS" :
-             profitTargetReached ? "DAILY_TARGET" :
-             instrumentRiskLimitReached ? "INSTR_RISK" :
-             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
-             (enableTrendOnly and not routerLongRegimeOK and not bypassLong) ? "TREND_ONLY" :
-             (enableBestSideRouter and not allowLongByBias) ? "BIAS_LOCK" :
-             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
-             (not volRegimeOK and not (allowImpulseBypassVol and impulseBreakoutLong)) ? "VOL_REGIME" :
-             (not htfConfirmLongOK and not (allowImpulseBypassHTF and impulseBreakoutLong)) ? "HTF_ALIGN" :
-             (not strengthGateLongOK) ? "STRENGTH" :
-             (not (v71_strictEntryOK or strictBypassLong)) ? "STRICT_FILTER" :
-             (not trendOnlyLongGate) ? "MANDATORY_TREND" :
-             (not mtfLongOK) ? "MTF_FILTER" :
-             (sidewaysBlocked and not impulseBreakoutLong) ? "SIDEWAYS" :
-             (not candleConfirmLong) ? "CANDLE_CONFIRM" :
-             (not dedupeLongOK) ? "DEDUPE" :
-             (not htfCandleColorOK_Long) ? "5M_COLOR" :
-             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
-             "OTHER"
-    // Short-side block reason (only when a short-ish signal exists but no short entry fires)
-    else if rawShortSignal and not shortCondition
-        lastBlockReason :=
-             not canTradeNow ? "TIME" :
-             (isMES and enableMesHighWinEntryGate and mesOnlyRegularSession and not isRegularSession) ? "MES_SESSION" :
-             maxTradesReached ? "DAILY_TRADES" :
-             maxLossReached ? "DAILY_LOSS" :
-             profitTargetReached ? "DAILY_TARGET" :
-             instrumentRiskLimitReached ? "INSTR_RISK" :
-             (pauseAfterLosses and not pauseBypass) ? "STREAK_PAUSE" :
-             (enableTrendOnly and not routerShortRegimeOK and not bypassShort) ? "TREND_ONLY" :
-             (enableBestSideRouter and not allowShortByBias) ? "BIAS_LOCK" :
-             (not oppCooldownOK and not bypassLong and not bypassShort) ? "COOLDOWN" :
-             (not volRegimeOK and not (allowImpulseBypassVol and impulseBreakoutShort)) ? "VOL_REGIME" :
-             (not htfConfirmShortOK and not (allowImpulseBypassHTF and impulseBreakoutShort)) ? "HTF_ALIGN" :
-             (not strengthGateShortOK) ? "STRENGTH" :
-             (not (v71_strictEntryOK or strictBypassShort)) ? "STRICT_FILTER" :
-             (not trendOnlyShortGate) ? "MANDATORY_TREND" :
-             (not mtfShortOK) ? "MTF_FILTER" :
-             (sidewaysBlocked and not impulseBreakoutShort) ? "SIDEWAYS" :
-             (not candleConfirmShort) ? "CANDLE_CONFIRM" :
-             (not dedupeShortOK) ? "DEDUPE" :
-             (not htfCandleColorOK_Short) ? "5M_COLOR" :
-             (not entryOK) ? (enterOnBarClose ? "BAR_CLOSE" : "ENTRY_GATE") :
-             "OTHER"
 selectedPriorityForLog = selectedPriority
 if longCondition and strategy.position_size == 0
     sigOff2 = 0
