@@ -80,12 +80,12 @@ mes5mBETriggerPctOfTarget = input.float(0.60, "Move stop to BE after Target × p
 mes5mUseFeesForBE = input.bool(true, "BE includes est. fees/slippage", group=mes5mBoosterGroup)
 // ==================== 🔥 MES MJV6 PROFIT LOGIC (SIMPLIFIED LADDER) ====================
 mesProfitGroup = "🔥 MES Profit Logic (MJV6)"
-useMJV6MesProfitLogic = input.bool(false, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
+useMJV6MesProfitLogic = input.bool(true, "MES: Use MJV6 profit logic (TP ladder + trail + time exit)", group=mesProfitGroup)
 mesMJV6HighWinProtect = input.bool(true, "MES MJV6: High-Win protections (early BE + earlier trail)", group=mesProfitGroup)
-mesMJV6TPScale = input.float(0.85, "MES MJV6: TP scale (smaller = higher WR)", minval=0.50, maxval=1.20, step=0.05, group=mesProfitGroup)
-mesMJV6BETriggerPct = input.float(0.35, "MES MJV6: Move stop to BE after TP distance × pct", minval=0.10, maxval=0.90, step=0.05, group=mesProfitGroup)
+mesMJV6TPScale = input.float(0.75, "MES MJV6: TP scale (smaller = higher WR)", minval=0.50, maxval=1.20, step=0.05, group=mesProfitGroup)
+mesMJV6BETriggerPct = input.float(0.40, "MES MJV6: Move stop to BE after TP distance × pct", minval=0.10, maxval=0.90, step=0.05, group=mesProfitGroup)
 mesMJV6BEUseFees = input.bool(true, "MES MJV6: BE includes est. fees/slippage", group=mesProfitGroup)
-mesMJV6TrailActivationRatio = input.float(0.60, "MES MJV6: Trail activation ratio", minval=0.30, maxval=1.20, step=0.05, group=mesProfitGroup)
+mesMJV6TrailActivationRatio = input.float(0.50, "MES MJV6: Trail activation ratio", minval=0.30, maxval=1.20, step=0.05, group=mesProfitGroup)
 // ==================== 🛡️ MES HIGH-WIN ENTRY GATE ====================
 mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
 enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
@@ -125,7 +125,7 @@ kenyaMnq3mTargetPctOfTP1 = input.float(0.75, "MNQ 3m booster: target = TP1 × pc
 kenyaMnq3mBETriggerPctOfTarget = input.float(0.55, "MNQ 3m booster: move stop to BE after target × pct", minval=0.20, maxval=1.00, step=0.05, group=kenyaGroup)
 kenyaMnq3mUseFeesForBE = input.bool(true, "MNQ 3m booster: BE includes fees/slippage", group=kenyaGroup)
 profitLogicModeGroup = "📈 Profit Logic Mode"
-useOriginalProfitLogic = input.bool(true, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
+useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
 useMJV6UltraProfitLogic = input.bool(false, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
 allowMultiProfitModules = input.bool(false, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
 mjv6UltraActive = useMJV6UltraProfitLogic
@@ -316,10 +316,10 @@ var bool isChoppy = false
 perInstGroup = "Per-Instrument Trade Settings"
 mes_useCustom = input.bool(true, "MES: Use Custom SL/TP/Size", group=perInstGroup)
 // MES hard overrides (requested): fixed $ SL by timeframe + fixed $ TP per contract.
-mesUseFixedDollarSLTP = input.bool(true, "MES 3m/5m: Use FIXED $ SL/TP (hard)", group=perInstGroup)
-mesFixedSLDol_3m = input.float(30.0, "MES 3m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedSLDol_5m = input.float(40.0, "MES 5m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
-mesFixedTPDol = input.float(50.0, "MES 3m/5m: Take Profit ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesUseFixedDollarSLTP = input.bool(false, "MES 3m/5m: Use FIXED $ SL/TP (hard)", group=perInstGroup)
+mesFixedSLDol_3m = input.float(35.0, "MES 3m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesFixedSLDol_5m = input.float(45.0, "MES 5m: Hard Stop Loss ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
+mesFixedTPDol = input.float(80.0, "MES 3m/5m: Take Profit ($/contract)", minval=1.0, maxval=5000.0, step=1.0, group=perInstGroup)
 // Fallbacks (points) for non-3m/5m or when fixed $ overrides are disabled.
 mes_customSL = input.float(14.0, "MES: Stop Loss (points) [fallback]", group=perInstGroup)
 mes_customTP = input.float(16.0, "MES: Take Profit (points) [fallback]", group=perInstGroup)
@@ -356,7 +356,7 @@ m2k_useCustom = input.bool(false, "M2K: Use Custom SL/TP/Size", group=perInstGro
 m2k_customSL = input.float(9.0, "M2K: Stop Loss (points)", group=perInstGroup)
 m2k_customTP = input.float(14.0, "M2K: Take Profit (points)", group=perInstGroup)
 m2k_customQty = input.int(1, "M2K: Position Size", minval=1, maxval=50, group=perInstGroup)
-slExecutionMode = input.string("Max(ATR,Instrument)", "SL Execution Mode", options=["ATR","Instrument","Max(ATR,Instrument)"], group=perInstGroup)
+slExecutionMode = input.string("ATR", "SL Execution Mode", options=["ATR","Instrument","Max(ATR,Instrument)"], group=perInstGroup)
 // ==================== 🕐 OPTIMAL TRADING SESSIONS (FIXED) ====================
 optimalSessionGroup = "🕐 Optimal Liquidity Sessions"
 useOptimalSessionsOnly = input.bool(false, "⚠️ BONUS for Optimal (not blocking)", group=optimalSessionGroup)
@@ -2682,7 +2682,7 @@ if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) a
 // ==================== 🚨 MES FIXED HARD BRACKET (GUARANTEED DIRECTIONAL SL/TP) ====================
 // This enforces the requested hard SL ($35 3m / $45 5m) and TP ($80) per contract on MES 3m/5m,
 // regardless of which profit module is active.
-if (allowMultiProfitModules or not mjv6UltraActive) and mesFixedActive and strategy.position_size != 0
+if (allowMultiProfitModules or not mjv6UltraActive) and mesFixedActive and strategy.position_size != 0 and not mesMJV6Active
     float avgPxMes = strategy.position_avg_price
     if strategy.position_size > 0
         strategy.exit("MES_HARD_BRACKET_L", from_entry="LONG", stop=avgPxMes - mesSL_pts, limit=avgPxMes + mesTP_pts)
@@ -3141,7 +3141,7 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
 mesIs3m = isMES and is3min
 mesIs5m = isMES and is5min
 mesHardStopDol = mesIs3m ? mesFixedSLDol_3m : mesIs5m ? mesFixedSLDol_5m : na
-if isMES and (mesIs3m or mesIs5m) and strategy.position_size != 0 and not exitIssuedThisBar
+if isMES and (mesIs3m or mesIs5m) and strategy.position_size != 0 and not exitIssuedThisBar and not mesMJV6Active
     // Hard max-loss (per contract) using the requested fixed $ stops.
     if enablePerTradeHardStop and not na(mesHardStopDol) and currentProfitDollars <= -(mesHardStopDol * qtyForGuards)
         strategy.close_all(comment="HARD_STOP")
