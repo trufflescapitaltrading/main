@@ -1303,9 +1303,11 @@ canTradeNow =
 
      enable24_7Trading ? true :
 
-     ((tradeWhen24x7Off == "Sessions" ? tradeAllowedBySessions : isTradingHours) and not isNoTradeZone)
+     ((tradeWhen24x7Off == "Sessions" ? (tradeAllowedBySessions or isTradingHours) : isTradingHours) and not isNoTradeZone)
 
-canEnterNow = canTradeNow and (enable24_7Trading ? true : (not (blockEntriesDuringEODWindow and inEodWindow)))
+eodEntryBlock = blockEntriesDuringEODWindow and inEodWindow and (currentTime > tradingHoursEnd)
+
+canEnterNow = canTradeNow and (enable24_7Trading ? true : (not eodEntryBlock))
 
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
