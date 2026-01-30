@@ -415,13 +415,13 @@ sessionGroup = "🌍 Trading Sessions & Times"
 
 enable24_7Trading = input.bool(false, "✅ Enable 24/7 Trading", group=sessionGroup)
 
-tradeWhen24x7Off = input.string("Sessions", "When 24/7 is OFF, trade using", options=["Sessions","Trading Hours"], group=sessionGroup)
+tradeWhen24x7Off = input.string("Trading Hours", "When 24/7 is OFF, trade using", options=["Sessions","Trading Hours"], group=sessionGroup)
 
 enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
 
-tradingHoursStart = input.int(930, "Start (9:30 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursStart = input.int(800, "Start (8:00 AM ET)", minval=0, maxval=2359, group=sessionGroup)
 
-tradingHoursEnd = input.int(1600, "End (4:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(2000, "End (8:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
 
 enableNoTradeZone = input.bool(false, "🚫 No Trade Zone (BLOCKS trades)", group=sessionGroup)
 
@@ -443,9 +443,9 @@ londonEnd = input.int(1200, "London End (ET)", minval=0, maxval=2359, group=sess
 
 enableNYSession = input.bool(true, "🇺🇸 NY Session", group=sessionGroup)
 
-nyStart = input.int(930, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyStart = input.int(800, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
 
-nyEnd = input.int(1600, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyEnd = input.int(1700, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
 
 enableUAESession = input.bool(true, "🇦🇪 UAE Session", group=sessionGroup)
 
@@ -995,9 +995,9 @@ enableSessionFilters = input.bool(true, "Enable Session Filters")
 
 preMarketStart = input.int(400, "Pre-Market Start (ET)", minval=0, maxval=2359)
 
-regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
+regularSessionStart = input.int(800, "Regular Session Start (ET)", minval=0, maxval=2359)
 
-regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
+regularSessionEnd = input.int(1700, "Regular Session End (ET)", minval=0, maxval=2359)
 
 afterHoursEnd = input.int(2000, "After Hours End (ET)", minval=0, maxval=2359)
 
