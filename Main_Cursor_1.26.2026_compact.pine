@@ -899,6 +899,12 @@ eodBlockEndTime = input.int(1800, "EOD block end time (ET)", minval=1600, maxval
 
 blockEntriesDuringEODWindow = input.bool(true, "Block entries during EOD window", group=exitControlsGroup)
 
+topstepExitGuard = input.bool(true, "Topstep MNQ RTH exit guard", group=exitControlsGroup)
+
+topstepEntryCutoffCT = input.int(1450, "Topstep MNQ entry cutoff (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+
+topstepExitTimeCT = input.int(1455, "Topstep MNQ force exit (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 
 losingTradeThreshold = input.float(2.0, "Losing Trade Threshold (%)", minval=1.0, maxval=5.0, group=exitControlsGroup)
@@ -1277,6 +1283,12 @@ currentMinuteTZ = minute(time, sessionTZ)
 
 currentTime = currentHourTZ * 100 + currentMinuteTZ
 
+currentHourCT = hour(time, "America/Chicago")
+
+currentMinuteCT = minute(time, "America/Chicago")
+
+currentTimeCT = currentHourCT * 100 + currentMinuteCT
+
 isTradingHours = not enableTradingHours or ((tradingHoursStart <= tradingHoursEnd and currentTime >= tradingHoursStart and currentTime <= tradingHoursEnd) or (tradingHoursStart > tradingHoursEnd and (currentTime >= tradingHoursStart or currentTime <= tradingHoursEnd)))
 
 isNoTradeZone = (not enable24_7Trading) and enableNoTradeZone and ((noTradeStart <= noTradeEnd and currentTime >= noTradeStart and currentTime < noTradeEnd) or (noTradeStart > noTradeEnd and (currentTime >= noTradeStart or currentTime < noTradeEnd)))
@@ -1309,6 +1321,8 @@ isUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeS
 
 tradeAllowedBySessions = isAsianSession or isLondonSession or isNYSession or isUAESession
 
+mnqTopstepEntryBlocked = topstepExitGuard and isMNQ and (currentTimeCT >= topstepEntryCutoffCT)
+
 canTradeNow =
 
      enable24_7Trading ? true :
@@ -1317,7 +1331,7 @@ canTradeNow =
 
 eodEntryBlock = blockEntriesDuringEODWindow and inEodWindow and (currentTime > tradingHoursEnd)
 
-canEnterNow = canTradeNow and (enable24_7Trading ? true : (not eodEntryBlock))
+canEnterNow = canTradeNow and (enable24_7Trading ? true : (not eodEntryBlock)) and (not mnqTopstepEntryBlocked)
 
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
@@ -5456,6 +5470,22 @@ tpExitWebhook(reason) =>
      '"timestamp":"' + str.tostring(time) + '"' +
 
      '}'
+
+mnqTopstepExitNow = topstepExitGuard and isMNQ and strategy.position_size != 0 and (currentTimeCT >= topstepExitTimeCT)
+
+if mnqTopstepExitNow and not exitIssuedThisBar
+
+    strategy.close_all(comment="TOPSTEP_RTH_EXIT")
+
+    exitIssuedThisBar := true
+
+    lastExitReason := "TOPSTEP_RTH_EXIT"
+
+    if enableTradersPostAlerts and not tookTradeThisBar
+
+        alert(tpExitWebhook("topstep_rth_exit"), alert.freq_once_per_bar)
+
+        tookTradeThisBar := true
 
 mnqRiskGuardsActive = not (mjv6UltraActive and isMNQ)
 
