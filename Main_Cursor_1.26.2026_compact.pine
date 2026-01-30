@@ -199,7 +199,7 @@ kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entri
 
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 
-useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
+useV20KenyaPerfectProfit = input.bool(false, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 
 v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
 
@@ -215,9 +215,9 @@ profitLogicModeGroup = "📈 Profit Logic Mode"
 
 useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
 
-useMJV6UltraProfitLogic = input.bool(true, "✅ Use MJV6 ULTRA profit logic (RESTORED)", group=profitLogicModeGroup)
+useMJV6UltraProfitLogic = input.bool(false, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
 
-allowMultiProfitModules = input.bool(true, "✅ Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
+allowMultiProfitModules = input.bool(false, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
 
 mjv6UltraActive = useMJV6UltraProfitLogic
 
@@ -4371,11 +4371,15 @@ ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 
 is3m_chart_profit = timeframe.period == "3"
 
+kenyaActive_profit = mnqKenyaActive
+
 v20Active_profit =
 
      useV20KenyaPerfectProfit_eff and
 
      (not is3m_chart_profit or v20AllowOn3m) and
+
+     not kenyaActive_profit and
 
      (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
 
