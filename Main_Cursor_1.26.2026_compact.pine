@@ -457,7 +457,7 @@ asianBestInstruments = input.string("MNQ,MES,MGC", "Asian Best Instruments", gro
 
 londonBestInstruments = input.string("MGC,MCL,MES", "London Best Instruments", group=sessionGroup)
 
-nyBestInstruments = input.string("MES,MNQ,MYM", "NY Best Instruments", group=sessionGroup)
+nyBestInstruments = input.string("MES,MNQ", "NY Best Instruments", group=sessionGroup)
 
 uaeBestInstruments = input.string("MCL,MGC", "UAE Best Instruments", group=sessionGroup)
 
@@ -493,8 +493,6 @@ breakevenThresholdMGC = 40.0
 
 maeDrawbackPercent = 0.75
 
-isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
-
 isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
 
 isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
@@ -505,11 +503,9 @@ isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES"
 
 isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
 
-isMicroFutures = isMYM or isMNQ or isMCL or isMGC or isMES or isM2K
+isMicroFutures = isMNQ or isMCL or isMGC or isMES or isM2K
 
 mesMJV6Active = isMES and useMJV6MesProfitLogic_eff
-
-mymMultiplier = input.float(1.8, "MYM Trade Multiplier", minval=1.3, maxval=2.5)
 
 mnqMultiplier = input.float(1.6, "MNQ Trade Multiplier", minval=1.2, maxval=2.2)
 
@@ -525,8 +521,6 @@ enableIndividualRiskLimits = input.bool(false, "Enable Individual Instrument Ris
 
 totalDailyRisk = input.float(450.0, "Total Daily Risk ($)", minval=100, maxval=2000)
 
-mymDailyRiskPercent = input.float(12.0, "MYM Daily Risk %", minval=5.0, maxval=30.0)
-
 mnqDailyRiskPercent = input.float(18.0, "MNQ Daily Risk %", minval=10.0, maxval=35.0)
 
 mesDailyRiskPercent = input.float(20.0, "MES Daily Risk %", minval=15.0, maxval=35.0)
@@ -535,8 +529,6 @@ mclDailyRiskPercent = input.float(25.0, "MCL Daily Risk %", minval=15.0, maxval=
 
 mgcDailyRiskPercent = input.float(25.0, "MGC Daily Risk %", minval=15.0, maxval=40.0)
 
-mymMaxDailyRisk = totalDailyRisk * (mymDailyRiskPercent / 100)
-
 mnqMaxDailyRisk = totalDailyRisk * (mnqDailyRiskPercent / 100)
 
 mesMaxDailyRisk = totalDailyRisk * (mesDailyRiskPercent / 100)
@@ -544,8 +536,6 @@ mesMaxDailyRisk = totalDailyRisk * (mesDailyRiskPercent / 100)
 mclMaxDailyRisk = totalDailyRisk * (mclDailyRiskPercent / 100)
 
 mgcMaxDailyRisk = totalDailyRisk * (mgcDailyRiskPercent / 100)
-
-var float mymDailyLoss = 0.0
 
 var float mnqDailyLoss = 0.0
 
@@ -603,14 +593,6 @@ mnq_customTP4 = input.float(180.0, "MNQ: TP4 (points) - 5%", group=perInstGroup)
 
 mnq_customQty = input.int(1, "MNQ: Position Size", minval=1, maxval=50, group=perInstGroup)
 
-mym_useCustom = input.bool(false, "MYM: Use Custom SL/TP/Size", group=perInstGroup)
-
-mym_customSL = input.float(60.0, "MYM: Stop Loss (points)", group=perInstGroup)
-
-mym_customTP = input.float(90.0, "MYM: Take Profit (points)", group=perInstGroup)
-
-mym_customQty = input.int(1, "MYM: Position Size", minval=1, maxval=50, group=perInstGroup)
-
 mcl_useCustom = input.bool(false, "MCL: Use Custom SL/TP/Size", group=perInstGroup)
 
 mcl_customSL = input.float(0.30, "MCL: Stop Loss (price $)", group=perInstGroup)
@@ -663,19 +645,19 @@ baseHullFast = input.int(7, "Base Hull MA (Fast)", minval=5, maxval=15)
 
 baseHullSignal = input.int(14, "Base Hull MA (Signal)", minval=8, maxval=22)
 
-hullPeriodMain = isMYM ? math.round(baseHullMain * 0.75) : isMNQ ? math.round(baseHullMain * 1.2) : isMES ? math.round(baseHullMain * 0.75) : isMCL ? math.round(baseHullMain * 0.85) : isMGC ? baseHullMain : isM2K ? math.round(baseHullMain * 0.8) : baseHullMain
+hullPeriodMain = isMNQ ? math.round(baseHullMain * 1.2) : isMES ? math.round(baseHullMain * 0.75) : isMCL ? math.round(baseHullMain * 0.85) : isMGC ? baseHullMain : isM2K ? math.round(baseHullMain * 0.8) : baseHullMain
 
-hullPeriodFast = isMYM ? math.round(baseHullFast * 0.85) : isMNQ ? baseHullFast : isMES ? math.round(baseHullFast * 0.85) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : isM2K ? math.round(baseHullFast * 0.9) : baseHullFast
+hullPeriodFast = isMNQ ? baseHullFast : isMES ? math.round(baseHullFast * 0.85) : isMCL ? math.round(baseHullFast * 0.9) : isMGC ? baseHullFast : isM2K ? math.round(baseHullFast * 0.9) : baseHullFast
 
-hullPeriodSignal = isMYM ? math.round(baseHullSignal * 0.85) : isMNQ ? baseHullSignal : isMES ? math.round(baseHullSignal * 0.85) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : isM2K ? math.round(baseHullSignal * 0.9) : baseHullSignal
+hullPeriodSignal = isMNQ ? baseHullSignal : isMES ? math.round(baseHullSignal * 0.85) : isMCL ? math.round(baseHullSignal * 0.9) : isMGC ? baseHullSignal : isM2K ? math.round(baseHullSignal * 0.9) : baseHullSignal
 
 baseEnvLength = input.int(12, "Base Envelope Period", minval=8, maxval=20)
 
 baseEnvDev = input.float(0.8, "Base Envelope Deviation %", minval=0.5, maxval=1.5)
 
-envLength = isMYM ? math.round(baseEnvLength * 1.0) : isMNQ ? math.round(baseEnvLength * 1.0) : isMES ? math.round(baseEnvLength * 1.0) : isMCL ? baseEnvLength : isMGC ? math.round(baseEnvLength * 1.1) : isM2K ? math.round(baseEnvLength * 1.05) : baseEnvLength
+envLength = isMNQ ? math.round(baseEnvLength * 1.0) : isMES ? math.round(baseEnvLength * 1.0) : isMCL ? baseEnvLength : isMGC ? math.round(baseEnvLength * 1.1) : isM2K ? math.round(baseEnvLength * 1.05) : baseEnvLength
 
-envDev = isMYM ? baseEnvDev * 1.1 : isMNQ ? baseEnvDev * 1.0 : isMES ? baseEnvDev * 1.0 : isMCL ? baseEnvDev * 1.0 : isMGC ? baseEnvDev * 0.95 : isM2K ? baseEnvDev * 1.05 : baseEnvDev
+envDev = isMNQ ? baseEnvDev * 1.0 : isMES ? baseEnvDev * 1.0 : isMCL ? baseEnvDev * 1.0 : isMGC ? baseEnvDev * 0.95 : isM2K ? baseEnvDev * 1.05 : baseEnvDev
 
 basePivotPeriod = input.int(2, "Base Pivot Period", minval=1, maxval=4)
 
@@ -685,13 +667,13 @@ baseAtrPeriod = input.int(8, "Base ATR Period", minval=6, maxval=12)
 
 pivotPeriod = basePivotPeriod
 
-atrFactor = isMYM ? baseAtrFactor * 1.2 : isMNQ ? baseAtrFactor * 1.1 : isMES ? baseAtrFactor * 1.1 : isMCL ? baseAtrFactor * 1.05 : isMGC ? baseAtrFactor : isM2K ? baseAtrFactor * 1.15 : baseAtrFactor
+atrFactor = isMNQ ? baseAtrFactor * 1.1 : isMES ? baseAtrFactor * 1.1 : isMCL ? baseAtrFactor * 1.05 : isMGC ? baseAtrFactor : isM2K ? baseAtrFactor * 1.15 : baseAtrFactor
 
-atrPeriod = isMYM ? math.round(baseAtrPeriod * 1.1) : isMNQ ? math.round(baseAtrPeriod * 1.0) : isMES ? math.round(baseAtrPeriod * 1.0) : isMCL ? baseAtrPeriod : isMGC ? math.round(baseAtrPeriod * 1.1) : isM2K ? math.round(baseAtrPeriod * 1.05) : baseAtrPeriod
+atrPeriod = isMNQ ? math.round(baseAtrPeriod * 1.0) : isMES ? math.round(baseAtrPeriod * 1.0) : isMCL ? baseAtrPeriod : isMGC ? math.round(baseAtrPeriod * 1.1) : isM2K ? math.round(baseAtrPeriod * 1.05) : baseAtrPeriod
 
 baseRiskPercent = input.float(0.6, "Base Risk per Trade (%)", minval=0.2, maxval=2.0)
 
-instrumentRiskMultiplier = isMYM ? 1.2 : isMNQ ? 1.1 : isMES ? 1.1 : isMCL ? 1.0 : isMGC ? 1.0 : isM2K ? 1.05 : 1.0
+instrumentRiskMultiplier = isMNQ ? 1.1 : isMES ? 1.1 : isMCL ? 1.0 : isMGC ? 1.0 : isM2K ? 1.05 : 1.0
 
 adjustedRiskPercent = baseRiskPercent * instrumentRiskMultiplier
 
@@ -710,8 +692,6 @@ tradersPostSymbol = input.string("MNQH2026", "TradersPost Symbol (Default / fall
 tradersPostSymbolMNQ = input.string("MNQH2026", "TradersPost Symbol - MNQ (Update contract month!)")
 
 tradersPostSymbolMES = input.string("MESH2026", "TradersPost Symbol - MES (Update contract month!)")
-
-tradersPostSymbolMYM = input.string("MYMH2026", "TradersPost Symbol - MYM (Update contract month!)")
 
 tradersPostSymbolM2K = input.string("M2KH2026", "TradersPost Symbol - M2K (Update contract month!)")
 
@@ -741,7 +721,7 @@ tpSignalId(action, dir) =>
 
     str.tostring(time) + "_" + str.tostring(bar_index) + "_" + action + "_" + dir
 
-contractTicker = (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isMYM ? tradersPostSymbolMYM : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
+contractTicker = (isMNQ ? tradersPostSymbolMNQ : isMES ? tradersPostSymbolMES : isM2K ? tradersPostSymbolM2K : isMCL ? tradersPostSymbolMCL : isMGC ? tradersPostSymbolMGC : tradersPostSymbol)
 
 actualTicker = contractTicker
 
@@ -983,17 +963,15 @@ instantSignals = input.bool(true, "Enable Instant Signals")
 
 baseTradeFrequency = input.float(1.3, "Base Trade Frequency", minval=1.0, maxval=2.5)
 
-tradeFrequencyBoost = isMYM ? baseTradeFrequency * mymMultiplier : isMNQ ? baseTradeFrequency * mnqMultiplier : isMES ? baseTradeFrequency * mesMultiplier : isMCL ? baseTradeFrequency * mclMultiplier : isMGC ? baseTradeFrequency * mgcMultiplier : isM2K ? baseTradeFrequency * m2kMultiplier : baseTradeFrequency
+tradeFrequencyBoost = isMNQ ? baseTradeFrequency * mnqMultiplier : isMES ? baseTradeFrequency * mesMultiplier : isMCL ? baseTradeFrequency * mclMultiplier : isMGC ? baseTradeFrequency * mgcMultiplier : isM2K ? baseTradeFrequency * m2kMultiplier : baseTradeFrequency
 
 allowMultiplePositions = input.bool(false, "Allow Multiple Positions")
 
 baseMaxTrades = input.int(1, "Base Max Concurrent Trades", minval=1, maxval=2)
 
-maxConcurrentTrades = isMYM ? baseMaxTrades + 1 : isMNQ ? baseMaxTrades + 1 : isMES ? baseMaxTrades + 1 : isMCL ? baseMaxTrades : isMGC ? baseMaxTrades : isM2K ? baseMaxTrades : baseMaxTrades
+maxConcurrentTrades = isMNQ ? baseMaxTrades + 1 : isMES ? baseMaxTrades + 1 : isMCL ? baseMaxTrades : isMGC ? baseMaxTrades : isM2K ? baseMaxTrades : baseMaxTrades
 
 enableScalping = input.bool(true, "Enable Scalping Mode")
-
-mymScalpMultiplier = input.float(2.0, "MYM Scalp Multiplier", minval=1.5, maxval=2.8)
 
 mnqScalpMultiplier = input.float(1.8, "MNQ Scalp Multiplier", minval=1.3, maxval=2.5)
 
@@ -1005,13 +983,13 @@ mgcScalpMultiplier = input.float(1.4, "MGC Scalp Multiplier", minval=1.1, maxval
 
 m2kScalpMultiplier = input.float(1.7, "M2K Scalp Multiplier", minval=1.2, maxval=2.3)
 
-scalpingMultiplier = isMYM ? mymScalpMultiplier : isMNQ ? mnqScalpMultiplier : isMES ? mesScalpMultiplier : isMCL ? mclScalpMultiplier : isMGC ? mgcScalpMultiplier : isM2K ? m2kScalpMultiplier : 1.8
+scalpingMultiplier = isMNQ ? mnqScalpMultiplier : isMES ? mesScalpMultiplier : isMCL ? mclScalpMultiplier : isMGC ? mgcScalpMultiplier : isM2K ? m2kScalpMultiplier : 1.8
 
 quickExitMode = input.bool(true, "Quick Exit Mode")
 
 baseMaxHolding = input.int(25, "Base Max Holding Periods", minval=15, maxval=50)
 
-maxHoldingBars = isMYM ? math.round(baseMaxHolding * 0.95) : isMNQ ? baseMaxHolding : isMES ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : isM2K ? math.round(baseMaxHolding * 1.1) : baseMaxHolding
+maxHoldingBars = isMNQ ? baseMaxHolding : isMES ? baseMaxHolding : isMCL ? math.round(baseMaxHolding * 1.2) : isMGC ? math.round(baseMaxHolding * 1.4) : isM2K ? math.round(baseMaxHolding * 1.1) : baseMaxHolding
 
 enableSessionFilters = input.bool(true, "Enable Session Filters")
 
@@ -1093,35 +1071,35 @@ useDynamicSizing = input.bool(true, "Use Dynamic Position Sizing")
 
 baseVolatilityMultiplier = input.float(2.2, "Base Volatility Multiplier", minval=1.5, maxval=4.0)
 
-volatilityMultiplier = isMYM ? baseVolatilityMultiplier * 1.3 : isMNQ ? baseVolatilityMultiplier * 1.2 : isMES ? baseVolatilityMultiplier * 1.2 : isMCL ? baseVolatilityMultiplier * 1.1 : isMGC ? baseVolatilityMultiplier : isM2K ? baseVolatilityMultiplier * 1.15 : baseVolatilityMultiplier
+volatilityMultiplier = isMNQ ? baseVolatilityMultiplier * 1.2 : isMES ? baseVolatilityMultiplier * 1.2 : isMCL ? baseVolatilityMultiplier * 1.1 : isMGC ? baseVolatilityMultiplier : isM2K ? baseVolatilityMultiplier * 1.15 : baseVolatilityMultiplier
 
 baseWinRateBoost = input.float(1.8, "Base Win Rate Boost", minval=1.2, maxval=3.0)
 
-winRateBoost = isMYM ? baseWinRateBoost * 1.1 : isMNQ ? baseWinRateBoost * 1.05 : isMES ? baseWinRateBoost * 1.05 : isMCL ? baseWinRateBoost : isMGC ? baseWinRateBoost * 0.95 : isM2K ? baseWinRateBoost * 1.0 : baseWinRateBoost
+winRateBoost = isMNQ ? baseWinRateBoost * 1.05 : isMES ? baseWinRateBoost * 1.05 : isMCL ? baseWinRateBoost : isMGC ? baseWinRateBoost * 0.95 : isM2K ? baseWinRateBoost * 1.0 : baseWinRateBoost
 
 baseTrendPeriod = input.int(6, "Base Trend Period", minval=4, maxval=12)
 
 baseVolPeriod = input.int(6, "Base Volatility Period", minval=4, maxval=12)
 
-trendStrengthPeriod = isMYM ? math.round(baseTrendPeriod * 1.0) : isMNQ ? math.round(baseTrendPeriod * 1.2) : isMES ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isM2K ? math.round(baseTrendPeriod * 1.1) : baseTrendPeriod
+trendStrengthPeriod = isMNQ ? math.round(baseTrendPeriod * 1.2) : isMES ? baseTrendPeriod : isMCL ? math.round(baseTrendPeriod * 1.2) : isMGC ? math.round(baseTrendPeriod * 1.3) : isM2K ? math.round(baseTrendPeriod * 1.1) : baseTrendPeriod
 
-volatilityPeriod = isMYM ? math.round(baseVolPeriod * 0.95) : isMNQ ? baseVolPeriod : isMES ? baseVolPeriod : isMCL ? math.round(baseVolPeriod * 1.1) : isMGC ? math.round(baseVolPeriod * 1.2) : isM2K ? math.round(baseVolPeriod * 1.0) : baseVolPeriod
+volatilityPeriod = isMNQ ? baseVolPeriod : isMES ? baseVolPeriod : isMCL ? math.round(baseVolPeriod * 1.1) : isMGC ? math.round(baseVolPeriod * 1.2) : isM2K ? math.round(baseVolPeriod * 1.0) : baseVolPeriod
 
 useVolumeFilter = input.bool(true, "Use Volume Filter")
 
 baseVolumePeriod = input.int(6, "Base Volume Period", minval=4, maxval=12)
 
-volumePeriod = isMYM ? math.round(baseVolumePeriod * 0.95) : isMNQ ? baseVolumePeriod : isMES ? baseVolumePeriod : isMCL ? math.round(baseVolumePeriod * 1.1) : isMGC ? math.round(baseVolumePeriod * 1.2) : isM2K ? math.round(baseVolumePeriod * 1.0) : baseVolumePeriod
+volumePeriod = isMNQ ? baseVolumePeriod : isMES ? baseVolumePeriod : isMCL ? math.round(baseVolumePeriod * 1.1) : isMGC ? math.round(baseVolumePeriod * 1.2) : isM2K ? math.round(baseVolumePeriod * 1.0) : baseVolumePeriod
 
 baseVolumeThreshold = input.float(0.6, "Base Volume Threshold", minval=0.3, maxval=1.2)
 
-volumeThreshold = isMYM ? baseVolumeThreshold * 0.85 : isMNQ ? baseVolumeThreshold * 0.9 : isMES ? baseVolumeThreshold * 0.9 : isMCL ? baseVolumeThreshold * 1.0 : isMGC ? baseVolumeThreshold : isM2K ? baseVolumeThreshold * 0.95 : baseVolumeThreshold
+volumeThreshold = isMNQ ? baseVolumeThreshold * 0.9 : isMES ? baseVolumeThreshold * 0.9 : isMCL ? baseVolumeThreshold * 1.0 : isMGC ? baseVolumeThreshold : isM2K ? baseVolumeThreshold * 0.95 : baseVolumeThreshold
 
 useMomentumFilter = input.bool(true, "Use Momentum Filter")
 
 baseRsiPeriod = input.int(6, "Base RSI Period", minval=4, maxval=10)
 
-rsiPeriod = isMYM ? math.round(baseRsiPeriod * 0.95) : isMNQ ? baseRsiPeriod : isMES ? baseRsiPeriod : isMCL ? math.round(baseRsiPeriod * 1.1) : isMGC ? math.round(baseRsiPeriod * 1.2) : isM2K ? math.round(baseRsiPeriod * 1.0) : baseRsiPeriod
+rsiPeriod = isMNQ ? baseRsiPeriod : isMES ? baseRsiPeriod : isMCL ? math.round(baseRsiPeriod * 1.1) : isMGC ? math.round(baseRsiPeriod * 1.2) : isM2K ? math.round(baseRsiPeriod * 1.0) : baseRsiPeriod
 
 rsiOverbought = input.float(75, "RSI Overbought", minval=70, maxval=85)
 
@@ -1133,13 +1111,13 @@ useEnhancedTP = input.bool(true, "Use Enhanced Take Profit")
 
 baseTpMultiplier = input.float(1.0, "Base TP Multiplier", minval=0.6, maxval=2.0)
 
-tpMultiplier = isM2K ? baseTpMultiplier * 0.9 : isMYM ? baseTpMultiplier * 1.1 : isMES ? baseTpMultiplier : baseTpMultiplier
+tpMultiplier = isM2K ? baseTpMultiplier * 0.9 : baseTpMultiplier
 
 useSmartTrailing = input.bool(true, "Use Smart Trailing Stop")
 
 baseTrailActivation = input.float(0.7, "Base Trail Activation", minval=0.4, maxval=1.2)
 
-trailActivationRatio = isM2K ? baseTrailActivation : isMYM ? baseTrailActivation * 1.1 : isMES ? baseTrailActivation * 1.2 : baseTrailActivation
+trailActivationRatio = isM2K ? baseTrailActivation : isMES ? baseTrailActivation * 1.2 : baseTrailActivation
 
 autoTimeframeOptimization = input.bool(true, "Auto Timeframe Optimization")
 
@@ -1261,25 +1239,25 @@ mes30mPermLong = mnq30mPermLong
 
 mes30mPermShort = mnq30mPermShort
 
-tfMultiplier1m = isMYM ? baseTfMultiplier1m * 1.05 : isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
+tfMultiplier1m = isMNQ ? baseTfMultiplier1m * 1.02 : isMES ? baseTfMultiplier1m * 1.02 : isMCL ? baseTfMultiplier1m : isMGC ? baseTfMultiplier1m * 0.98 : isM2K ? baseTfMultiplier1m * 1.03 : baseTfMultiplier1m
 
-tfMultiplier2m = isMYM ? baseTfMultiplier2m * 1.04 : isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
+tfMultiplier2m = isMNQ ? baseTfMultiplier2m * 1.02 : isMES ? baseTfMultiplier2m * 1.02 : isMCL ? baseTfMultiplier2m : isMGC ? baseTfMultiplier2m * 0.98 : isM2K ? baseTfMultiplier2m * 1.02 : baseTfMultiplier2m
 
-tfMultiplier3m = isMYM ? baseTfMultiplier3m * 1.03 : isMNQ ? baseTfMultiplier3m * 1.01 : isMES ? baseTfMultiplier3m * 1.01 : isMCL ? baseTfMultiplier3m * 0.99 : isMGC ? baseTfMultiplier3m * 0.97 : isM2K ? baseTfMultiplier3m * 1.01 : baseTfMultiplier3m
+tfMultiplier3m = isMNQ ? baseTfMultiplier3m * 1.01 : isMES ? baseTfMultiplier3m * 1.01 : isMCL ? baseTfMultiplier3m * 0.99 : isMGC ? baseTfMultiplier3m * 0.97 : isM2K ? baseTfMultiplier3m * 1.01 : baseTfMultiplier3m
 
-tfMultiplier5m = isMYM ? baseTfMultiplier5m * 1.02 : isMNQ ? baseTfMultiplier5m * 1.0 : isMES ? baseTfMultiplier5m * 1.0 : isMCL ? baseTfMultiplier5m * 0.98 : isMGC ? baseTfMultiplier5m * 0.96 : isM2K ? baseTfMultiplier5m * 1.0 : baseTfMultiplier5m
+tfMultiplier5m = isMNQ ? baseTfMultiplier5m * 1.0 : isMES ? baseTfMultiplier5m * 1.0 : isMCL ? baseTfMultiplier5m * 0.98 : isMGC ? baseTfMultiplier5m * 0.96 : isM2K ? baseTfMultiplier5m * 1.0 : baseTfMultiplier5m
 
-tfMultiplier10m = isMYM ? baseTfMultiplier10m * 1.01 : isMNQ ? baseTfMultiplier10m * 0.99 : isMES ? baseTfMultiplier10m * 0.99 : isMCL ? baseTfMultiplier10m : isMGC ? baseTfMultiplier10m * 1.01 : isM2K ? baseTfMultiplier10m * 1.0 : baseTfMultiplier10m
+tfMultiplier10m = isMNQ ? baseTfMultiplier10m * 0.99 : isMES ? baseTfMultiplier10m * 0.99 : isMCL ? baseTfMultiplier10m : isMGC ? baseTfMultiplier10m * 1.01 : isM2K ? baseTfMultiplier10m * 1.0 : baseTfMultiplier10m
 
-tfMultiplier15m = isMYM ? baseTfMultiplier15m * 1.0 : isMNQ ? baseTfMultiplier15m * 0.98 : isMES ? baseTfMultiplier15m * 0.98 : isMCL ? baseTfMultiplier15m : isMGC ? baseTfMultiplier15m * 1.02 : isM2K ? baseTfMultiplier15m * 0.99 : baseTfMultiplier15m
+tfMultiplier15m = isMNQ ? baseTfMultiplier15m * 0.98 : isMES ? baseTfMultiplier15m * 0.98 : isMCL ? baseTfMultiplier15m : isMGC ? baseTfMultiplier15m * 1.02 : isM2K ? baseTfMultiplier15m * 0.99 : baseTfMultiplier15m
 
-tfMultiplier30m = isMYM ? baseTfMultiplier30m * 0.99 : isMNQ ? baseTfMultiplier30m * 0.97 : isMES ? baseTfMultiplier30m * 0.97 : isMCL ? baseTfMultiplier30m : isMGC ? baseTfMultiplier30m * 1.03 : isM2K ? baseTfMultiplier30m * 0.98 : baseTfMultiplier30m
+tfMultiplier30m = isMNQ ? baseTfMultiplier30m * 0.97 : isMES ? baseTfMultiplier30m * 0.97 : isMCL ? baseTfMultiplier30m : isMGC ? baseTfMultiplier30m * 1.03 : isM2K ? baseTfMultiplier30m * 0.98 : baseTfMultiplier30m
 
-tfMultiplier1h = isMYM ? baseTfMultiplier1h * 0.98 : isMNQ ? baseTfMultiplier1h * 0.96 : isMES ? baseTfMultiplier1h * 0.96 : isMCL ? baseTfMultiplier1h : isMGC ? baseTfMultiplier1h * 1.04 : isM2K ? baseTfMultiplier1h * 0.97 : baseTfMultiplier1h
+tfMultiplier1h = isMNQ ? baseTfMultiplier1h * 0.96 : isMES ? baseTfMultiplier1h * 0.96 : isMCL ? baseTfMultiplier1h : isMGC ? baseTfMultiplier1h * 1.04 : isM2K ? baseTfMultiplier1h * 0.97 : baseTfMultiplier1h
 
-tfMultiplier2h = isMYM ? baseTfMultiplier2h * 0.97 : isMNQ ? baseTfMultiplier2h * 0.95 : isMES ? baseTfMultiplier2h * 0.95 : isMCL ? baseTfMultiplier2h : isMGC ? baseTfMultiplier2h * 1.05 : isM2K ? baseTfMultiplier2h * 0.96 : baseTfMultiplier2h
+tfMultiplier2h = isMNQ ? baseTfMultiplier2h * 0.95 : isMES ? baseTfMultiplier2h * 0.95 : isMCL ? baseTfMultiplier2h : isMGC ? baseTfMultiplier2h * 1.05 : isM2K ? baseTfMultiplier2h * 0.96 : baseTfMultiplier2h
 
-tfMultiplier4h = isMYM ? baseTfMultiplier4h * 0.96 : isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
+tfMultiplier4h = isMNQ ? baseTfMultiplier4h * 0.94 : isMES ? baseTfMultiplier4h * 0.94 : isMCL ? baseTfMultiplier4h : isMGC ? baseTfMultiplier4h * 1.06 : isM2K ? baseTfMultiplier4h * 0.95 : baseTfMultiplier4h
 
 sessionTZ = input.string("America/New_York", "Session timezone (time filters)", group=sessionGroup)
 
@@ -1331,7 +1309,7 @@ canEnterNow = canTradeNow and (enable24_7Trading ? true : (not (blockEntriesDuri
 
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
-instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
+instrumentName = isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "Unknown"
 
 tpInstTag = tpInstanceTag == "AUTO" ? (instrumentName + "_" + timeframe.period) : tpInstanceTag
 
@@ -1375,7 +1353,7 @@ isRegularSession = enableSessionFilters and currentTime >= regularSessionStart a
 
 isAfterHours = enableSessionFilters and currentTime > regularSessionEnd and currentTime <= afterHoursEnd
 
-sessionMultiplier = not enableSessionFilters ? 1.0 : isRegularSession ? (isMYM ? 1.1 : 1.05) : (isPreMarket or isAfterHours) ? (isMYM ? 0.8 : 0.75) : 0.6
+sessionMultiplier = not enableSessionFilters ? 1.0 : isRegularSession ? 1.05 : (isPreMarket or isAfterHours) ? 0.75 : 0.6
 
 finalSessionMultiplier = sessionMultiplier * activeSessionMultiplier * optimalSessionBonus
 
@@ -1393,9 +1371,9 @@ hma(src, len) =>
 
     ta.wma(wma_diff, sqrt_length)
 
-adaptiveHullMain = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodMain * (isMYM ? 0.65 : 0.7)) : is2min ? math.round(hullPeriodMain * (isMYM ? 0.75 : 0.8)) : is3min ? math.round(hullPeriodMain * (isMYM ? 0.8 : 0.85)) : is5min ? math.round(hullPeriodMain * (isMYM ? 0.85 : 0.9)) : is10min ? math.round(hullPeriodMain * (isMYM ? 0.9 : 0.95)) : is15min ? hullPeriodMain : is30min ? math.round(hullPeriodMain * 1.1) : is1hour ? math.round(hullPeriodMain * 1.2) : is2hour ? math.round(hullPeriodMain * 1.3) : is4hour ? math.round(hullPeriodMain * 1.4) : hullPeriodMain) : hullPeriodMain
+adaptiveHullMain = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodMain * 0.7) : is2min ? math.round(hullPeriodMain * 0.8) : is3min ? math.round(hullPeriodMain * 0.85) : is5min ? math.round(hullPeriodMain * 0.9) : is10min ? math.round(hullPeriodMain * 0.95) : is15min ? hullPeriodMain : is30min ? math.round(hullPeriodMain * 1.1) : is1hour ? math.round(hullPeriodMain * 1.2) : is2hour ? math.round(hullPeriodMain * 1.3) : is4hour ? math.round(hullPeriodMain * 1.4) : hullPeriodMain) : hullPeriodMain
 
-adaptiveHullFast = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodFast * (isMYM ? 0.75 : 0.8)) : is2min ? math.round(hullPeriodFast * (isMYM ? 0.8 : 0.85)) : is3min ? math.round(hullPeriodFast * (isMYM ? 0.85 : 0.9)) : is5min ? hullPeriodFast : is10min ? math.round(hullPeriodFast * 1.05) : is15min ? math.round(hullPeriodFast * 1.1) : is30min ? math.round(hullPeriodFast * 1.15) : is1hour ? math.round(hullPeriodFast * 1.2) : is2hour ? math.round(hullPeriodFast * 1.25) : is4hour ? math.round(hullPeriodFast * 1.3) : hullPeriodFast) : hullPeriodFast
+adaptiveHullFast = autoTimeframeOptimization ? (is1min ? math.round(hullPeriodFast * 0.8) : is2min ? math.round(hullPeriodFast * 0.85) : is3min ? math.round(hullPeriodFast * 0.9) : is5min ? hullPeriodFast : is10min ? math.round(hullPeriodFast * 1.05) : is15min ? math.round(hullPeriodFast * 1.1) : is30min ? math.round(hullPeriodFast * 1.15) : is1hour ? math.round(hullPeriodFast * 1.2) : is2hour ? math.round(hullPeriodFast * 1.25) : is4hour ? math.round(hullPeriodFast * 1.3) : hullPeriodFast) : hullPeriodFast
 
 hullMain = hma(hullSrc, math.max(adaptiveHullMain, 2))
 
@@ -2065,7 +2043,7 @@ star_increasingVelocity = math.abs(close - close[1]) > math.abs(close[1] - close
 
 star_notTightRange = true
 
-if usePointRangeCheck and (isMES or isMNQ or isMYM or isM2K)
+if usePointRangeCheck and (isMES or isMNQ or isM2K)
 
     recentRangePoints = (ta.highest(high, 20) - ta.lowest(low, 20)) / syminfo.mintick
 
@@ -2489,15 +2467,15 @@ getAdaptiveEnvDev() =>
 
     else if is1min
 
-        envDev * (isMYM ? 0.85 : 0.9)
+        envDev * 0.9
 
     else if is2min
 
-        envDev * (isMYM ? 0.9 : 0.95)
+        envDev * 0.95
 
     else if is3min
 
-        envDev * (isMYM ? 0.95 : 0.98)
+        envDev * 0.98
 
     else if is5min
 
@@ -2539,15 +2517,15 @@ getAdaptiveEnvLength() =>
 
     else if is1min
 
-        math.round(envLength * (isMYM ? 0.75 : 0.8))
+        math.round(envLength * 0.8)
 
     else if is2min
 
-        math.round(envLength * (isMYM ? 0.8 : 0.85))
+        math.round(envLength * 0.85)
 
     else if is3min
 
-        math.round(envLength * (isMYM ? 0.85 : 0.9))
+        math.round(envLength * 0.9)
 
     else if is5min
 
@@ -2591,7 +2569,7 @@ upperEnv = smaBasis * (1 + adaptiveEnvDev / 100)
 
 lowerEnv = smaBasis * (1 - adaptiveEnvDev / 100)
 
-mymBreakoutFactor = isMYM ? 1.003 : 1.005
+mymBreakoutFactor = 1.005
 
 microBreakoutUp = close > upperEnv * mymBreakoutFactor and volume > volumeMA * 1.2
 
@@ -2705,9 +2683,9 @@ strongBuySignal = enableStrongSignals and candleBull and (hullAnyBullish and tre
 
 strongSellSignal = enableStrongSignals and candleBear and (hullAnyBearish and trend == -1 and momentumBearish and slopeMain == -1 and (veryStrongTrend or strongMomentumShort) and trendAlignedShort)
 
-ultraBuySignalBase = (strongBuySignal or (microBuySignal and momentumBullish) or (instantBuySignal and slopeMain == 1) or (scalpBuySignal and (veryStrongTrend or isMYM)) or (isMYM and hullAnyBullish and trend == 1 and candleBull)) and (not highWinRateMode or notOversold)
+ultraBuySignalBase = (strongBuySignal or (microBuySignal and momentumBullish) or (instantBuySignal and slopeMain == 1) or (scalpBuySignal and veryStrongTrend)) and (not highWinRateMode or notOversold)
 
-ultraSellSignalBase = (strongSellSignal or (microSellSignal and momentumBearish) or (instantSellSignal and slopeMain == -1) or (scalpSellSignal and (veryStrongTrend or isMYM)) or (isMYM and hullAnyBearish and trend == -1 and candleBear)) and (not highWinRateMode or notOverbought)
+ultraSellSignalBase = (strongSellSignal or (microSellSignal and momentumBearish) or (instantSellSignal and slopeMain == -1) or (scalpSellSignal and veryStrongTrend)) and (not highWinRateMode or notOverbought)
 
 ultraBuySignalBase := ultraBuySignalBase or (swingInjectToBase and allowPriority7 and swingBuySignal and enableSwingSignals and candleBull)
 
@@ -2865,8 +2843,6 @@ newDayDetected = ta.change(time("D")) != 0
 
 if newDayDetected or barstate.isfirst
 
-    mymDailyLoss := 0.0
-
     mnqDailyLoss := 0.0
 
     mesDailyLoss := 0.0
@@ -2989,9 +2965,9 @@ var float v71_tp1Target = na
 
 holdingPeriod = not na(entryBar) and strategy.position_size != 0 ? bar_index - entryBar : 0
 
-currentInstrumentLoss = isMYM ? mymDailyLoss : isMNQ ? mnqDailyLoss : isMES ? mesDailyLoss : isMCL ? mclDailyLoss : isMGC ? mgcDailyLoss : 0.0
+currentInstrumentLoss = isMNQ ? mnqDailyLoss : isMES ? mesDailyLoss : isMCL ? mclDailyLoss : isMGC ? mgcDailyLoss : 0.0
 
-currentInstrumentMaxLoss = isMYM ? mymMaxDailyRisk : isMNQ ? mnqMaxDailyRisk : isMES ? mesMaxDailyRisk : isMCL ? mclMaxDailyRisk : isMGC ? mgcMaxDailyRisk : totalDailyRisk
+currentInstrumentMaxLoss = isMNQ ? mnqMaxDailyRisk : isMES ? mesMaxDailyRisk : isMCL ? mclMaxDailyRisk : isMGC ? mgcMaxDailyRisk : totalDailyRisk
 
 instrumentRiskLimitReached = enableIndividualRiskLimits and currentInstrumentLoss >= currentInstrumentMaxLoss
 
@@ -3137,19 +3113,19 @@ if useDynamicSizing
 
     if veryStrongTrend and normalVolatility and trendAlignedLong
 
-        riskMultiplier := math.max(math.min(volatilityMultiplier * winRateBoost * timeframeMultiplier * 1.5, isMYM ? 3.0 : 2.5), 0.5)
+        riskMultiplier := math.max(math.min(volatilityMultiplier * winRateBoost * timeframeMultiplier * 1.5, 2.5), 0.5)
 
     else if moderateTrend and ultraMode
 
-        riskMultiplier := math.max((isMYM ? 1.2 : 1.0) * timeframeMultiplier, 0.5)
+        riskMultiplier := math.max(1.0 * timeframeMultiplier, 0.5)
 
     else if rangingMarket
 
-        riskMultiplier := math.max((isMYM ? 1.4 : 1.2) * timeframeMultiplier, 0.5)
+        riskMultiplier := math.max(1.2 * timeframeMultiplier, 0.5)
 
     else
 
-        riskMultiplier := math.max((isMYM ? 1.0 : 0.8) * timeframeMultiplier, 0.5)
+        riskMultiplier := math.max(0.8 * timeframeMultiplier, 0.5)
 
 riskMultiplier := math.max(math.min(riskMultiplier, 5.0), 0.1)
 
@@ -3179,7 +3155,7 @@ safePrice = close > 0 ? close : 1.0
 
 riskAmountDollars = math.max(strategy.equity * effectiveRiskPercent / 100, 0)
 
-futuresStopDistance = math.max(safeATR * (is1min ? (isMYM ? 1.8 : 2.0) : is2min ? (isMYM ? 2.0 : 2.2) : is3min ? (isMYM ? 2.2 : 2.4) : is5min ? (isMYM ? 2.4 : 2.6) : is10min ? (isMYM ? 2.6 : 2.8) : is15min ? (isMYM ? 2.8 : 3.0) : is30min ? (isMYM ? 3.0 : 3.2) : is1hour ? (isMYM ? 3.2 : 3.4) : is2hour ? (isMYM ? 3.4 : 3.6) : is4hour ? (isMYM ? 3.6 : 3.8) : (isMYM ? 2.6 : 2.8)), syminfo.mintick * 10)
+futuresStopDistance = math.max(safeATR * (is1min ? 2.0 : is2min ? 2.2 : is3min ? 2.4 : is5min ? 2.6 : is10min ? 2.8 : is15min ? 3.0 : is30min ? 3.2 : is1hour ? 3.4 : is2hour ? 3.6 : is4hour ? 3.8 : 2.8), syminfo.mintick * 10)
 
 stopDistanceDollars = math.max(futuresStopDistance * safePointValue, 1)
 
@@ -3237,11 +3213,7 @@ dailyPnL := na(dayStartNetprofit) ? 0.0 : (strategy.netprofit - dayStartNetprofi
 
 curDailyLossDol = dailyPnL < 0 ? -dailyPnL : 0.0
 
-if isMYM
-
-    mymDailyLoss := curDailyLossDol
-
-else if isMNQ
+if isMNQ
 
     mnqDailyLoss := curDailyLossDol
 
@@ -4141,10 +4113,6 @@ getActiveQty(baseQty) =>
 
         qty := mnq_customQty
 
-    else if isMYM and mym_useCustom
-
-        qty := mym_customQty
-
     else if isMCL and mcl_useCustom
 
         qty := mcl_customQty
@@ -4376,10 +4344,6 @@ getExitSLPoints() =>
     else if isMNQ
 
         sl := (timeframe.period == "3" and mnq_useCustom3m) ? mnq_customSL_3m : mnq_customSL
-
-    else if isMYM
-
-        sl := mym_customSL
 
     else if isM2K
 
