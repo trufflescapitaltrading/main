@@ -199,7 +199,7 @@ kenyaAllowIntrabarEntries = input.bool(true, "Kenya MNQ 3m: allow intrabar entri
 
 kenyaEnableSignalReversal = input.bool(true, "Kenya MNQ 3m: enable signal-reversal exits", group=kenyaGroup)
 
-useV20KenyaPerfectProfit = input.bool(false, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
+useV20KenyaPerfectProfit = input.bool(true, "Use V20 Kenya PERFECT PROFIT module (overrides other exits)", group=kenyaGroup)
 
 v20AllowOn3m = input.bool(false, "V20: allow on 3m charts (default OFF to protect 3m expectancy)", group=kenyaGroup)
 
@@ -215,21 +215,21 @@ profitLogicModeGroup = "📈 Profit Logic Mode"
 
 useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
 
-useMJV6UltraProfitLogic = input.bool(false, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
+useMJV6UltraProfitLogic = input.bool(true, "✅ Use MJV6 ULTRA profit logic (RESTORED)", group=profitLogicModeGroup)
 
-allowMultiProfitModules = input.bool(false, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
+allowMultiProfitModules = input.bool(true, "✅ Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
 
 mjv6UltraActive = useMJV6UltraProfitLogic
 
 mnqMJV6Group = "📈 MNQ MJV6 Ultra Tuning"
 
-mnqMJV6TPMult_3m = input.float(1.60, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6TPMult_3m = input.float(1.80, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6TPMult_5m = input.float(1.80, "MNQ 5m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6TPMult_5m = input.float(2.00, "MNQ 5m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6StopMult_3m = input.float(0.80, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_3m = input.float(0.75, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6StopMult_5m = input.float(0.90, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_5m = input.float(0.85, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
 useV20KenyaPerfectProfit_eff = useV20KenyaPerfectProfit and not useOriginalProfitLogic
 
@@ -419,9 +419,9 @@ tradeWhen24x7Off = input.string("Sessions", "When 24/7 is OFF, trade using", opt
 
 enableTradingHours = input.bool(true, "Trading Hours (4 AM - 8 PM ET)", group=sessionGroup)
 
-tradingHoursStart = input.int(830, "Start (8:30 AM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursStart = input.int(930, "Start (9:30 AM ET)", minval=0, maxval=2359, group=sessionGroup)
 
-tradingHoursEnd = input.int(1700, "End (5:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
+tradingHoursEnd = input.int(1600, "End (4:00 PM ET)", minval=0, maxval=2359, group=sessionGroup)
 
 enableNoTradeZone = input.bool(false, "🚫 No Trade Zone (BLOCKS trades)", group=sessionGroup)
 
@@ -443,9 +443,9 @@ londonEnd = input.int(1200, "London End (ET)", minval=0, maxval=2359, group=sess
 
 enableNYSession = input.bool(true, "🇺🇸 NY Session", group=sessionGroup)
 
-nyStart = input.int(830, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyStart = input.int(930, "NY Start (ET)", minval=0, maxval=2359, group=sessionGroup)
 
-nyEnd = input.int(1700, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
+nyEnd = input.int(1600, "NY End (ET)", minval=0, maxval=2359, group=sessionGroup)
 
 enableUAESession = input.bool(true, "🇦🇪 UAE Session", group=sessionGroup)
 
@@ -995,9 +995,9 @@ enableSessionFilters = input.bool(true, "Enable Session Filters")
 
 preMarketStart = input.int(400, "Pre-Market Start (ET)", minval=0, maxval=2359)
 
-regularSessionStart = input.int(830, "Regular Session Start (ET)", minval=0, maxval=2359)
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359)
 
-regularSessionEnd = input.int(1700, "Regular Session End (ET)", minval=0, maxval=2359)
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359)
 
 afterHoursEnd = input.int(2000, "After Hours End (ET)", minval=0, maxval=2359)
 
@@ -1693,7 +1693,7 @@ for i = 0 to maxRunBars - 1
 
         bullOCStreak += 1
 
-    else
+    if true
 
         break
 
@@ -1713,7 +1713,7 @@ for i = 0 to maxRunBars - 1
 
         bearOCStreak += 1
 
-    else
+    if true
 
         break
 
@@ -4209,7 +4209,7 @@ v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 
-if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (allowMultiProfitModules or not mnqKenyaActive)
+if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
 
     float mjvAtr = atr10
 
@@ -4218,8 +4218,6 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
     float mjvStopMult = (isMNQ_3m ? mnqMJV6StopMult_3m : isMNQ_5m ? mnqMJV6StopMult_5m : (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6))
 
     float mjvFuturesTPDistance = mjvAtr * mjvTpMult
-
-    float mjvUltraQuickTP = mjvAtr * (mjvTpMult * 0.5)
 
     float mjvStopDistance = mjvAtr * mjvStopMult
 
@@ -4231,13 +4229,13 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
 
         if useEnhancedTP
 
-            int tp1Points = math.round((mjvUltraQuickTP * 0.4) / syminfo.mintick)
+            int tp1Points = math.round((mjvFuturesTPDistance * 0.35) / syminfo.mintick)
 
-            int tp2Points = math.round((mjvFuturesTPDistance * 0.3) / syminfo.mintick)
+            int tp2Points = math.round((mjvFuturesTPDistance * 0.60) / syminfo.mintick)
 
-            int tp3Points = math.round((mjvFuturesTPDistance * 0.6) / syminfo.mintick)
+            int tp3Points = math.round((mjvFuturesTPDistance * 0.90) / syminfo.mintick)
 
-            int tp4Points = math.round((mjvFuturesTPDistance * 1.0) / syminfo.mintick)
+            int tp4Points = math.round((mjvFuturesTPDistance * 1.20) / syminfo.mintick)
 
             strategy.exit("MJV6U_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
 
@@ -4257,7 +4255,7 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
 
         if useSmartTrailing and close > mjvEntryPrice + (mjvFuturesTPDistance * trailActivationRatio)
 
-            float trailDistance = mjvAtr * 0.6
+            float trailDistance = mjvAtr * 0.5
 
             strategy.exit("MJV6U_TRAIL_L", from_entry="LONG", stop=close - trailDistance)
 
@@ -4271,13 +4269,13 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
 
         if useEnhancedTP
 
-            int tp1Points = math.round((mjvUltraQuickTP * 0.5) / syminfo.mintick)
+            int tp1Points = math.round((mjvFuturesTPDistance * 0.35) / syminfo.mintick)
 
-            int tp2Points = math.round((mjvFuturesTPDistance * 0.4) / syminfo.mintick)
+            int tp2Points = math.round((mjvFuturesTPDistance * 0.60) / syminfo.mintick)
 
-            int tp3Points = math.round((mjvFuturesTPDistance * 0.7) / syminfo.mintick)
+            int tp3Points = math.round((mjvFuturesTPDistance * 0.90) / syminfo.mintick)
 
-            int tp4Points = math.round((mjvFuturesTPDistance * 1.1) / syminfo.mintick)
+            int tp4Points = math.round((mjvFuturesTPDistance * 1.20) / syminfo.mintick)
 
             strategy.exit("MJV6U_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
 
@@ -4297,7 +4295,7 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
 
         if useSmartTrailing and close < mjvEntryPrice - (mjvFuturesTPDistance * trailActivationRatio)
 
-            float trailDistance = mjvAtr * 0.6
+            float trailDistance = mjvAtr * 0.5
 
             strategy.exit("MJV6U_TRAIL_S", from_entry="SHORT", stop=close + trailDistance)
 
@@ -4369,15 +4367,11 @@ ultraQuickTP = atrMain * (tpMultiplier * 0.5)
 
 is3m_chart_profit = timeframe.period == "3"
 
-kenyaActive_profit = mnqKenyaActive
-
 v20Active_profit =
 
      useV20KenyaPerfectProfit_eff and
 
      (not is3m_chart_profit or v20AllowOn3m) and
-
-     not kenyaActive_profit and
 
      (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
 
