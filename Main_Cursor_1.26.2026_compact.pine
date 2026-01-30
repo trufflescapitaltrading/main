@@ -215,11 +215,19 @@ profitLogicModeGroup = "📈 Profit Logic Mode"
 
 useOriginalProfitLogic = input.bool(false, "Use ORIGINAL profit logic (legacy V71/Kenya exits)", group=profitLogicModeGroup)
 
+forceOriginalMJV6 = input.bool(true, "Force ORIGINAL MJV6 profit logic (locks MJV6, disables V20/Kenya/V71 overrides)", group=profitLogicModeGroup)
+
 useMJV6UltraProfitLogic = input.bool(false, "Use MJV6 ULTRA profit logic (override exits)", group=profitLogicModeGroup)
 
 allowMultiProfitModules = input.bool(false, "Run Kenya/V71/V20/MJV6 together", group=profitLogicModeGroup)
 
-mjv6UltraActive = useMJV6UltraProfitLogic
+useMJV6UltraProfitLogic_eff = forceOriginalMJV6 ? true : useMJV6UltraProfitLogic
+
+allowMultiProfitModules_eff = forceOriginalMJV6 ? false : allowMultiProfitModules
+
+mnqProfitMode_eff = forceOriginalMJV6 ? "MJV6 Ultra" : mnqProfitMode
+
+mjv6UltraActive = useMJV6UltraProfitLogic_eff
 
 mnqMJV6Group = "📈 MNQ MJV6 Ultra Tuning"
 
@@ -231,9 +239,9 @@ mnqMJV6StopMult_3m = input.float(0.80, "MNQ 3m: Stop multiplier (MJV6 Ultra)", m
 
 mnqMJV6StopMult_5m = input.float(0.90, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
-useV20KenyaPerfectProfit_eff = useV20KenyaPerfectProfit and not useOriginalProfitLogic
+useV20KenyaPerfectProfit_eff = (forceOriginalMJV6 ? false : useV20KenyaPerfectProfit) and not useOriginalProfitLogic
 
-useMJV6MesProfitLogic_eff = useMJV6MesProfitLogic and not useOriginalProfitLogic
+useMJV6MesProfitLogic_eff = (forceOriginalMJV6 ? true : useMJV6MesProfitLogic) and not useOriginalProfitLogic
 
 enableMnq3mWinRateBooster_eff = enableMnq3mWinRateBooster and not useOriginalProfitLogic
 
@@ -504,6 +512,8 @@ isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES"
 isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
 
 isMicroFutures = isMNQ or isMCL or isMGC or isMES or isM2K
+
+mjv6UltraActive := mjv6UltraActive and isMNQ
 
 mesMJV6Active = isMES and useMJV6MesProfitLogic_eff
 
@@ -1173,7 +1183,7 @@ isMES_5m = isMES and is5min
 
 mnqKenyaActive =
 
-     (allowMultiProfitModules or (mnqProfitMode == "Kenya")) and
+     (allowMultiProfitModules_eff or (mnqProfitMode_eff == "Kenya")) and
 
      ((isMNQ_3m and useKenyaMnq3mProfitLogic) or (isMNQ_5m and useKenyaMnq5mProfitLogic))
 
@@ -4211,7 +4221,7 @@ v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 
-if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (allowMultiProfitModules or not mnqKenyaActive)
+if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (allowMultiProfitModules_eff or not mnqKenyaActive)
 
     float mjvAtr = atr10
 
@@ -4381,9 +4391,9 @@ v20Active_profit =
 
      not kenyaActive_profit and
 
-     (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
+     (allowMultiProfitModules_eff or not (isMES and useMJV6MesProfitLogic_eff))
 
-if (allowMultiProfitModules or not mjv6UltraActive) and v20Active_profit and strategy.position_size > 0
+if (allowMultiProfitModules_eff or not mjv6UltraActive) and v20Active_profit and strategy.position_size > 0
 
     float avgPrice = strategy.position_avg_price
 
@@ -4455,7 +4465,7 @@ if (allowMultiProfitModules or not mjv6UltraActive) and v20Active_profit and str
 
         strategy.exit("V20_PROTECT_L", from_entry="LONG", stop=v20ProtectStop)
 
-if (allowMultiProfitModules or not mjv6UltraActive) and v20Active_profit and strategy.position_size < 0
+if (allowMultiProfitModules_eff or not mjv6UltraActive) and v20Active_profit and strategy.position_size < 0
 
     float avgPrice = strategy.position_avg_price
 
@@ -4527,7 +4537,7 @@ if (allowMultiProfitModules or not mjv6UltraActive) and v20Active_profit and str
 
         strategy.exit("V20_PROTECT_S", from_entry="SHORT", stop=v20ProtectStopS)
 
-if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and isMES and useMJV6MesProfitLogic_eff and strategy.position_size != 0
+if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit)) and isMES and useMJV6MesProfitLogic_eff and strategy.position_size != 0
 
     float mjvAtr = atr10
 
@@ -4653,7 +4663,7 @@ if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) a
 
             strategy.exit("MJV6_STOP_S", from_entry="SHORT", stop=stopPrice)
 
-if (allowMultiProfitModules or not mjv6UltraActive) and mesFixedActive and strategy.position_size != 0 and not mesMJV6Active
+if (allowMultiProfitModules_eff or not mjv6UltraActive) and mesFixedActive and strategy.position_size != 0 and not mesMJV6Active
 
     float avgPxMes = strategy.position_avg_price
 
@@ -4665,7 +4675,7 @@ if (allowMultiProfitModules or not mjv6UltraActive) and mesFixedActive and strat
 
         strategy.exit("MES_HARD_BRACKET_S", from_entry="SHORT", stop=avgPxMes + mesSL_pts, limit=avgPxMes - mesTP_pts)
 
-if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size > 0 and (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
+if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size > 0 and (allowMultiProfitModules_eff or not (isMES and useMJV6MesProfitLogic_eff))
 
     localEntryPrice = strategy.position_avg_price
 
@@ -4975,7 +4985,7 @@ if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) a
 
                 strategy.exit("V71_SL_L", from_entry="LONG", stop=activeStop)
 
-if (allowMultiProfitModules or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size < 0 and (allowMultiProfitModules or not (isMES and useMJV6MesProfitLogic_eff))
+if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit)) and strategy.position_size < 0 and (allowMultiProfitModules_eff or not (isMES and useMJV6MesProfitLogic_eff))
 
     localEntryPrice = strategy.position_avg_price
 
