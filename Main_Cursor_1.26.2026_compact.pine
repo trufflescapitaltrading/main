@@ -223,13 +223,13 @@ mjv6UltraActive = useMJV6UltraProfitLogic
 
 mnqMJV6Group = "📈 MNQ MJV6 Ultra Tuning"
 
-mnqMJV6TPMult_3m = input.float(1.80, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6TPMult_3m = input.float(1.60, "MNQ 3m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6TPMult_5m = input.float(2.00, "MNQ 5m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
+mnqMJV6TPMult_5m = input.float(1.80, "MNQ 5m: TP multiplier (MJV6 Ultra)", minval=0.8, maxval=2.5, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6StopMult_3m = input.float(0.75, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_3m = input.float(0.80, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
-mnqMJV6StopMult_5m = input.float(0.85, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+mnqMJV6StopMult_5m = input.float(0.90, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
 useV20KenyaPerfectProfit_eff = useV20KenyaPerfectProfit and not useOriginalProfitLogic
 
@@ -4211,7 +4211,7 @@ v71_currentVolRatio = atrMain / ta.sma(atrMain, 20)
 
 v71_volAdjust = enableVolatilityAdjustedExits ? (v71_currentVolRatio > 1.2 ? volAdjustFactor : 1.0) : 1.0
 
-if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
+if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (allowMultiProfitModules or not mnqKenyaActive)
 
     float mjvAtr = atr10
 
@@ -4220,6 +4220,8 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
     float mjvStopMult = (isMNQ_3m ? mnqMJV6StopMult_3m : isMNQ_5m ? mnqMJV6StopMult_5m : (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6))
 
     float mjvFuturesTPDistance = mjvAtr * mjvTpMult
+
+    float mjvUltraQuickTP = mjvAtr * (mjvTpMult * 0.5)
 
     float mjvStopDistance = mjvAtr * mjvStopMult
 
@@ -4231,13 +4233,13 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
 
         if useEnhancedTP
 
-            int tp1Points = math.round((mjvFuturesTPDistance * 0.35) / syminfo.mintick)
+            int tp1Points = math.round((mjvUltraQuickTP * 0.4) / syminfo.mintick)
 
-            int tp2Points = math.round((mjvFuturesTPDistance * 0.60) / syminfo.mintick)
+            int tp2Points = math.round((mjvFuturesTPDistance * 0.3) / syminfo.mintick)
 
-            int tp3Points = math.round((mjvFuturesTPDistance * 0.90) / syminfo.mintick)
+            int tp3Points = math.round((mjvFuturesTPDistance * 0.6) / syminfo.mintick)
 
-            int tp4Points = math.round((mjvFuturesTPDistance * 1.20) / syminfo.mintick)
+            int tp4Points = math.round((mjvFuturesTPDistance * 1.0) / syminfo.mintick)
 
             strategy.exit("MJV6U_TP1_L", from_entry="LONG", qty_percent=60, profit=tp1Points)
 
@@ -4257,7 +4259,7 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
 
         if useSmartTrailing and close > mjvEntryPrice + (mjvFuturesTPDistance * trailActivationRatio)
 
-            float trailDistance = mjvAtr * 0.5
+            float trailDistance = mjvAtr * 0.6
 
             strategy.exit("MJV6U_TRAIL_L", from_entry="LONG", stop=close - trailDistance)
 
@@ -4271,13 +4273,13 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
 
         if useEnhancedTP
 
-            int tp1Points = math.round((mjvFuturesTPDistance * 0.35) / syminfo.mintick)
+            int tp1Points = math.round((mjvUltraQuickTP * 0.5) / syminfo.mintick)
 
-            int tp2Points = math.round((mjvFuturesTPDistance * 0.60) / syminfo.mintick)
+            int tp2Points = math.round((mjvFuturesTPDistance * 0.4) / syminfo.mintick)
 
-            int tp3Points = math.round((mjvFuturesTPDistance * 0.90) / syminfo.mintick)
+            int tp3Points = math.round((mjvFuturesTPDistance * 0.7) / syminfo.mintick)
 
-            int tp4Points = math.round((mjvFuturesTPDistance * 1.20) / syminfo.mintick)
+            int tp4Points = math.round((mjvFuturesTPDistance * 1.1) / syminfo.mintick)
 
             strategy.exit("MJV6U_TP1_S", from_entry="SHORT", qty_percent=60, profit=tp1Points)
 
@@ -4297,7 +4299,7 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar)
 
         if useSmartTrailing and close < mjvEntryPrice - (mjvFuturesTPDistance * trailActivationRatio)
 
-            float trailDistance = mjvAtr * 0.5
+            float trailDistance = mjvAtr * 0.6
 
             strategy.exit("MJV6U_TRAIL_S", from_entry="SHORT", stop=close + trailDistance)
 
