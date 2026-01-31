@@ -899,11 +899,11 @@ eodBlockEndTime = input.int(1800, "EOD block end time (ET)", minval=1600, maxval
 
 blockEntriesDuringEODWindow = input.bool(true, "Block entries during EOD window", group=exitControlsGroup)
 
-topstepExitGuard = input.bool(true, "Topstep MNQ RTH exit guard", group=exitControlsGroup)
+topstepExitGuard = input.bool(true, "Topstep RTH exit guard (MNQ/MES)", group=exitControlsGroup)
 
-topstepEntryCutoffCT = input.int(1555, "Topstep MNQ entry cutoff (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+topstepEntryCutoffCT = input.int(1555, "Topstep entry cutoff (CT)", minval=0, maxval=2359, group=exitControlsGroup)
 
-topstepExitTimeCT = input.int(1555, "Topstep MNQ force exit (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+topstepExitTimeCT = input.int(1555, "Topstep force exit (CT)", minval=0, maxval=2359, group=exitControlsGroup)
 
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 
@@ -1321,7 +1321,7 @@ isUAESession = enableUAESession and ((uaeStart <= uaeEnd and currentTime >= uaeS
 
 tradeAllowedBySessions = isAsianSession or isLondonSession or isNYSession or isUAESession
 
-mnqTopstepEntryBlocked = topstepExitGuard and isMNQ and (currentTimeCT >= topstepEntryCutoffCT)
+topstepEntryBlocked = topstepExitGuard and (isMNQ or isMES) and (currentTimeCT >= topstepEntryCutoffCT)
 
 canTradeNow =
 
@@ -1331,7 +1331,7 @@ canTradeNow =
 
 eodEntryBlock = blockEntriesDuringEODWindow and inEodWindow and (currentTime > tradingHoursEnd)
 
-canEnterNow = canTradeNow and (enable24_7Trading ? true : (not eodEntryBlock)) and (not mnqTopstepEntryBlocked)
+canEnterNow = canTradeNow and (enable24_7Trading ? true : (not eodEntryBlock)) and (not topstepEntryBlocked)
 
 optimalSessionBonus = (useOptimalSessionsOnly and isOptimalSession) ? 1.2 : 1.0
 
@@ -5471,9 +5471,9 @@ tpExitWebhook(reason) =>
 
      '}'
 
-mnqTopstepExitNow = topstepExitGuard and isMNQ and strategy.position_size != 0 and (currentTimeCT >= topstepExitTimeCT)
+topstepExitNow = topstepExitGuard and (isMNQ or isMES) and strategy.position_size != 0 and (currentTimeCT >= topstepExitTimeCT)
 
-if mnqTopstepExitNow and not exitIssuedThisBar
+if topstepExitNow and not exitIssuedThisBar
 
     strategy.close_all(comment="TOPSTEP_RTH_EXIT")
 
