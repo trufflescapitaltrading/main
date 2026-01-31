@@ -901,9 +901,9 @@ blockEntriesDuringEODWindow = input.bool(true, "Block entries during EOD window"
 
 topstepExitGuard = input.bool(true, "Topstep MNQ RTH exit guard", group=exitControlsGroup)
 
-topstepEntryCutoffCT = input.int(1450, "Topstep MNQ entry cutoff (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+topstepEntryCutoffCT = input.int(1550, "Topstep MNQ entry cutoff (CT)", minval=0, maxval=2359, group=exitControlsGroup)
 
-topstepExitTimeCT = input.int(1455, "Topstep MNQ force exit (CT)", minval=0, maxval=2359, group=exitControlsGroup)
+topstepExitTimeCT = input.int(1555, "Topstep MNQ force exit (CT)", minval=0, maxval=2359, group=exitControlsGroup)
 
 useLosingTradeAutoClose = input.bool(false, "Losing Trade Auto-Close - DISABLED", group=exitControlsGroup)
 
