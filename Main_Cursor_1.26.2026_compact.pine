@@ -155,16 +155,6 @@ mesMJV6BEUseFees = input.bool(true, "MES MJV6: BE includes est. fees/slippage", 
 
 mesMJV6TrailActivationRatio = input.float(0.50, "MES MJV6: Trail activation ratio", minval=0.30, maxval=1.20, step=0.05, group=mesProfitGroup)
 
-mesMJV6HighWinProtect_eff = forceOriginalMJV6 ? true : mesMJV6HighWinProtect
-
-mesMJV6TPScale_eff = forceOriginalMJV6 ? 0.75 : mesMJV6TPScale
-
-mesMJV6BETriggerPct_eff = forceOriginalMJV6 ? 0.40 : mesMJV6BETriggerPct
-
-mesMJV6BEUseFees_eff = forceOriginalMJV6 ? true : mesMJV6BEUseFees
-
-mesMJV6TrailActivationRatio_eff = forceOriginalMJV6 ? 0.50 : mesMJV6TrailActivationRatio
-
 mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
 
 enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
@@ -260,6 +250,16 @@ mnqMJV6StopMult_5m_eff = forceOriginalMJV6 ? 0.90 : mnqMJV6StopMult_5m
 useV20KenyaPerfectProfit_eff = (forceOriginalMJV6 ? false : useV20KenyaPerfectProfit) and not useOriginalProfitLogic
 
 useMJV6MesProfitLogic_eff = (forceOriginalMJV6 ? true : useMJV6MesProfitLogic) and not useOriginalProfitLogic
+
+mesMJV6HighWinProtect_eff = forceOriginalMJV6 ? true : mesMJV6HighWinProtect
+
+mesMJV6TPScale_eff = forceOriginalMJV6 ? 0.75 : mesMJV6TPScale
+
+mesMJV6BETriggerPct_eff = forceOriginalMJV6 ? 0.40 : mesMJV6BETriggerPct
+
+mesMJV6BEUseFees_eff = forceOriginalMJV6 ? true : mesMJV6BEUseFees
+
+mesMJV6TrailActivationRatio_eff = forceOriginalMJV6 ? 0.50 : mesMJV6TrailActivationRatio
 
 enableMnq3mWinRateBooster_eff = enableMnq3mWinRateBooster and not useOriginalProfitLogic
 
