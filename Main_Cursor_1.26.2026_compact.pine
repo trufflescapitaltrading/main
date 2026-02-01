@@ -155,6 +155,16 @@ mesMJV6BEUseFees = input.bool(true, "MES MJV6: BE includes est. fees/slippage", 
 
 mesMJV6TrailActivationRatio = input.float(0.50, "MES MJV6: Trail activation ratio", minval=0.30, maxval=1.20, step=0.05, group=mesProfitGroup)
 
+mesMJV6HighWinProtect_eff = forceOriginalMJV6 ? true : mesMJV6HighWinProtect
+
+mesMJV6TPScale_eff = forceOriginalMJV6 ? 0.75 : mesMJV6TPScale
+
+mesMJV6BETriggerPct_eff = forceOriginalMJV6 ? 0.40 : mesMJV6BETriggerPct
+
+mesMJV6BEUseFees_eff = forceOriginalMJV6 ? true : mesMJV6BEUseFees
+
+mesMJV6TrailActivationRatio_eff = forceOriginalMJV6 ? 0.50 : mesMJV6TrailActivationRatio
+
 mesEntryGateGroup = "🛡️ MES High-Win Entry Gate"
 
 enableMesHighWinEntryGate = input.bool(true, "Enable MES-only strict entry gate (targets 83%+ WR)", group=mesEntryGateGroup)
@@ -238,6 +248,14 @@ mnqMJV6TPMult_5m = input.float(1.80, "MNQ 5m: TP multiplier (MJV6 Ultra)", minva
 mnqMJV6StopMult_3m = input.float(0.80, "MNQ 3m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
 
 mnqMJV6StopMult_5m = input.float(0.90, "MNQ 5m: Stop multiplier (MJV6 Ultra)", minval=0.6, maxval=2.0, step=0.05, group=mnqMJV6Group)
+
+mnqMJV6TPMult_3m_eff = forceOriginalMJV6 ? 1.60 : mnqMJV6TPMult_3m
+
+mnqMJV6TPMult_5m_eff = forceOriginalMJV6 ? 1.80 : mnqMJV6TPMult_5m
+
+mnqMJV6StopMult_3m_eff = forceOriginalMJV6 ? 0.80 : mnqMJV6StopMult_3m
+
+mnqMJV6StopMult_5m_eff = forceOriginalMJV6 ? 0.90 : mnqMJV6StopMult_5m
 
 useV20KenyaPerfectProfit_eff = (forceOriginalMJV6 ? false : useV20KenyaPerfectProfit) and not useOriginalProfitLogic
 
@@ -4239,9 +4257,9 @@ if mjv6UltraActive and strategy.position_size != 0 and not na(entryBar) and (all
 
     float mjvAtr = atr10
 
-    float mjvTpMult = (isMNQ_3m ? mnqMJV6TPMult_3m : isMNQ_5m ? mnqMJV6TPMult_5m : tpMultiplier)
+    float mjvTpMult = (isMNQ_3m ? mnqMJV6TPMult_3m_eff : isMNQ_5m ? mnqMJV6TPMult_5m_eff : tpMultiplier)
 
-    float mjvStopMult = (isMNQ_3m ? mnqMJV6StopMult_3m : isMNQ_5m ? mnqMJV6StopMult_5m : (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6))
+    float mjvStopMult = (isMNQ_3m ? mnqMJV6StopMult_3m_eff : isMNQ_5m ? mnqMJV6StopMult_5m_eff : (is1min ? 1.2 : is2min ? 1.3 : is3min ? 1.4 : 1.6))
 
     float mjvFuturesTPDistance = mjvAtr * mjvTpMult
 
@@ -4555,7 +4573,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
     float mjvAtr = atr10
 
-    float effectiveTPMult = tpMultiplier * (mesMJV6HighWinProtect ? mesMJV6TPScale : 1.0)
+    float effectiveTPMult = tpMultiplier * (mesMJV6HighWinProtect_eff ? mesMJV6TPScale_eff : 1.0)
 
     float mjvFuturesTPDistance = mjvAtr * effectiveTPMult
 
@@ -4569,7 +4587,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
     float mjvBEOffsetPts = 0.0
 
-    if mesMJV6HighWinProtect and mesMJV6BEUseFees and enableFeeModel and syminfo.pointvalue > 0
+    if mesMJV6HighWinProtect_eff and mesMJV6BEUseFees_eff and enableFeeModel and syminfo.pointvalue > 0
 
         float mjvTickValue = syminfo.mintick * syminfo.pointvalue
 
@@ -4615,7 +4633,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
             float stopPrice = stopLoss
 
-            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            float actRatio = mesMJV6HighWinProtect_eff ? mesMJV6TrailActivationRatio_eff : trailActivationRatio
 
             if useSmartTrailing and close > mjvEntryPrice + (mjvFuturesTPDistance * actRatio)
 
@@ -4623,7 +4641,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
                 stopPrice := close - trailDistance
 
-            if mesMJV6HighWinProtect and close > mjvEntryPrice + (mjvFuturesTPDistance * mesMJV6BETriggerPct)
+            if mesMJV6HighWinProtect_eff and close > mjvEntryPrice + (mjvFuturesTPDistance * mesMJV6BETriggerPct_eff)
 
                 stopPrice := math.max(stopPrice, mjvEntryPrice + mjvBEOffsetPts)
 
@@ -4663,7 +4681,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
             float stopPrice = stopLoss
 
-            float actRatio = mesMJV6HighWinProtect ? mesMJV6TrailActivationRatio : trailActivationRatio
+            float actRatio = mesMJV6HighWinProtect_eff ? mesMJV6TrailActivationRatio_eff : trailActivationRatio
 
             if useSmartTrailing and close < mjvEntryPrice - (mjvFuturesTPDistance * actRatio)
 
@@ -4671,7 +4689,7 @@ if (allowMultiProfitModules_eff or (not mjv6UltraActive and not v20Active_profit
 
                 stopPrice := close + trailDistance
 
-            if mesMJV6HighWinProtect and close < mjvEntryPrice - (mjvFuturesTPDistance * mesMJV6BETriggerPct)
+            if mesMJV6HighWinProtect_eff and close < mjvEntryPrice - (mjvFuturesTPDistance * mesMJV6BETriggerPct_eff)
 
                 stopPrice := math.min(stopPrice, mjvEntryPrice - mjvBEOffsetPts)
 
