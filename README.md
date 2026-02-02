@@ -9,7 +9,8 @@ This repo contains a TradingView Pine v5 strategy focused on:
 
 ## Files
 
-- `trend_impulse_only_v1.pine`: Strategy implementation.
+- `mgc_master_v71_profit_logic_fixed.pine`: **Primary** — restored V7.1 profitable logic with execution fixes (stable entry IDs, exits tied via `from_entry`, contract qty consistency).
+- `trend_impulse_only_v1.pine`: Experimental rewrite (not recommended if win-rate collapses).
 
 ## How to use
 
