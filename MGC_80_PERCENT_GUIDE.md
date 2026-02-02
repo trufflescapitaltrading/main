@@ -30,6 +30,18 @@ Use this as the ideal entry environment for the bot:
 - **Not into opposing S/R**: longs not near resistance; shorts not near support
 - **Stop makes sense**: structure/ATR stop distance falls inside the min/max ATR guardrails (not too tight, not too wide)
 
+## Institutional risk management (what’s built in)
+
+The indicator includes “institutional-style” safety controls to avoid low-quality regimes and protect the account:
+
+- **HTF alignment requirement** (optional but recommended): longs only when HTF is bullish; shorts only when HTF is bearish
+- **MTF confirmation** (optional): adds a second, slower timeframe trend gate (e.g., 60m)
+- **Reversal protection exit** (optional): exits remaining position at market if a strong opposite regime appears (dominant opposite score + confirmation)
+- **Losing-streak kill-switch**: disables new entries after N consecutive losing trades (resets next day/session)
+- **Cooldown after loss/win**: forces a pause after a trade closes to avoid “revenge trading”
+- **Time-stop** (optional): exits at market after a max number of bars in a trade (prevents overstaying)
+- **MAE/MFE tracking** (virtual): tracks max adverse excursion and max favorable excursion during each trade for monitoring/optimization
+
 ## Critical notes (read this)
 
 - **This is not a backtesting strategy** (it’s an indicator). TradingView will not manage a real broker position for you.
@@ -147,6 +159,13 @@ Best when your TradersPost strategy supports scaling out (reduce-only orders).
 - **Timeframe**: 5m (default HTF confirm 15m)
 - **Session filter**: enabled (US hours) unless you want overnight trades
 - **Confluence threshold**: 7 for the intended “quality over quantity” behavior
+- **Institutional settings (recommended)**:
+  - `Require HTF Alignment` = ON
+  - `Use MTF Confirmation` = OFF initially (turn ON after you validate signal frequency)
+  - `Exit On Reversal Signal` = ON
+  - `Max Consecutive Losing Trades` = 2
+  - `Cooldown Bars After Loss` = 30
+  - `Max Hold Bars` = 0 (off) initially; turn on only if you see overstaying in chop
 
 ## Troubleshooting
 

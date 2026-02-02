@@ -64,6 +64,19 @@ htf_ema50 = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50))
 htf_bullish = htf_close > htf_ema20 and htf_ema20 > htf_ema50
 htf_bearish = htf_close < htf_ema20 and htf_ema20 < htf_ema50
 
+// Institutional filter option: require HTF alignment (not just "points")
+requireHtfAlignment = input.bool(true, "Require HTF Alignment (institutional filter)",
+     tooltip="If ON, longs require HTF bullish and shorts require HTF bearish.")
+
+// Optional MTF (mid-timeframe) confirmation
+useMtfConfirmation = input.bool(false, "Use MTF Confirmation (optional)")
+mtfTimeframe = input.timeframe("60", "Mid Timeframe (MTF)", tooltip="Example: 60m. Used only if MTF confirmation is enabled.")
+mtf_close = request.security(syminfo.tickerid, mtfTimeframe, close)
+mtf_ema20 = request.security(syminfo.tickerid, mtfTimeframe, ta.ema(close, 20))
+mtf_ema50 = request.security(syminfo.tickerid, mtfTimeframe, ta.ema(close, 50))
+mtf_bullish = mtf_close > mtf_ema20 and mtf_ema20 > mtf_ema50
+mtf_bearish = mtf_close < mtf_ema20 and mtf_ema20 < mtf_ema50
+
 // ==============================
 // 📈 CORE INDICATORS
 // ==============================
@@ -292,6 +305,19 @@ maxDailyLossDollars = guardrailCapital * maxDailyLossPercent / 100.0
 
 fixedContracts = input.int(1, "Fixed Contracts", minval=1, maxval=50)
 
+// Institutional safety guards
+maxConsecutiveLosses = input.int(2, "Max Consecutive Losing Trades (kill-switch)", minval=1, maxval=10,
+     tooltip="Stops new entries after N losing trades until next session/day reset.")
+cooldownAfterLossBars = input.int(30, "Cooldown Bars After Loss", minval=0, maxval=500,
+     tooltip="Extra pause after a losing trade to avoid revenge trades.")
+cooldownAfterWinBars = input.int(0, "Cooldown Bars After Win", minval=0, maxval=500)
+maxHoldBars = input.int(0, "Max Hold Bars (0 = off)", minval=0, maxval=2000,
+     tooltip="Time-stop: exits at market when a position has been open this many bars.")
+
+exitOnReversal = input.bool(true, "Exit On Reversal Signal (institutional protection)")
+reversalRequiresHullFlip = input.bool(true, "Reversal Requires Hull Flip")
+reversalRequiresEma21Break = input.bool(true, "Reversal Requires EMA21 Break")
+
 // ==============================
 // 🔔 TRADERSPOST ALERT SETTINGS
 // ==============================
@@ -307,12 +333,16 @@ traderspostTicker = input.string("MGC1!", "TradersPost Ticker", tooltip="Sent in
 var float dailyRealizedPnL = 0.0
 var int dailyTrades = 0
 var int lastTradeBar = 0
+var int consecutiveLosses = 0
+var int cooldownUntilBar = 0
 
 newDay = ta.change(time("D")) != 0
 if newDay
     dailyRealizedPnL := 0.0
     dailyTrades := 0
     lastTradeBar := 0
+    consecutiveLosses := 0
+    cooldownUntilBar := 0
 
 maxLossReached = dailyRealizedPnL < -maxDailyLossDollars
 maxTradesReached = dailyTrades >= maxTradesPerDay
@@ -330,9 +360,21 @@ var bool breakeven_active = false
 var bool trailing_active = false
 var float qtyRemaining = 0.0
 var float qtyOriginal = 0.0
+var int entryBar = na
+
+// MAE/MFE and per-trade realized PnL (virtual)
+var float maePoints = 0.0
+var float mfePoints = 0.0
+var float tradeRealizedPnL = 0.0
+var float lastTradeMAE = na
+var float lastTradeMFE = na
+var float lastTradePnL = na
+var string lastExitReason = ""
 
 barsSinceLastTrade = bar_index - lastTradeBar
-canTrade = sessionOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades)
+cooldownOK = bar_index >= cooldownUntilBar
+lossStreakOK = consecutiveLosses < maxConsecutiveLosses
+canTrade = sessionOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades) and cooldownOK and lossStreakOK
 
 // ==============================
 // 🤝 COOPERATIVE SIGNAL QUALITY GATES
@@ -364,8 +406,13 @@ dominantShort = confluenceShort >= (confluenceLong + scoreDominance)
 srOKLong = not avoidOpposingSR or not nearResistance
 srOKShort = not avoidOpposingSR or not nearSupport
 
-longSignal = canTrade and stopOKLong and srOKLong and (not bothDirectionsHot) and dominantLong and confluenceLong >= minConfluenceScore
-shortSignal = canTrade and stopOKShort and srOKShort and (not bothDirectionsHot) and dominantShort and confluenceShort >= minConfluenceScore
+htfOKLong = not requireHtfAlignment or htf_bullish
+htfOKShort = not requireHtfAlignment or htf_bearish
+mtfOKLong = (not useMtfConfirmation) or mtf_bullish
+mtfOKShort = (not useMtfConfirmation) or mtf_bearish
+
+longSignal = canTrade and stopOKLong and srOKLong and htfOKLong and mtfOKLong and (not bothDirectionsHot) and dominantLong and confluenceLong >= minConfluenceScore
+shortSignal = canTrade and stopOKShort and srOKShort and htfOKShort and mtfOKShort and (not bothDirectionsHot) and dominantShort and confluenceShort >= minConfluenceScore
 
 // ==============================
 // 🔧 JSON HELPERS
@@ -392,6 +439,10 @@ if enableAlerts and barstate.isconfirmed
         entryPrice := close
         qtyOriginal := fixedContracts
         qtyRemaining := fixedContracts
+        entryBar := bar_index
+        maePoints := 0.0
+        mfePoints := 0.0
+        tradeRealizedPnL := 0.0
 
         // Cooperative stop: uses both ATR and swing structure (whichever is safer)
         currentStop := stopCandidateLong
@@ -412,6 +463,10 @@ if enableAlerts and barstate.isconfirmed
         entryPrice := close
         qtyOriginal := fixedContracts
         qtyRemaining := fixedContracts
+        entryBar := bar_index
+        maePoints := 0.0
+        mfePoints := 0.0
+        tradeRealizedPnL := 0.0
 
         currentStop := stopCandidateShort
         tp1_hit := false
@@ -424,6 +479,17 @@ if enableAlerts and barstate.isconfirmed
 
         tp1_price = entryPrice - (atr * tp1_ATR)
         alert(f_json_entry(false, fixedContracts, currentStop, tp1_price, confluenceShort), alert.freq_once_per_bar_close)
+
+// ==============================
+// 📉 MAE/MFE TRACKING (INSTITUTIONAL METRICS)
+// ==============================
+if inPos and not na(entryPrice)
+    // MAE: worst adverse move vs entry (negative points)
+    // MFE: best favorable move vs entry (positive points)
+    adverse = isLong ? (low - entryPrice) : (entryPrice - high)
+    favorable = isLong ? (high - entryPrice) : (entryPrice - low)
+    maePoints := math.min(maePoints, adverse)
+    mfePoints := math.max(mfePoints, favorable)
 
 // ==============================
 // 🛡️ COOPERATIVE STOP MANAGEMENT (MODEL)
@@ -457,13 +523,37 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
 
     stopTouched = isLong ? (low <= currentStop) : (high >= currentStop)
 
+    // Reversal protection (close position at market on strong opposite regime)
+    oppDominant = isLong ?
+         (confluenceShort >= minConfluenceScore and confluenceShort >= (confluenceLong + scoreDominance) and (not requireHtfAlignment or htf_bearish) and ((not useMtfConfirmation) or mtf_bearish)) :
+         (confluenceLong >= minConfluenceScore and confluenceLong >= (confluenceShort + scoreDominance) and (not requireHtfAlignment or htf_bullish) and ((not useMtfConfirmation) or mtf_bullish))
+
+    hullFlipOK = not reversalRequiresHullFlip or (isLong ? hull_bearish : hull_bullish)
+    ema21BreakOK = not reversalRequiresEma21Break or (isLong ? close < ema21 : close > ema21)
+    reversalTouched = exitOnReversal and oppDominant and hullFlipOK and ema21BreakOK
+
+    // Time-stop (optional)
+    holdBars = not na(entryBar) ? (bar_index - entryBar) : 0
+    timeStopTouched = (maxHoldBars > 0) and (holdBars >= maxHoldBars)
+
     // Priority: STOP first (conservative for same-bar TP/STOP conflicts)
     if stopTouched
         alert(f_json_exit(isLong, qtyRemaining, "STOP", currentStop), alert.freq_once_per_bar_close)
 
         // virtual realized PnL
         pnlPoints = (currentStop - entryPrice) * (isLong ? 1 : -1)
-        dailyRealizedPnL += pnlPoints * syminfo.pointvalue * qtyRemaining
+        pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
+        dailyRealizedPnL += pnlDollars
+        tradeRealizedPnL += pnlDollars
+
+        // finalize trade stats / risk state
+        lastTradePnL := tradeRealizedPnL
+        lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+        lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+        lastExitReason := "STOP"
+        consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+        cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+        lastTradeBar := bar_index
 
         // reset model
         inPos := false
@@ -475,7 +565,44 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
         trailing_active := false
         qtyRemaining := 0.0
         qtyOriginal := 0.0
+        entryBar := na
+        maePoints := 0.0
+        mfePoints := 0.0
+        tradeRealizedPnL := 0.0
     else
+        // Reversal / time-stop exits (market)
+        if reversalTouched or timeStopTouched
+            reason = reversalTouched ? "REVERSAL" : "TIME"
+            alert(f_json_exit(isLong, qtyRemaining, reason, close), alert.freq_once_per_bar_close)
+
+            pnlPoints = (close - entryPrice) * (isLong ? 1 : -1)
+            pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
+            dailyRealizedPnL += pnlDollars
+            tradeRealizedPnL += pnlDollars
+
+            lastTradePnL := tradeRealizedPnL
+            lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+            lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+            lastExitReason := reason
+            consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+            cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+            lastTradeBar := bar_index
+
+            inPos := false
+            entryPrice := na
+            currentStop := na
+            tp1_hit := false
+            tp2_hit := false
+            breakeven_active := false
+            trailing_active := false
+            qtyRemaining := 0.0
+            qtyOriginal := 0.0
+            entryBar := na
+            maePoints := 0.0
+            mfePoints := 0.0
+            tradeRealizedPnL := 0.0
+
+        else
         // Determine the highest TP stage reached this bar
         stage = tp3Touched ? 3 : tp2Touched ? 2 : tp1Touched ? 1 : 0
 
@@ -494,7 +621,9 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
             qtyOut = math.min(tp1_qty_target, qtyRemaining)
             alert(f_json_exit(isLong, qtyOut, "TP1", tp1_price), alert.freq_once_per_bar_close)
             pnlPoints = (tp1_price - entryPrice) * (isLong ? 1 : -1)
-            dailyRealizedPnL += pnlPoints * syminfo.pointvalue * qtyOut
+            pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
+            dailyRealizedPnL += pnlDollars
+            tradeRealizedPnL += pnlDollars
             qtyRemaining -= qtyOut
             tp1_hit := true
 
@@ -502,14 +631,26 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
             qtyOut = math.min(tp2_qty_target, qtyRemaining)
             alert(f_json_exit(isLong, qtyOut, "TP2", tp2_price), alert.freq_once_per_bar_close)
             pnlPoints = (tp2_price - entryPrice) * (isLong ? 1 : -1)
-            dailyRealizedPnL += pnlPoints * syminfo.pointvalue * qtyOut
+            pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
+            dailyRealizedPnL += pnlDollars
+            tradeRealizedPnL += pnlDollars
             qtyRemaining -= qtyOut
             tp2_hit := true
 
         if stage >= 3 and tp2_hit and qtyRemaining > 0
             alert(f_json_exit(isLong, qtyRemaining, "TP3", tp3_price), alert.freq_once_per_bar_close)
             pnlPoints = (tp3_price - entryPrice) * (isLong ? 1 : -1)
-            dailyRealizedPnL += pnlPoints * syminfo.pointvalue * qtyRemaining
+            pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
+            dailyRealizedPnL += pnlDollars
+            tradeRealizedPnL += pnlDollars
+
+            lastTradePnL := tradeRealizedPnL
+            lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+            lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+            lastExitReason := "TP3"
+            consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+            cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+            lastTradeBar := bar_index
 
             // reset model
             inPos := false
@@ -521,9 +662,21 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
             trailing_active := false
             qtyRemaining := 0.0
             qtyOriginal := 0.0
+            entryBar := na
+            maePoints := 0.0
+            mfePoints := 0.0
+            tradeRealizedPnL := 0.0
 
         // safety reset if fully scaled out
         if inPos and qtyRemaining <= 0
+            lastTradePnL := tradeRealizedPnL
+            lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+            lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+            lastExitReason := "SCALED_OUT"
+            consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+            cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+            lastTradeBar := bar_index
+
             inPos := false
             entryPrice := na
             currentStop := na
@@ -533,11 +686,15 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
             trailing_active := false
             qtyRemaining := 0.0
             qtyOriginal := 0.0
+            entryBar := na
+            maePoints := 0.0
+            mfePoints := 0.0
+            tradeRealizedPnL := 0.0
 
 // ==============================
 // 📊 DISPLAYS
 // ==============================
-var table perfTable = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 85))
+var table perfTable = table.new(position.top_right, 2, 13, bgcolor=color.new(color.black, 85))
 if barstate.isconfirmed
     table.cell(perfTable, 0, 0, "MGC ALERT-ONLY", colspan=2, bgcolor=color.new(color.gold, 60), text_color=color.white)
     table.cell(perfTable, 0, 1, "Daily Trades", text_color=color.white)
@@ -556,6 +713,19 @@ if barstate.isconfirmed
     table.cell(perfTable, 1, 7, inPos ? (breakeven_active ? "BE" : trailing_active ? "TRAIL" : "INIT") : "-", text_color=color.aqua)
     table.cell(perfTable, 0, 8, "Qty Rem", text_color=color.white)
     table.cell(perfTable, 1, 8, inPos ? str.tostring(qtyRemaining) : "0", text_color=color.white)
+
+    table.cell(perfTable, 0, 9, "Loss Streak", text_color=color.white)
+    table.cell(perfTable, 1, 9, str.tostring(consecutiveLosses) + "/" + str.tostring(maxConsecutiveLosses), text_color=consecutiveLosses >= maxConsecutiveLosses ? color.red : color.lime)
+
+    table.cell(perfTable, 0, 10, "Cooldown", text_color=color.white)
+    cdText = bar_index < cooldownUntilBar ? "ON" : "OFF"
+    table.cell(perfTable, 1, 10, cdText, text_color=bar_index < cooldownUntilBar ? color.orange : color.lime)
+
+    table.cell(perfTable, 0, 11, "Last Exit", text_color=color.white)
+    table.cell(perfTable, 1, 11, lastExitReason, text_color=color.white)
+
+    table.cell(perfTable, 0, 12, "Last PnL (virt)", text_color=color.white)
+    table.cell(perfTable, 1, 12, na(lastTradePnL) ? "-" : ("$" + str.tostring(lastTradePnL, "#.##")), text_color=na(lastTradePnL) ? color.gray : (lastTradePnL >= 0 ? color.lime : color.red))
 
 // ==============================
 // 📈 VISUAL PLOTS
