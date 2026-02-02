@@ -5,6 +5,7 @@ This repo contains a TradingView Pine v5 strategy focused on:
 - **Wins > losses (positive expectancy)**: targets are enforced to be larger than the stop (RR enforced).
 - **No choppy trades**: a strict **ADX + ATR-regime** gate blocks entries in chop/chaos.
 - **Only 3 allowed trade types**: **Trend**, **Continuation**, **Impulse (spike)**.
+- **Institutional risk management**: HTF/MTF confirmation, MAE exits, losing-trade exits, time stops, reversal exits, breakeven + trailing stops, daily kill-switch.
 
 ## Files
 
@@ -28,5 +29,6 @@ When enabled, alerts emit JSON payloads including:
 - `stop_loss`, `tp1`, `tp2`, `tp3`
 - `trade_type`: `TREND` / `CONTINUATION` / `IMPULSE`
 - `adx`, `atr_ratio`, `rr_tp1`
+- `htf_dir`, `mtf_dir`
 
 If `Account ID` is provided, the payload includes `"account":"..."`.

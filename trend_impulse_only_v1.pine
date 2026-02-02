@@ -1,5 +1,5 @@
 //@version=5
-strategy("Trend/Continuation/Impulse ONLY — Wins > Losses (RR Enforced) [v1]",
+strategy("Trend/Continuation/Impulse ONLY — Institutional Risk Mgmt + Wins > Losses [v2]",
      overlay=true,
      initial_capital=25000,
      default_qty_type=strategy.fixed,   // contracts/shares (single source of truth)
@@ -56,6 +56,12 @@ tp1Dist = atr * tp1AtrMult
 tp2Dist = atr * tp2AtrMult
 tp3Dist = atr * tp3AtrMult
 
+// Normalize TP percents to sum to 100 (prevents partial-exit math bugs).
+tpSum = tp1Pct + tp2Pct + tp3Pct
+tp1PctN = tpSum > 0 ? math.round(tp1Pct * 100.0 / tpSum) : 0
+tp2PctN = tpSum > 0 ? math.round(tp2Pct * 100.0 / tpSum) : 0
+tp3PctN = tpSum > 0 ? (100 - tp1PctN - tp2PctN) : 0
+
 // ==================== NO CHOP FILTERS (MANDATORY) ====================
 group_chop = "🚫 No Chop Filters"
 enableNoChop = input.bool(true, "Enable No-Chop Gate", group=group_chop)
@@ -99,11 +105,13 @@ group_freq = "🧯 Frequency Control"
 maxTradesPerDay = input.int(10, "Max Trades/Day", minval=1, maxval=50, group=group_freq)
 minBarsBetweenTrades = input.int(8, "Min Bars Between Trades", minval=1, maxval=50, group=group_freq)
 maxConsecutiveLosses = input.int(3, "Stop After X Consecutive Losses", minval=1, maxval=10, group=group_freq)
+cooldownBarsAfterLoss = input.int(0, "Cooldown Bars After Loss", minval=0, maxval=200, group=group_freq)
 
 var int tradesToday = 0
 var int lastEntryBar = na
 var int consecutiveLosses = 0
 var int dayMarker = na
+var int lastLossBar = na
 
 newDay = dayofweek(time) != dayofweek(time[1])
 if newDay
@@ -111,7 +119,61 @@ if newDay
     dayMarker := dayofweek(time)
 
 barsSinceLast = na(lastEntryBar) ? 10_000 : (bar_index - lastEntryBar)
-freqOK = (tradesToday < maxTradesPerDay) and (barsSinceLast >= minBarsBetweenTrades) and (consecutiveLosses < maxConsecutiveLosses)
+cooldownOK = na(lastLossBar) or (cooldownBarsAfterLoss <= 0) or ((bar_index - lastLossBar) >= cooldownBarsAfterLoss)
+freqOK = (tradesToday < maxTradesPerDay) and (barsSinceLast >= minBarsBetweenTrades) and (consecutiveLosses < maxConsecutiveLosses) and cooldownOK
+
+// ==================== INSTITUTIONAL RISK MANAGEMENT ====================
+group_risk = "🛡️ Institutional Risk Management"
+enableKillSwitch = input.bool(true, "Enable Daily Kill Switch (Close All + Disable)", group=group_risk)
+maxDailyLossPct = input.float(2.0, "Max Daily Loss %", minval=0.5, maxval=10.0, group=group_risk)
+maxDailyDrawdownPct = input.float(2.5, "Max Daily Drawdown %", minval=0.5, maxval=15.0, group=group_risk,
+     tooltip="Based on day start equity. If breached, positions close and no new trades until next day.")
+
+enableMAEExit = input.bool(true, "Enable MAE Exit", group=group_risk)
+maeAtrMult = input.float(1.3, "MAE Threshold (ATR Multiple)", minval=0.6, maxval=5.0, group=group_risk,
+     tooltip="If max adverse excursion exceeds this ATR multiple, force exit.")
+
+enableTimeStop = input.bool(true, "Enable Time Stop", group=group_risk)
+maxBarsInTrade = input.int(60, "Max Bars In Trade", minval=5, maxval=2000, group=group_risk)
+timeStopOnlyIfNotGreen = input.bool(true, "Time Stop Only If Not Profitable", group=group_risk)
+
+enableLosingTradeExit = input.bool(true, "Enable Losing-Trade Exit", group=group_risk)
+losingExitAfterBars = input.int(20, "If Losing After Bars", minval=2, maxval=500, group=group_risk)
+losingExitAtr = input.float(0.4, "And Loss >= ATR *", minval=0.1, maxval=2.0, group=group_risk)
+
+enableBreakeven = input.bool(true, "Enable Breakeven Stop", group=group_risk)
+beTriggerR = input.float(1.0, "BE Trigger (R multiple)", minval=0.3, maxval=5.0, group=group_risk)
+beOffsetTicks = input.int(1, "BE Offset (ticks)", minval=0, maxval=50, group=group_risk)
+
+enableTrailing = input.bool(true, "Enable Trailing Stop", group=group_risk)
+trailAfterR = input.float(1.5, "Start Trailing After (R)", minval=0.5, maxval=10.0, group=group_risk)
+trailAtrMult = input.float(0.8, "Trail Distance (ATR Multiple)", minval=0.2, maxval=3.0, group=group_risk)
+
+enableReversalExit = input.bool(true, "Enable Reversal Exit", group=group_risk)
+revOnEmaCross = input.bool(true, "Exit On EMA Cross Against", group=group_risk)
+revOnOppImpulse = input.bool(true, "Exit On Opposite Impulse", group=group_risk)
+
+// Daily equity guard
+var float dayStartEquity = na
+var float dayHighEquity = na
+var bool dailyKilled = false
+if newDay
+    dayStartEquity := strategy.equity
+    dayHighEquity := strategy.equity
+    dailyKilled := false
+
+dayStartEquity := na(dayStartEquity) ? strategy.equity : dayStartEquity
+dayHighEquity := na(dayHighEquity) ? strategy.equity : math.max(dayHighEquity, strategy.equity)
+dailyPnLPct = dayStartEquity > 0 ? ((strategy.equity - dayStartEquity) / dayStartEquity) * 100.0 : 0.0
+dailyDrawdownPct = dayHighEquity > 0 ? ((strategy.equity - dayHighEquity) / dayHighEquity) * 100.0 : 0.0
+hitDailyLoss = dailyPnLPct <= -maxDailyLossPct
+hitDailyDD = dailyDrawdownPct <= -maxDailyDrawdownPct
+
+if enableKillSwitch and (hitDailyLoss or hitDailyDD)
+    dailyKilled := true
+
+if enableKillSwitch and dailyKilled and strategy.position_size != 0
+    strategy.close_all(comment="DAILY_KILL")
 
 // ==================== TREND / CONTINUATION / IMPULSE DEFINITIONS ====================
 group_signals = "🎯 Allowed Trades (Trend / Continuation / Impulse)"
@@ -123,6 +185,27 @@ emaFastLen = input.int(9, "EMA Fast", minval=3, maxval=50, group=group_signals)
 emaSlowLen = input.int(21, "EMA Slow", minval=5, maxval=200, group=group_signals)
 emaFast = ta.ema(close, emaFastLen)
 emaSlow = ta.ema(close, emaSlowLen)
+
+// ==================== HTF / MTF CONFIRMATION (INSTITUTIONAL) ====================
+group_mtf = "🏛️ HTF / MTF Confirmation"
+enableHTF = input.bool(true, "Enable HTF Filter", group=group_mtf)
+enableMTF = input.bool(false, "Enable MTF Filter", group=group_mtf)
+htfTf = input.timeframe("240", "HTF Timeframe", group=group_mtf)
+mtfTf = input.timeframe("60", "MTF Timeframe", group=group_mtf)
+exitOnHTFFlip = input.bool(true, "Exit On HTF Flip", group=group_mtf)
+
+htfEmaFast = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaFastLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfEmaSlow = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaSlowLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfDir = htfEmaFast > htfEmaSlow ? 1 : -1
+
+mtfEmaFast = request.security(syminfo.tickerid, mtfTf, ta.ema(close, emaFastLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfEmaSlow = request.security(syminfo.tickerid, mtfTf, ta.ema(close, emaSlowLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfDir = mtfEmaFast > mtfEmaSlow ? 1 : -1
+
+htfOKLong = (not enableHTF) or (htfDir == 1)
+htfOKShort = (not enableHTF) or (htfDir == -1)
+mtfOKLong = (not enableMTF) or (mtfDir == 1)
+mtfOKShort = (not enableMTF) or (mtfDir == -1)
 
 // Price structure helpers
 lookbackTrend = input.int(20, "Trend Lookback", minval=10, maxval=60, group=group_signals)
@@ -179,10 +262,10 @@ continuationShort = enableContinuation and noChopOK and trendEstablished and ema
      (pullbackDepthDn >= pullbackMin and pullbackDepthDn <= pullbackMax) and resumingDn
 
 // ==================== FINAL ENTRY GATE ====================
-allowTrade = noChopOK and timeOK and freqOK
+allowTrade = noChopOK and timeOK and freqOK and (not dailyKilled)
 
-longSignal = allowTrade and (trendLong or impulseLong or continuationLong)
-shortSignal = allowTrade and (trendShort or impulseShort or continuationShort)
+longSignal = allowTrade and (trendLong or impulseLong or continuationLong) and htfOKLong and mtfOKLong
+shortSignal = allowTrade and (trendShort or impulseShort or continuationShort) and htfOKShort and mtfOKShort
 
 tradeType =
      trendLong or trendShort ? "TREND" :
@@ -214,13 +297,15 @@ if longSignal and strategy.position_size == 0
              ',"tp1":' + str.tostring(tp1Px) +
              ',"tp2":' + str.tostring(tp2Px) +
              ',"tp3":' + str.tostring(tp3Px) +
-             ',"tp1_pct":' + str.tostring(tp1Pct) +
-             ',"tp2_pct":' + str.tostring(tp2Pct) +
-             ',"tp3_pct":' + str.tostring(tp3Pct) +
+             ',"tp1_pct":' + str.tostring(tp1PctN) +
+             ',"tp2_pct":' + str.tostring(tp2PctN) +
+             ',"tp3_pct":' + str.tostring(tp3PctN) +
              ',"trade_type":"' + tradeType + '"' +
              ',"adx":' + str.tostring(math.round(adx, 1)) +
              ',"atr_ratio":' + str.tostring(math.round(atrRatio, 2)) +
              ',"rr_tp1":' + str.tostring(math.round(tp1AtrMult / stopAtrMult, 2)) +
+             ',"htf_dir":' + str.tostring(htfDir) +
+             ',"mtf_dir":' + str.tostring(mtfDir) +
              accountField +
              '}'
         alert(alertMsg, alert.freq_once_per_bar)
@@ -248,42 +333,119 @@ if shortSignal and strategy.position_size == 0
              ',"tp1":' + str.tostring(tp1Px) +
              ',"tp2":' + str.tostring(tp2Px) +
              ',"tp3":' + str.tostring(tp3Px) +
-             ',"tp1_pct":' + str.tostring(tp1Pct) +
-             ',"tp2_pct":' + str.tostring(tp2Pct) +
-             ',"tp3_pct":' + str.tostring(tp3Pct) +
+             ',"tp1_pct":' + str.tostring(tp1PctN) +
+             ',"tp2_pct":' + str.tostring(tp2PctN) +
+             ',"tp3_pct":' + str.tostring(tp3PctN) +
              ',"trade_type":"' + tradeType + '"' +
              ',"adx":' + str.tostring(math.round(adx, 1)) +
              ',"atr_ratio":' + str.tostring(math.round(atrRatio, 2)) +
              ',"rr_tp1":' + str.tostring(math.round(tp1AtrMult / stopAtrMult, 2)) +
+             ',"htf_dir":' + str.tostring(htfDir) +
+             ',"mtf_dir":' + str.tostring(mtfDir) +
              accountField +
              '}'
         alert(alertMsg, alert.freq_once_per_bar)
 
-// ==================== EXIT MANAGEMENT (ATTACHED STOPS TO EVERY TP) ====================
+// ==================== EXIT MANAGEMENT (INSTITUTIONAL) ====================
 var float entryPrice = na
+var int entryBar = na
+var float worstLow = na
+var float worstHigh = na
 if strategy.position_size != 0 and strategy.position_size[1] == 0
     entryPrice := strategy.position_avg_price
+    entryBar := bar_index
+    worstLow := low
+    worstHigh := high
 
-// When in position, always maintain base stop + staged TPs with that stop attached.
+inPos = strategy.position_size != 0 and not na(entryPrice)
+holdingBars = inPos ? (bar_index - entryBar) : 0
+
+if inPos
+    worstLow := na(worstLow) ? low : math.min(worstLow, low)
+    worstHigh := na(worstHigh) ? high : math.max(worstHigh, high)
+
+unrealizedPts = inPos ? (strategy.position_size > 0 ? (close - entryPrice) : (entryPrice - close)) : 0.0
+unrealizedR = stopDist > 0 ? (unrealizedPts / stopDist) : 0.0
+
+// --- MAE (max adverse excursion) exit
+maePts = inPos ? (strategy.position_size > 0 ? (entryPrice - worstLow) : (worstHigh - entryPrice)) : 0.0
+maeATR = atr > 0 ? (maePts / atr) : 0.0
+maeHit = enableMAEExit and inPos and (maeATR >= maeAtrMult)
+
+// --- time stop exit
+timeStopHit = enableTimeStop and inPos and (holdingBars >= maxBarsInTrade) and (not timeStopOnlyIfNotGreen or unrealizedPts <= 0)
+
+// --- losing trade exit (if still red after X bars and loss magnitude is meaningful)
+losingExitHit = enableLosingTradeExit and inPos and (holdingBars >= losingExitAfterBars) and (unrealizedPts < 0) and (math.abs(unrealizedPts) >= atr * losingExitAtr)
+
+// --- reversal exits
+emaCrossDown = ta.crossunder(emaFast, emaSlow)
+emaCrossUp = ta.crossover(emaFast, emaSlow)
+oppImpulseNow = (impulseMove > atr * impulseAtrMult) and volumeSpike and (impulseDir != (strategy.position_size > 0 ? 1 : -1))
+
+reversalExitHit =
+     enableReversalExit and inPos and (
+         (revOnEmaCross and ((strategy.position_size > 0 and emaCrossDown) or (strategy.position_size < 0 and emaCrossUp))) or
+         (revOnOppImpulse and oppImpulseNow)
+     )
+
+// --- HTF flip exits
+htfFlipExitHit = exitOnHTFFlip and inPos and ((strategy.position_size > 0 and htfDir == -1) or (strategy.position_size < 0 and htfDir == 1))
+
+// Priority emergency exits (market close)
+if maeHit
+    strategy.close(strategy.position_size > 0 ? "Long" : "Short", comment="MAE")
+if losingExitHit
+    strategy.close(strategy.position_size > 0 ? "Long" : "Short", comment="LOSING_EXIT")
+if timeStopHit
+    strategy.close(strategy.position_size > 0 ? "Long" : "Short", comment="TIME_STOP")
+if reversalExitHit
+    strategy.close(strategy.position_size > 0 ? "Long" : "Short", comment="REVERSAL")
+if htfFlipExitHit
+    strategy.close(strategy.position_size > 0 ? "Long" : "Short", comment="HTF_FLIP")
+
+// Dynamic stop (base -> breakeven -> trailing). Attached to every TP as safety net.
+beStopLong = entryPrice + (beOffsetTicks * syminfo.mintick)
+beStopShort = entryPrice - (beOffsetTicks * syminfo.mintick)
+
+trailStopLong = close - (atr * trailAtrMult)
+trailStopShort = close + (atr * trailAtrMult)
+
 if strategy.position_size > 0 and not na(entryPrice)
     baseStop = entryPrice - stopDist
+    dynStop = baseStop
+
+    if enableBreakeven and (unrealizedR >= beTriggerR)
+        dynStop := math.max(dynStop, beStopLong)
+
+    if enableTrailing and (unrealizedR >= trailAfterR)
+        dynStop := math.max(dynStop, trailStopLong)
+
     tp1Pts = math.round(tp1Dist / syminfo.mintick)
     tp2Pts = math.round(tp2Dist / syminfo.mintick)
     tp3Pts = math.round(tp3Dist / syminfo.mintick)
 
-    strategy.exit("TP1", qty_percent=tp1Pct, profit=tp1Pts, stop=baseStop, comment="TP1")
-    strategy.exit("TP2", qty_percent=tp2Pct, profit=tp2Pts, stop=baseStop, comment="TP2")
-    strategy.exit("TP3", qty_percent=tp3Pct, profit=tp3Pts, stop=baseStop, comment="TP3")
+    strategy.exit("L_TP1", from_entry="Long", qty_percent=tp1PctN, profit=tp1Pts, stop=dynStop, comment="TP1")
+    strategy.exit("L_TP2", from_entry="Long", qty_percent=tp2PctN, profit=tp2Pts, stop=dynStop, comment="TP2")
+    strategy.exit("L_TP3", from_entry="Long", qty_percent=tp3PctN, profit=tp3Pts, stop=dynStop, comment="TP3")
 
 if strategy.position_size < 0 and not na(entryPrice)
     baseStop = entryPrice + stopDist
+    dynStop = baseStop
+
+    if enableBreakeven and (unrealizedR >= beTriggerR)
+        dynStop := math.min(dynStop, beStopShort)
+
+    if enableTrailing and (unrealizedR >= trailAfterR)
+        dynStop := math.min(dynStop, trailStopShort)
+
     tp1Pts = math.round(tp1Dist / syminfo.mintick)
     tp2Pts = math.round(tp2Dist / syminfo.mintick)
     tp3Pts = math.round(tp3Dist / syminfo.mintick)
 
-    strategy.exit("TP1", qty_percent=tp1Pct, profit=tp1Pts, stop=baseStop, comment="TP1")
-    strategy.exit("TP2", qty_percent=tp2Pct, profit=tp2Pts, stop=baseStop, comment="TP2")
-    strategy.exit("TP3", qty_percent=tp3Pct, profit=tp3Pts, stop=baseStop, comment="TP3")
+    strategy.exit("S_TP1", from_entry="Short", qty_percent=tp1PctN, profit=tp1Pts, stop=dynStop, comment="TP1")
+    strategy.exit("S_TP2", from_entry="Short", qty_percent=tp2PctN, profit=tp2Pts, stop=dynStop, comment="TP2")
+    strategy.exit("S_TP3", from_entry="Short", qty_percent=tp3PctN, profit=tp3Pts, stop=dynStop, comment="TP3")
 
 // ==================== CONSEQ LOSS TRACKING ====================
 // Approximate per-trade PnL using price delta * pointvalue, based on last captured entryPrice.
@@ -292,7 +454,11 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0
     exitPrice = close
     pnl = wasLong ? (exitPrice - entryPrice) * syminfo.pointvalue : (entryPrice - exitPrice) * syminfo.pointvalue
     consecutiveLosses := pnl < 0 ? (consecutiveLosses + 1) : 0
+    lastLossBar := pnl < 0 ? bar_index : lastLossBar
     entryPrice := na
+    entryBar := na
+    worstLow := na
+    worstHigh := na
 
 // ==================== VISUALS ====================
 plot(emaFast, "EMA Fast", color=color.new(color.aqua, 0))
@@ -300,6 +466,7 @@ plot(emaSlow, "EMA Slow", color=color.new(color.orange, 0))
 
 bgcolor(enableNoChop and not noChopOK ? color.new(color.red, 92) : na, title="CHOP / NO TRADE")
 bgcolor(noChopOK ? color.new(color.green, 95) : na, title="OK TO TRADE")
+bgcolor(dailyKilled ? color.new(color.red, 85) : na, title="DAILY KILL SWITCH")
 
 plotshape(longSignal, title="LONG", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text=tradeType)
 plotshape(shortSignal, title="SHORT", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text=tradeType)
@@ -308,3 +475,6 @@ plotshape(shortSignal, title="SHORT", style=shape.triangledown, location=locatio
 plot(adx, "ADX", color=color.new(color.blue, 40), display=display.data_window)
 plot(atrRatio, "ATR Ratio", color=color.new(color.purple, 40), display=display.data_window)
 plot(trendStrength, "Trend Strength", color=color.new(color.gray, 40), display=display.data_window)
+plot(maeATR, "MAE (ATR)", color=color.new(color.red, 40), display=display.data_window)
+plot(unrealizedR, "Unrealized (R)", color=color.new(color.green, 40), display=display.data_window)
+plot(dailyPnLPct, "Daily PnL %", color=color.new(color.orange, 40), display=display.data_window)
