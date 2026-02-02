@@ -37,6 +37,12 @@ minBarsBetweenTrades = input.int(15, "Min Bars Between Trades", minval=10, maxva
 volumeRatioMin = input.float(1.5, "Volume Ratio Minimum", minval=1.2, maxval=2.0)
 srTolerance = input.float(0.3, "S/R Tolerance (ATR)", minval=0.2, maxval=0.5)
 
+// Make signals cooperate (avoid long/short conflicts)
+scoreDominance = input.int(2, "Min Score Dominance (avoid conflicts)", minval=0, maxval=5,
+     tooltip="Requires the chosen direction score to beat the opposite direction by this margin.")
+avoidOpposingSR = input.bool(true, "Avoid Opposing S/R (directional filter)",
+     tooltip="Longs blocked near resistance; shorts blocked near support.")
+
 // ==============================
 // 🕒 SESSION FILTERS
 // ==============================
@@ -127,6 +133,14 @@ if not na(pivotLows)
     if array.size(supportLevels) > 10
         array.shift(supportLevels)
 
+// Track most recent swing pivots (for structure-aware stop placement)
+var float lastPivotHigh = na
+var float lastPivotLow = na
+if not na(pivotHighs)
+    lastPivotHigh := pivotHighs
+if not na(pivotLows)
+    lastPivotLow := pivotLows
+
 nearSupport = false
 nearResistance = false
 
@@ -147,17 +161,26 @@ if array.size(resistanceLevels) > 0
 // ==============================
 // 📊 MARKET STRUCTURE
 // ==============================
-lookbackStructure = 20
-hiN = ta.highest(high, lookbackStructure)
-loN = ta.lowest(low, lookbackStructure)
+// Use pivot-to-pivot structure (more realistic than comparing to oldest highest/lowest values).
+var float prevPivotHigh = na
+var float prevPivotLow = na
 
-higherHighs = high > hiN[lookbackStructure]
-higherLows = low > loN[lookbackStructure]
-lowerHighs = high < hiN[lookbackStructure]
-lowerLows = low < loN[lookbackStructure]
+var float lastPivotHigh2 = na
+var float lastPivotLow2 = na
 
-cleanBullStructure = higherHighs and higherLows
-cleanBearStructure = lowerHighs and lowerLows
+if not na(pivotHighs)
+    prevPivotHigh := lastPivotHigh2
+    lastPivotHigh2 := pivotHighs
+
+if not na(pivotLows)
+    prevPivotLow := lastPivotLow2
+    lastPivotLow2 := pivotLows
+
+haveHighs = not na(lastPivotHigh2) and not na(prevPivotHigh)
+haveLows = not na(lastPivotLow2) and not na(prevPivotLow)
+
+cleanBullStructure = haveHighs and haveLows and (lastPivotHigh2 > prevPivotHigh) and (lastPivotLow2 > prevPivotLow)
+cleanBearStructure = haveHighs and haveLows and (lastPivotHigh2 < prevPivotHigh) and (lastPivotLow2 < prevPivotLow)
 
 // ==============================
 // 📊 TREND STRENGTH CALCULATION
@@ -252,6 +275,14 @@ tp2_Percent = input.int(25, "TP2 % of REMAINING (after TP1)", minval=15, maxval=
 
 tp3_ATR = input.float(6.0, "TP3 (ATR)", minval=4.5, maxval=8.0)
 
+// Stop placement cooperation: ATR + structure, with distance guardrails
+stopStructureBufferATR = input.float(0.20, "Stop Buffer Beyond Swing (ATR)", minval=0.0, maxval=1.0,
+     tooltip="Adds a buffer beyond the last swing pivot for structure-anchored stops.")
+minStopDistanceATR = input.float(0.8, "Min Stop Distance (ATR)", minval=0.3, maxval=2.0,
+     tooltip="Prevents ultra-tight stops that conflict with volatility.")
+maxStopDistanceATR = input.float(2.5, "Max Stop Distance (ATR)", minval=1.0, maxval=5.0,
+     tooltip="Prevents overly-wide stops that reduce trade quality.")
+
 // ==============================
 // 📈 RISK + SIZING (VIRTUAL GUARDRAILS)
 // ==============================
@@ -303,8 +334,38 @@ var float qtyOriginal = 0.0
 barsSinceLastTrade = bar_index - lastTradeBar
 canTrade = sessionOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades)
 
-longSignal = confluenceLong >= minConfluenceScore and canTrade
-shortSignal = confluenceShort >= minConfluenceScore and canTrade
+// ==============================
+// 🤝 COOPERATIVE SIGNAL QUALITY GATES
+// ==============================
+atrValid = atr > 0
+entryCandidate = close
+
+atrStopLong = entryCandidate - (atr * initialStopATR)
+atrStopShort = entryCandidate + (atr * initialStopATR)
+
+structStopLong = na(lastPivotLow) ? na : (lastPivotLow - (atr * stopStructureBufferATR))
+structStopShort = na(lastPivotHigh) ? na : (lastPivotHigh + (atr * stopStructureBufferATR))
+
+// For long: lower stop is "further away" (safer). For short: higher stop is "further away".
+stopCandidateLong = na(structStopLong) ? atrStopLong : math.min(atrStopLong, structStopLong)
+stopCandidateShort = na(structStopShort) ? atrStopShort : math.max(atrStopShort, structStopShort)
+
+stopDistATRLong = atrValid ? math.abs(entryCandidate - stopCandidateLong) / atr : na
+stopDistATRShort = atrValid ? math.abs(entryCandidate - stopCandidateShort) / atr : na
+
+stopOKLong = atrValid and not na(stopDistATRLong) and stopDistATRLong >= minStopDistanceATR and stopDistATRLong <= maxStopDistanceATR
+stopOKShort = atrValid and not na(stopDistATRShort) and stopDistATRShort >= minStopDistanceATR and stopDistATRShort <= maxStopDistanceATR
+
+// Prevent mixed-direction “both good” situations; require directional dominance.
+bothDirectionsHot = confluenceLong >= minConfluenceScore and confluenceShort >= minConfluenceScore
+dominantLong = confluenceLong >= (confluenceShort + scoreDominance)
+dominantShort = confluenceShort >= (confluenceLong + scoreDominance)
+
+srOKLong = not avoidOpposingSR or not nearResistance
+srOKShort = not avoidOpposingSR or not nearSupport
+
+longSignal = canTrade and stopOKLong and srOKLong and (not bothDirectionsHot) and dominantLong and confluenceLong >= minConfluenceScore
+shortSignal = canTrade and stopOKShort and srOKShort and (not bothDirectionsHot) and dominantShort and confluenceShort >= minConfluenceScore
 
 // ==============================
 // 🔧 JSON HELPERS
@@ -332,7 +393,8 @@ if enableAlerts and barstate.isconfirmed
         qtyOriginal := fixedContracts
         qtyRemaining := fixedContracts
 
-        currentStop := entryPrice - (atr * initialStopATR)
+        // Cooperative stop: uses both ATR and swing structure (whichever is safer)
+        currentStop := stopCandidateLong
         tp1_hit := false
         tp2_hit := false
         breakeven_active := false
@@ -351,7 +413,7 @@ if enableAlerts and barstate.isconfirmed
         qtyOriginal := fixedContracts
         qtyRemaining := fixedContracts
 
-        currentStop := entryPrice + (atr * initialStopATR)
+        currentStop := stopCandidateShort
         tp1_hit := false
         tp2_hit := false
         breakeven_active := false
