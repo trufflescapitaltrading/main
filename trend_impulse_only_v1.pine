@@ -1,0 +1,310 @@
+//@version=5
+strategy("Trend/Continuation/Impulse ONLY — Wins > Losses (RR Enforced) [v1]",
+     overlay=true,
+     initial_capital=25000,
+     default_qty_type=strategy.fixed,   // contracts/shares (single source of truth)
+     default_qty_value=1,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=1.60,
+     slippage=2,
+     calc_on_every_tick=true,
+     pyramiding=0,
+     process_orders_on_close=false,
+     max_bars_back=5000)
+
+// ==================== LIVE ALERTS ====================
+group_live = "🔴 Live Trading"
+enableLiveAlerts = input.bool(true, "Enable Alerts", group=group_live)
+orderType = input.string("market", "Order Type", options=["market", "limit"], group=group_live)
+accountId = input.string("", "Account ID (optional)", group=group_live)
+symbolOverride = input.string("", "Symbol Override (optional)", group=group_live)
+
+getAlertSymbol() =>
+    symbolOverride != "" ? symbolOverride : syminfo.ticker
+
+hasAccountId() =>
+    str.length(accountId) > 0
+
+// ==================== POSITION SIZING (CONTRACTS) ====================
+group_size = "Position Sizing (Contracts)"
+useManualContracts = input.bool(true, "Use Manual Contracts", group=group_size)
+manualContracts = input.int(1, "Contracts", minval=1, maxval=100, group=group_size)
+
+// If you want auto sizing later, add it here. For now: contracts only (keeps live alerts accurate).
+finalQty = useManualContracts ? manualContracts : 1
+
+// ==================== WINS > LOSSES (RR ENFORCED) ====================
+group_rr = "💰 Risk:Reward (Wins > Losses)"
+atrLen = input.int(14, "ATR Length", minval=5, maxval=50, group=group_rr)
+stopAtrMult = input.float(1.0, "Stop (ATR Multiple)", minval=0.6, maxval=2.5, group=group_rr)
+tp1AtrMult_in = input.float(2.0, "TP1 (ATR Multiple)", minval=1.0, maxval=8.0, group=group_rr)
+tp2AtrMult_in = input.float(3.0, "TP2 (ATR Multiple)", minval=1.0, maxval=10.0, group=group_rr)
+tp3AtrMult_in = input.float(4.5, "TP3 (ATR Multiple)", minval=1.0, maxval=15.0, group=group_rr)
+
+tp1Pct = input.int(60, "TP1 %", minval=10, maxval=90, group=group_rr)
+tp2Pct = input.int(30, "TP2 %", minval=0, maxval=80, group=group_rr)
+tp3Pct = input.int(10, "TP3 %", minval=0, maxval=80, group=group_rr)
+
+// Hard safety: never allow targets <= stop (forces Wins > Losses structurally).
+tp1AtrMult = math.max(tp1AtrMult_in, stopAtrMult * 1.25)
+tp2AtrMult = math.max(tp2AtrMult_in, stopAtrMult * 1.75)
+tp3AtrMult = math.max(tp3AtrMult_in, stopAtrMult * 2.50)
+
+atr = ta.atr(atrLen)
+stopDist = atr * stopAtrMult
+tp1Dist = atr * tp1AtrMult
+tp2Dist = atr * tp2AtrMult
+tp3Dist = atr * tp3AtrMult
+
+// ==================== NO CHOP FILTERS (MANDATORY) ====================
+group_chop = "🚫 No Chop Filters"
+enableNoChop = input.bool(true, "Enable No-Chop Gate", group=group_chop)
+
+adxLen = input.int(14, "ADX Length", minval=8, maxval=30, group=group_chop)
+adxThresh = input.int(25, "ADX Threshold (>= trending)", minval=15, maxval=40, group=group_chop)
+
+atrRegLen = input.int(20, "ATR Regime SMA Len", minval=10, maxval=100, group=group_chop)
+minAtrRatio = input.float(0.85, "Min ATR Ratio (avoid dead chop)", minval=0.3, maxval=1.2, group=group_chop)
+maxAtrRatio = input.float(2.50, "Max ATR Ratio (avoid chaos)", minval=1.2, maxval=6.0, group=group_chop)
+
+[_, __, adx] = ta.dmi(adxLen, adxLen)
+atrAvg = ta.sma(atr, atrRegLen)
+atrRatio = atrAvg > 0 ? atr / atrAvg : 1.0
+
+isTrending = adx >= adxThresh
+atrOK = (atrRatio >= minAtrRatio) and (atrRatio <= maxAtrRatio)
+
+noChopOK = (not enableNoChop) or (isTrending and atrOK)
+
+// ==================== TIME FILTERS (OPTIONAL) ====================
+group_time = "⏱️ Time Filters (optional)"
+enableRthOnly = input.bool(false, "RTH Only (09:30-16:00 ET)", group=group_time)
+avoidOpenMin = input.int(15, "Avoid First X Minutes", minval=0, maxval=60, group=group_time)
+avoidCloseMin = input.int(15, "Avoid Last X Minutes", minval=0, maxval=60, group=group_time)
+
+// Use exchange time, not manual timezone math (more robust on futures).
+sessRth = "0930-1600"
+inRth = not na(time(timeframe.period, sessRth))
+
+// Approx open/close block by bar time inside RTH.
+minFromSessOpen = inRth ? (hour * 60 + minute) - (9 * 60 + 30) : na
+minToSessClose = inRth ? (16 * 60) - (hour * 60 + minute) : na
+inOpenBlock = inRth and (avoidOpenMin > 0) and (minFromSessOpen >= 0) and (minFromSessOpen < avoidOpenMin)
+inCloseBlock = inRth and (avoidCloseMin > 0) and (minToSessClose > 0) and (minToSessClose <= avoidCloseMin)
+
+timeOK = (not enableRthOnly) or (inRth and not inOpenBlock and not inCloseBlock)
+
+// ==================== TRADE FREQUENCY CONTROL ====================
+group_freq = "🧯 Frequency Control"
+maxTradesPerDay = input.int(10, "Max Trades/Day", minval=1, maxval=50, group=group_freq)
+minBarsBetweenTrades = input.int(8, "Min Bars Between Trades", minval=1, maxval=50, group=group_freq)
+maxConsecutiveLosses = input.int(3, "Stop After X Consecutive Losses", minval=1, maxval=10, group=group_freq)
+
+var int tradesToday = 0
+var int lastEntryBar = na
+var int consecutiveLosses = 0
+var int dayMarker = na
+
+newDay = dayofweek(time) != dayofweek(time[1])
+if newDay
+    tradesToday := 0
+    dayMarker := dayofweek(time)
+
+barsSinceLast = na(lastEntryBar) ? 10_000 : (bar_index - lastEntryBar)
+freqOK = (tradesToday < maxTradesPerDay) and (barsSinceLast >= minBarsBetweenTrades) and (consecutiveLosses < maxConsecutiveLosses)
+
+// ==================== TREND / CONTINUATION / IMPULSE DEFINITIONS ====================
+group_signals = "🎯 Allowed Trades (Trend / Continuation / Impulse)"
+enableTrend = input.bool(true, "Allow TREND Trades", group=group_signals)
+enableContinuation = input.bool(true, "Allow CONTINUATION Trades", group=group_signals)
+enableImpulse = input.bool(true, "Allow IMPULSE Trades", group=group_signals)
+
+emaFastLen = input.int(9, "EMA Fast", minval=3, maxval=50, group=group_signals)
+emaSlowLen = input.int(21, "EMA Slow", minval=5, maxval=200, group=group_signals)
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+
+// Price structure helpers
+lookbackTrend = input.int(20, "Trend Lookback", minval=10, maxval=60, group=group_signals)
+trendMoveMin = input.float(0.30, "Min Trend Strength (0-1)", minval=0.10, maxval=0.80, group=group_signals,
+     tooltip="0.30 means: last 20-bar move is at least 30% of the range.")
+
+rangeN = ta.highest(high, lookbackTrend) - ta.lowest(low, lookbackTrend)
+trendStrength = rangeN > 0 ? math.abs(close - close[lookbackTrend]) / rangeN : 0.0
+trendDir = close > close[lookbackTrend] ? 1 : -1
+hasStrongTrend = trendStrength >= trendMoveMin
+
+emaDir = emaFast > emaSlow ? 1 : -1
+
+// --- TREND trade (impulse/continuation excluded; clean directional)
+trendLong = enableTrend and noChopOK and hasStrongTrend and trendDir == 1 and emaDir == 1
+trendShort = enableTrend and noChopOK and hasStrongTrend and trendDir == -1 and emaDir == -1
+
+// --- IMPULSE trade: large displacement vs ATR + volume confirmation
+group_imp = "⚡ Impulse Settings"
+impulseLookback = input.int(3, "Impulse Lookback Bars", minval=2, maxval=10, group=group_imp)
+impulseAtrMult = input.float(1.5, "Impulse Size (ATR Multiple)", minval=1.0, maxval=4.0, group=group_imp)
+volLen = input.int(20, "Volume SMA Len", minval=10, maxval=100, group=group_imp)
+volSpikeMult = input.float(1.3, "Volume Spike Mult", minval=1.0, maxval=3.0, group=group_imp)
+
+impulseMove = math.abs(close - close[impulseLookback])
+impulseDir = close > close[impulseLookback] ? 1 : -1
+volumeSpike = volume > ta.sma(volume, volLen) * volSpikeMult
+isImpulse = enableImpulse and noChopOK and (impulseMove > atr * impulseAtrMult) and volumeSpike
+impulseLong = isImpulse and impulseDir == 1 and emaDir == 1
+impulseShort = isImpulse and impulseDir == -1 and emaDir == -1
+
+// --- CONTINUATION trade: trend established + pullback + resumption
+group_cont = "🔄 Continuation Settings"
+pullbackMax = input.float(0.45, "Max Pullback Depth (0-1)", minval=0.20, maxval=0.80, group=group_cont)
+pullbackMin = input.float(0.10, "Min Pullback Depth (0-1)", minval=0.05, maxval=0.40, group=group_cont)
+resumeBars = input.int(2, "Resumption Bars", minval=1, maxval=4, group=group_cont)
+
+trendEstablished = hasStrongTrend and isTrending
+
+recentHigh = ta.highest(high, 10)
+recentLow = ta.lowest(low, 10)
+refLow = ta.lowest(low, lookbackTrend)
+refHigh = ta.highest(high, lookbackTrend)
+
+pullbackDepthUp = (recentHigh - close) / math.max(recentHigh - refLow, syminfo.mintick)
+pullbackDepthDn = (close - recentLow) / math.max(refHigh - recentLow, syminfo.mintick)
+
+resumingUp = close > close[1] and (resumeBars < 2 ? true : close[1] > close[2])
+resumingDn = close < close[1] and (resumeBars < 2 ? true : close[1] < close[2])
+
+continuationLong = enableContinuation and noChopOK and trendEstablished and emaDir == 1 and
+     (pullbackDepthUp >= pullbackMin and pullbackDepthUp <= pullbackMax) and resumingUp
+continuationShort = enableContinuation and noChopOK and trendEstablished and emaDir == -1 and
+     (pullbackDepthDn >= pullbackMin and pullbackDepthDn <= pullbackMax) and resumingDn
+
+// ==================== FINAL ENTRY GATE ====================
+allowTrade = noChopOK and timeOK and freqOK
+
+longSignal = allowTrade and (trendLong or impulseLong or continuationLong)
+shortSignal = allowTrade and (trendShort or impulseShort or continuationShort)
+
+tradeType =
+     trendLong or trendShort ? "TREND" :
+     impulseLong or impulseShort ? "IMPULSE" :
+     continuationLong or continuationShort ? "CONTINUATION" :
+     "NONE"
+
+// ==================== ENTRIES ====================
+if longSignal and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, qty=finalQty)
+    lastEntryBar := bar_index
+    tradesToday += 1
+
+    if enableLiveAlerts
+        entryPx = close
+        stopPx = entryPx - stopDist
+        tp1Px = entryPx + tp1Dist
+        tp2Px = entryPx + tp2Dist
+        tp3Px = entryPx + tp3Dist
+
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ""
+        alertMsg =
+             '{"ticker":"' + getAlertSymbol() + '"' +
+             ',"action":"buy"' +
+             ',"order_type":"' + orderType + '"' +
+             ',"quantity":' + str.tostring(finalQty) +
+             ',"price":' + str.tostring(entryPx) +
+             ',"stop_loss":' + str.tostring(stopPx) +
+             ',"tp1":' + str.tostring(tp1Px) +
+             ',"tp2":' + str.tostring(tp2Px) +
+             ',"tp3":' + str.tostring(tp3Px) +
+             ',"tp1_pct":' + str.tostring(tp1Pct) +
+             ',"tp2_pct":' + str.tostring(tp2Pct) +
+             ',"tp3_pct":' + str.tostring(tp3Pct) +
+             ',"trade_type":"' + tradeType + '"' +
+             ',"adx":' + str.tostring(math.round(adx, 1)) +
+             ',"atr_ratio":' + str.tostring(math.round(atrRatio, 2)) +
+             ',"rr_tp1":' + str.tostring(math.round(tp1AtrMult / stopAtrMult, 2)) +
+             accountField +
+             '}'
+        alert(alertMsg, alert.freq_once_per_bar)
+
+if shortSignal and strategy.position_size == 0
+    strategy.entry("Short", strategy.short, qty=finalQty)
+    lastEntryBar := bar_index
+    tradesToday += 1
+
+    if enableLiveAlerts
+        entryPx = close
+        stopPx = entryPx + stopDist
+        tp1Px = entryPx - tp1Dist
+        tp2Px = entryPx - tp2Dist
+        tp3Px = entryPx - tp3Dist
+
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ""
+        alertMsg =
+             '{"ticker":"' + getAlertSymbol() + '"' +
+             ',"action":"sell"' +
+             ',"order_type":"' + orderType + '"' +
+             ',"quantity":' + str.tostring(finalQty) +
+             ',"price":' + str.tostring(entryPx) +
+             ',"stop_loss":' + str.tostring(stopPx) +
+             ',"tp1":' + str.tostring(tp1Px) +
+             ',"tp2":' + str.tostring(tp2Px) +
+             ',"tp3":' + str.tostring(tp3Px) +
+             ',"tp1_pct":' + str.tostring(tp1Pct) +
+             ',"tp2_pct":' + str.tostring(tp2Pct) +
+             ',"tp3_pct":' + str.tostring(tp3Pct) +
+             ',"trade_type":"' + tradeType + '"' +
+             ',"adx":' + str.tostring(math.round(adx, 1)) +
+             ',"atr_ratio":' + str.tostring(math.round(atrRatio, 2)) +
+             ',"rr_tp1":' + str.tostring(math.round(tp1AtrMult / stopAtrMult, 2)) +
+             accountField +
+             '}'
+        alert(alertMsg, alert.freq_once_per_bar)
+
+// ==================== EXIT MANAGEMENT (ATTACHED STOPS TO EVERY TP) ====================
+var float entryPrice = na
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryPrice := strategy.position_avg_price
+
+// When in position, always maintain base stop + staged TPs with that stop attached.
+if strategy.position_size > 0 and not na(entryPrice)
+    baseStop = entryPrice - stopDist
+    tp1Pts = math.round(tp1Dist / syminfo.mintick)
+    tp2Pts = math.round(tp2Dist / syminfo.mintick)
+    tp3Pts = math.round(tp3Dist / syminfo.mintick)
+
+    strategy.exit("TP1", qty_percent=tp1Pct, profit=tp1Pts, stop=baseStop, comment="TP1")
+    strategy.exit("TP2", qty_percent=tp2Pct, profit=tp2Pts, stop=baseStop, comment="TP2")
+    strategy.exit("TP3", qty_percent=tp3Pct, profit=tp3Pts, stop=baseStop, comment="TP3")
+
+if strategy.position_size < 0 and not na(entryPrice)
+    baseStop = entryPrice + stopDist
+    tp1Pts = math.round(tp1Dist / syminfo.mintick)
+    tp2Pts = math.round(tp2Dist / syminfo.mintick)
+    tp3Pts = math.round(tp3Dist / syminfo.mintick)
+
+    strategy.exit("TP1", qty_percent=tp1Pct, profit=tp1Pts, stop=baseStop, comment="TP1")
+    strategy.exit("TP2", qty_percent=tp2Pct, profit=tp2Pts, stop=baseStop, comment="TP2")
+    strategy.exit("TP3", qty_percent=tp3Pct, profit=tp3Pts, stop=baseStop, comment="TP3")
+
+// ==================== CONSEQ LOSS TRACKING ====================
+// Approximate per-trade PnL using price delta * pointvalue, based on last captured entryPrice.
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    wasLong = strategy.position_size[1] > 0
+    exitPrice = close
+    pnl = wasLong ? (exitPrice - entryPrice) * syminfo.pointvalue : (entryPrice - exitPrice) * syminfo.pointvalue
+    consecutiveLosses := pnl < 0 ? (consecutiveLosses + 1) : 0
+    entryPrice := na
+
+// ==================== VISUALS ====================
+plot(emaFast, "EMA Fast", color=color.new(color.aqua, 0))
+plot(emaSlow, "EMA Slow", color=color.new(color.orange, 0))
+
+bgcolor(enableNoChop and not noChopOK ? color.new(color.red, 92) : na, title="CHOP / NO TRADE")
+bgcolor(noChopOK ? color.new(color.green, 95) : na, title="OK TO TRADE")
+
+plotshape(longSignal, title="LONG", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text=tradeType)
+plotshape(shortSignal, title="SHORT", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text=tradeType)
+
+// Data window
+plot(adx, "ADX", color=color.new(color.blue, 40), display=display.data_window)
+plot(atrRatio, "ATR Ratio", color=color.new(color.purple, 40), display=display.data_window)
+plot(trendStrength, "Trend Strength", color=color.new(color.gray, 40), display=display.data_window)
