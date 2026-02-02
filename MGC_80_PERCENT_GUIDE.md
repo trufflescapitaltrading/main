@@ -19,6 +19,17 @@ This repo contains an **ALERT-ONLY TradingView indicator** designed to send auto
 4. When TP/STOP levels are hit (based on bar high/low) → **exit alerts fire**
 5. TradersPost receives the JSON webhook and places orders in Tradovate/TopstepX
 
+## Perfect trade setup (live checklist)
+
+Use this as the ideal entry environment for the bot:
+
+- **HTF trend aligned** (HTF bullish for longs / HTF bearish for shorts)
+- **ADX above threshold** (strong-trend regime, not chop)
+- **EMA stack aligned + Hull direction aligned**
+- **Directional dominance**: the chosen direction’s confluence score beats the opposite direction by at least the dominance margin
+- **Not into opposing S/R**: longs not near resistance; shorts not near support
+- **Stop makes sense**: structure/ATR stop distance falls inside the min/max ATR guardrails (not too tight, not too wide)
+
 ## Critical notes (read this)
 
 - **This is not a backtesting strategy** (it’s an indicator). TradingView will not manage a real broker position for you.
@@ -54,6 +65,14 @@ This repo contains an **ALERT-ONLY TradingView indicator** designed to send auto
 Important:
 - Do **not** use TradingView “strategy placeholders” in the alert message (the `{{...}}` fields meant for backtesting strategies); this script is an indicator.
 - With “Any alert() function call”, the payload is whatever the script passes into `alert()`.
+
+## Daily trade estimates (realistic ranges)
+
+With the current **quality-first** filters (HTF + ADX + dominance + S/R + stop sanity):
+
+- **Trades/day**: ~1–4 typical (can be 0 on choppy days; can be higher on strong trend days)
+- **Win rate**: commonly trends toward **65–85%** depending on thresholds (not guaranteed)
+- **PnL/day**: highly variable; depends mostly on contracts, volatility, and slippage. Expect uneven distribution (many small days, occasional larger days)
 
 ## TradersPost strategy configuration (high level)
 
@@ -96,6 +115,32 @@ Notes:
 - For long positions, exits use `"action":"sell"`.
 - For short positions, exits use `"action":"buy"`.
 - The script includes `reduceOnly:true` as a safety hint (ignored if unsupported).
+
+## Live Deployment Mode (choose one)
+
+You can run this indicator in one of two practical “live” modes depending on your broker/TradersPost scaling support:
+
+### Mode A — Bracket only (ENTRY + STOP/TP1 only)
+
+Best when partial exits are not reliable, or you want the simplest live behavior.
+
+- **Indicator settings**:
+  - `Include Stop + TP1 on Entry Alert` = **ON**
+  - `Emit TP/STOP Exit Alerts` = **OFF**
+- Result:
+  - Entry alert includes **stopLoss + TP1 takeProfit**
+  - No TP2/TP3 scale-out alerts will be sent
+
+### Mode B — Scale-out exits (ENTRY + TP1/TP2/TP3 + STOP)
+
+Best when your TradersPost strategy supports scaling out (reduce-only orders).
+
+- **Indicator settings**:
+  - `Include Stop + TP1 on Entry Alert` = **ON** (recommended)
+  - `Emit TP/STOP Exit Alerts` = **ON**
+- Result:
+  - Entry alert includes **stopLoss + TP1 takeProfit**
+  - The indicator also sends **TP2/TP3** reduce-only exit alerts and a **STOP** exit alert for any remaining size
 
 ## Recommended TradingView chart settings
 
