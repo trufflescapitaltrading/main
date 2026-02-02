@@ -29,6 +29,16 @@ enableEmergencyAlerts = input.bool(true, "Send Emergency Alerts", group=group_li
 tradersPostSymbol = input.string("", "TradersPost Symbol Override", group=group_live, tooltip="Leave blank to use chart symbol. Example: MGCZ2024")
 orderType = input.string("market", "Order Type", options=["market", "limit"], group=group_live)
 
+// ==================== DEPLOY-READY ALERT CONTROLS ====================
+group_deploy = "🚀 Deploy Ready Alerts"
+enableTrailingAlerts = input.bool(true, "Send Trailing Stop Alerts", group=group_deploy)
+trailUpdateMinTicks = input.int(2, "Min Trailing Update Improvement (ticks)", minval=0, maxval=50, group=group_deploy)
+enableEmergencyCloseAlerts = input.bool(true, "Send Emergency Close Alerts", group=group_deploy, tooltip="Sends alert() to flatten when max loss / gap loss triggers.")
+emergencyCloseBacktest = input.bool(false, "Also Close in Backtest (strategy.close_all)", group=group_deploy, tooltip="Leave OFF for live alert-only execution.")
+
+enableNoTradeDiagnostics = input.bool(false, "Send No-Trade Diagnostics Alerts", group=group_deploy, tooltip="If a signal appears but is blocked by filters, send a diagnostic alert.")
+diagOnlyWhenSignal = input.bool(true, "Diagnostics Only When Signal Present", group=group_deploy)
+
 getAlertSymbol() =>
     tradersPostSymbol != "" ? tradersPostSymbol : syminfo.ticker
 
@@ -171,6 +181,91 @@ else if isPreMarket or isAfterHours
     0.7
 else
     0.5
+
+// ==================== STRICT QUALITY MODE (ENTRY GATES ONLY) ====================
+// These do NOT change the profit/exit logic; they only decide whether we allow entries.
+group_strict = "🧠 Strict Quality Mode (Entry Only)"
+enableStrictQuality = input.bool(true, "Enable Strict Quality Mode", group=group_strict)
+
+// No-chop gate
+strictUseAdxGate = input.bool(true, "ADX No-Chop Gate", group=group_strict)
+strictAdxLen = input.int(14, "ADX Length", minval=8, maxval=30, group=group_strict)
+strictAdxThreshold = input.int(25, "ADX Threshold", minval=15, maxval=45, group=group_strict)
+
+// Time blocks inside regular session
+strictAvoidOpen = input.bool(true, "Avoid First X Minutes (RTH)", group=group_strict)
+strictAvoidOpenMin = input.int(15, "Open Block Minutes", minval=0, maxval=60, group=group_strict)
+strictAvoidClose = input.bool(true, "Avoid Last X Minutes (RTH)", group=group_strict)
+strictAvoidCloseMin = input.int(15, "Close Block Minutes", minval=0, maxval=60, group=group_strict)
+strictAvoidLunch = input.bool(false, "Avoid Lunch (12:00-13:00 ET)", group=group_strict)
+
+// Frequency limiter
+strictMaxTradesPerDay = input.int(12, "Max Trades/Day", minval=1, maxval=50, group=group_strict)
+strictMinBarsBetweenTrades = input.int(8, "Min Bars Between Trades", minval=0, maxval=200, group=group_strict)
+
+// Signal quality score
+strictQualityScoreEnabled = input.bool(true, "Quality Score Filter", group=group_strict)
+strictMinQualityScore = input.int(4, "Min Quality Score (0-6)", minval=0, maxval=6, group=group_strict)
+
+// Helpers: convert HHMM int to minutes from midnight
+hhmmToMinutes(_hhmm) =>
+    int hh = math.floor(_hhmm / 100)
+    int mm = _hhmm - hh * 100
+    hh * 60 + mm
+
+currentMinutes = (hour + timezoneOffset) * 60 + minute
+rthStartMin = hhmmToMinutes(regularSessionStart)
+rthEndMin = hhmmToMinutes(regularSessionEnd)
+inRth = enableSessionFilters ? (currentMinutes >= rthStartMin and currentMinutes <= rthEndMin) : true
+inOpenBlock = inRth and strictAvoidOpen and (strictAvoidOpenMin > 0) and (currentMinutes >= rthStartMin) and (currentMinutes < rthStartMin + strictAvoidOpenMin)
+inCloseBlock = inRth and strictAvoidClose and (strictAvoidCloseMin > 0) and (currentMinutes <= rthEndMin) and (currentMinutes > rthEndMin - strictAvoidCloseMin)
+inLunchBlock = inRth and strictAvoidLunch and (currentMinutes >= hhmmToMinutes(1200)) and (currentMinutes < hhmmToMinutes(1300))
+strictTimeOK = (not enableStrictQuality) or (not enableSessionFilters) or (not inOpenBlock and not inCloseBlock and not inLunchBlock)
+
+[_, __, strictAdx] = ta.dmi(strictAdxLen, strictAdxLen)
+strictAdxOK = (not enableStrictQuality) or (not strictUseAdxGate) or (strictAdx >= strictAdxThreshold)
+
+var int strictTradesToday = 0
+var int strictLastEntryBar = na
+if dayofweek(time) != dayofweek(time[1])
+    strictTradesToday := 0
+    strictLastEntryBar := na
+
+strictBarsSinceLast = na(strictLastEntryBar) ? 10_000 : (bar_index - strictLastEntryBar)
+strictFreqOK = (not enableStrictQuality) or ((strictTradesToday < strictMaxTradesPerDay) and (strictBarsSinceLast >= strictMinBarsBetweenTrades))
+
+getQualityScore(_isLong) =>
+    int score = 0
+    // 1) Direction alignment (Hull + SuperTrend)
+    if _isLong and (trend == 1) and hullAnyBullish and (slopeMain == 1)
+        score += 1
+    if (not _isLong) and (trend == -1) and hullAnyBearish and (slopeMain == -1)
+        score += 1
+    // 2) RSI in a favorable band (avoid extremes)
+    if _isLong and (rsi >= 35) and (rsi <= 70)
+        score += 1
+    if (not _isLong) and (rsi <= 65) and (rsi >= 30)
+        score += 1
+    // 3) Price location (continuation-friendly: not fully extended beyond envelope)
+    if _isLong and (close >= smaBasis) and (close <= upperEnv * 1.001)
+        score += 1
+    if (not _isLong) and (close <= smaBasis) and (close >= lowerEnv * 0.999)
+        score += 1
+    // 4) Volatility regime OK
+    if volatilityOK
+        score += 1
+    // 5) Session OK (if enabled)
+    if sessionAdjustedSignal
+        score += 1
+    // 6) Volume confirmation
+    if volume > ta.sma(volume, 20)
+        score += 1
+    score
+
+strictLongScore = getQualityScore(true)
+strictShortScore = getQualityScore(false)
+strictScoreOKLong = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictLongScore >= strictMinQualityScore)
+strictScoreOKShort = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictShortScore >= strictMinQualityScore)
 
 // ==================== SIGNAL DETECTION ====================
 enableMicroSignals = input.bool(true, "Enable Micro Signals", group="Signal Detection")
@@ -547,8 +642,28 @@ sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPre
 ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal and volatilityOK
 ultraSellCondition = ultraSellSignal and sessionAdjustedSignal and volatilityOK
 
-longCondition = isInitialized and ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and (strategy.position_size == 0)
-shortCondition = isInitialized and ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and (strategy.position_size == 0)
+strictEntryOKLong = (not enableStrictQuality) or (strictAdxOK and strictTimeOK and strictFreqOK and strictScoreOKLong)
+strictEntryOKShort = (not enableStrictQuality) or (strictAdxOK and strictTimeOK and strictFreqOK and strictScoreOKShort)
+
+longCondition = isInitialized and ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKLong and (strategy.position_size == 0)
+shortCondition = isInitialized and ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKShort and (strategy.position_size == 0)
+
+// ==================== EMERGENCY CLOSE ALERTS (ALERT() ONLY) ====================
+if enableLiveAlerts and enableEmergencyAlerts and enableEmergencyCloseAlerts and (maxLossReached or gapLossLimitReached)
+    alertSymbol = getAlertSymbol()
+    reason = maxLossReached ? "max_daily_loss_reached" : "gap_loss_limit_reached"
+    side = strategy.position_size > 0 ? "long" : strategy.position_size < 0 ? "short" : "flat"
+    emergencyAlert = '{"ticker":"' + alertSymbol + '"' +
+     ',"action":"emergency_exit"' +
+     ',"reason":"' + reason + '"' +
+     ',"side":"' + side + '"' +
+     ',"daily_pnl":' + str.tostring(dailyPnL) +
+     ',"daily_gap_loss":' + str.tostring(dailyGapLoss) +
+     ',"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+    alert(emergencyAlert, alert.freq_once_per_bar)
+    if emergencyCloseBacktest and (strategy.position_size != 0)
+        strategy.close_all(comment="EMERGENCY")
 
 // ==================== ENTRIES (FIXED) ====================
 var string lastSignalType = "NONE"
@@ -557,6 +672,9 @@ lastSignalType := strongBuySignal ? "STRONG" : scalpBuySignal ? "SCALP" : instan
 if longCondition
     // FIX: stable entry id + contract qty
     strategy.entry("Long", strategy.long, qty=actualPositionSize)
+    if enableStrictQuality
+        strictLastEntryBar := bar_index
+        strictTradesToday += 1
 
     stopLossPrice = close - futuresStopDistance
     tp1Price = close + (ultraQuickTP * 0.4)
@@ -591,6 +709,9 @@ if longCondition
 
 if shortCondition
     strategy.entry("Short", strategy.short, qty=actualPositionSize)
+    if enableStrictQuality
+        strictLastEntryBar := bar_index
+        strictTradesToday += 1
 
     stopLossPrice = close + futuresStopDistance
     tp1Price = close - (ultraQuickTP * 0.5)
@@ -628,6 +749,9 @@ var int entryBar = na
 var float entryPrice = na
 var bool stopModificationSent = false
 var bool trailingActivated = false
+var float lastTrailStopSent = na
+var float lastProtectionStopSent = na
+var int lastDiagBar = na
 
 if strategy.position_size != 0 and strategy.position_size[1] == 0
     entryBar := bar_index
@@ -636,6 +760,8 @@ if strategy.position_size != 0 and strategy.position_size[1] == 0
     protectionStop := na
     stopModificationSent := false
     trailingActivated := false
+    lastTrailStopSent := na
+    lastProtectionStopSent := na
 
 holdingPeriod = bar_index - entryBar
 maxHoldingReached = quickExitMode and not na(entryBar) and (holdingPeriod >= maxHoldingBars)
@@ -662,6 +788,7 @@ if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
              '}'
             alert(protectAlert, alert.freq_once_per_bar)
             stopModificationSent := true
+            lastProtectionStopSent := entryPrice
 
     if protectionActive
         dynamicBuffer = profitProtectionBuffer
@@ -673,6 +800,22 @@ if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
             protectionStop := entryPrice + ((breakevenTicks + dynamicBuffer) * syminfo.mintick)
         else
             protectionStop := entryPrice - ((breakevenTicks + dynamicBuffer) * syminfo.mintick)
+
+        // Optional: send protection stop updates when it improves by N ticks (deploy-ready).
+        if enableLiveAlerts and enableStopModificationAlerts
+            improved = na(lastProtectionStopSent) ? true : (strategy.position_size > 0 ? (protectionStop > lastProtectionStopSent + trailUpdateMinTicks * syminfo.mintick) : (protectionStop < lastProtectionStopSent - trailUpdateMinTicks * syminfo.mintick))
+            if improved
+                alertSymbol = getAlertSymbol()
+                protUpdate = '{"ticker":"' + alertSymbol + '"' +
+                 ',"action":"modify_stop"' +
+                 ',"stop_type":"protection"' +
+                 ',"new_stop_price":' + str.tostring(protectionStop) +
+                 ',"reason":"protection_update"' +
+                 ',"profit_ticks":' + str.tostring(profitTicks) +
+                 ',"timestamp":"' + str.tostring(time) + '"' +
+                 '}'
+                alert(protUpdate, alert.freq_once_per_bar)
+                lastProtectionStopSent := protectionStop
 
 // Active stop priority (FIX: always present)
 getActiveStop(_entry, _stopDist, _tpDist, _trailRatio, _protActive, _protStop) =>
@@ -688,6 +831,80 @@ getActiveStop(_entry, _stopDist, _tpDist, _trailRatio, _protActive, _protStop) =
             trailDistance = atr10 * 0.6
             active := math.min(baseStop, close + trailDistance)
     active
+
+// ==================== TRAILING ALERTS (ACTIVATION + UPDATES) ====================
+trailDistancePts = atr10 * 0.6
+trailStopLong = close - trailDistancePts
+trailStopShort = close + trailDistancePts
+
+trailConditionLong = useSmartTrailing and (strategy.position_size > 0) and (close > entryPrice + (futuresTPDistance * trailActivationRatio))
+trailConditionShort = useSmartTrailing and (strategy.position_size < 0) and (close < entryPrice - (futuresTPDistance * trailActivationRatio))
+
+// We only consider trailing "active" when protection is NOT overriding.
+trailEligible = not (enableProfitProtection and protectionActive and not na(protectionStop))
+
+if enableLiveAlerts and enableStopModificationAlerts and enableTrailingAlerts and trailEligible and strategy.position_size != 0 and not na(entryPrice)
+    if not trailingActivated and (trailConditionLong or trailConditionShort)
+        trailingActivated := true
+        alertSymbol = getAlertSymbol()
+        newStop = trailConditionLong ? trailStopLong : trailStopShort
+        trailAlert = '{"ticker":"' + alertSymbol + '"' +
+         ',"action":"modify_stop"' +
+         ',"stop_type":"trailing"' +
+         ',"trail_distance":' + str.tostring(trailDistancePts) +
+         ',"new_stop_price":' + str.tostring(newStop) +
+         ',"reason":"trailing_activated"' +
+         ',"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+        alert(trailAlert, alert.freq_once_per_bar)
+        lastTrailStopSent := newStop
+
+    // Updates: only send if stop improves by trailUpdateMinTicks
+    if trailingActivated and (trailConditionLong or trailConditionShort)
+        newStop = trailConditionLong ? trailStopLong : trailStopShort
+        improved = na(lastTrailStopSent) ? true : (strategy.position_size > 0 ? (newStop > lastTrailStopSent + trailUpdateMinTicks * syminfo.mintick) : (newStop < lastTrailStopSent - trailUpdateMinTicks * syminfo.mintick))
+        if improved
+            alertSymbol = getAlertSymbol()
+            trailUpdate = '{"ticker":"' + alertSymbol + '"' +
+             ',"action":"modify_stop"' +
+             ',"stop_type":"trailing"' +
+             ',"trail_distance":' + str.tostring(trailDistancePts) +
+             ',"new_stop_price":' + str.tostring(newStop) +
+             ',"reason":"trailing_update"' +
+             ',"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+            alert(trailUpdate, alert.freq_once_per_bar)
+            lastTrailStopSent := newStop
+
+// ==================== NO-TRADE DIAGNOSTICS (OPTIONAL) ====================
+if enableLiveAlerts and enableNoTradeDiagnostics
+    signalPresent = ultraBuySignal or ultraSellSignal
+    shouldDiag = diagOnlyWhenSignal ? signalPresent : true
+    if shouldDiag and (strategy.position_size == 0) and (na(lastDiagBar) or lastDiagBar != bar_index)
+        blocked = (signalPresent and not (longCondition or shortCondition))
+        if blocked
+            alertSymbol = getAlertSymbol()
+            diag =
+             '{"ticker":"' + alertSymbol + '"' +
+             ',"action":"diagnostic"' +
+             ',"reason":"entry_blocked"' +
+             ',"signal_buy":' + str.tostring(ultraBuySignal ? 1 : 0) +
+             ',"signal_sell":' + str.tostring(ultraSellSignal ? 1 : 0) +
+             ',"blocked_max_loss":' + str.tostring(maxLossReached ? 1 : 0) +
+             ',"blocked_gap_loss":' + str.tostring(gapLossLimitReached ? 1 : 0) +
+             ',"blocked_volatility":' + str.tostring((not volatilityOK) ? 1 : 0) +
+             ',"blocked_session":' + str.tostring((not sessionAdjustedSignal) ? 1 : 0) +
+             ',"blocked_equity":' + str.tostring(equityTooLow ? 1 : 0) +
+             ',"blocked_hardstop":' + str.tostring((useHardStopFlag and hardStopHit) ? 1 : 0) +
+             ',"strict_on":' + str.tostring(enableStrictQuality ? 1 : 0) +
+             ',"strict_adx":' + str.tostring(math.round(strictAdx, 1)) +
+             ',"strict_score_long":' + str.tostring(strictLongScore) +
+             ',"strict_score_short":' + str.tostring(strictShortScore) +
+             ',"strict_trades_today":' + str.tostring(strictTradesToday) +
+             ',"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+            alert(diag, alert.freq_once_per_bar)
+            lastDiagBar := bar_index
 
 // LONG/SHORT exits: attach the active stop to each TP exit (FIX: stop always exists, no if/else chain issue)
 if strategy.position_size > 0 and not na(entryPrice)
