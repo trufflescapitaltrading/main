@@ -42,6 +42,25 @@ The indicator includes “institutional-style” safety controls to avoid low-qu
 - **Time-stop** (optional): exits at market after a max number of bars in a trade (prevents overstaying)
 - **MAE/MFE tracking** (virtual): tracks max adverse excursion and max favorable excursion during each trade for monitoring/optimization
 
+## Live automation hardening (added)
+
+These features are specifically for reliable live execution with webhooks:
+
+- **Single execution mode enforcement**: choose one:
+  - `Live Execution Mode = BRACKET_ONLY` (ENTRY includes stop + TP1 only)
+  - `Live Execution Mode = SCALE_OUT` (ENTRY plus TP/STOP exit alerts)
+- **Idempotency (`signalId`)**: every alert includes a unique `signalId` so your router can de-duplicate repeated webhooks.
+- **Emergency kill-switch**:
+  - `EMERGENCY KILL SWITCH` blocks all new entries
+  - `Flatten On Kill Switch` (optional) sends a one-time `KILL_SWITCH` close alert for any modeled open position
+- **Heartbeat/SYNC alerts (optional)**:
+  - `Send Heartbeat/SYNC Alerts` emits periodic diagnostic JSON with the indicator’s modeled state (FLAT/LONG/SHORT, qty, cooldown, loss streak)
+  - Recommended to keep frequency modest to avoid alert spam
+- **Volatility/spike guard**:
+  - Blocks entries if ATR% or current candle range (in ATR units) exceeds thresholds (news/spike protection)
+- **No-trade time windows**:
+  - Block first/last minutes of session, lunch, and up to 2 custom HHMM windows
+
 ## Critical notes (read this)
 
 - **This is not a backtesting strategy** (it’s an indicator). TradingView will not manage a real broker position for you.
@@ -137,8 +156,7 @@ You can run this indicator in one of two practical “live” modes depending on
 Best when partial exits are not reliable, or you want the simplest live behavior.
 
 - **Indicator settings**:
-  - `Include Stop + TP1 on Entry Alert` = **ON**
-  - `Emit TP/STOP Exit Alerts` = **OFF**
+  - `Live Execution Mode` = **BRACKET_ONLY**
 - Result:
   - Entry alert includes **stopLoss + TP1 takeProfit**
   - No TP2/TP3 scale-out alerts will be sent
@@ -148,8 +166,8 @@ Best when partial exits are not reliable, or you want the simplest live behavior
 Best when your TradersPost strategy supports scaling out (reduce-only orders).
 
 - **Indicator settings**:
+  - `Live Execution Mode` = **SCALE_OUT**
   - `Include Stop + TP1 on Entry Alert` = **ON** (recommended)
-  - `Emit TP/STOP Exit Alerts` = **ON**
 - Result:
   - Entry alert includes **stopLoss + TP1 takeProfit**
   - The indicator also sends **TP2/TP3** reduce-only exit alerts and a **STOP** exit alert for any remaining size
@@ -166,6 +184,9 @@ Best when your TradersPost strategy supports scaling out (reduce-only orders).
   - `Max Consecutive Losing Trades` = 2
   - `Cooldown Bars After Loss` = 30
   - `Max Hold Bars` = 0 (off) initially; turn on only if you see overstaying in chop
+  - `Volatility/Spike Guard` = ON
+  - `Block First N Minutes After Open` = 5
+  - `Block Last N Minutes Before Close` = 5
 
 ## Troubleshooting
 

@@ -51,6 +51,40 @@ currentTime = math.round(hour * 100 + minute)
 inTradingHours = currentTime >= 930 and currentTime <= 1550
 sessionOK = not tradingHoursOnly or inTradingHours
 
+// Institutional time filters (no-trade windows)
+blockFirstMinutes = input.int(5, "Block First N Minutes After Open", minval=0, maxval=60,
+     tooltip="Avoid the opening volatility/whipsaws.")
+blockLastMinutes = input.int(5, "Block Last N Minutes Before Close", minval=0, maxval=60,
+     tooltip="Avoid end-of-session liquidity swings.")
+blockLunch = input.bool(false, "Block Lunch Window")
+lunchStartHHMM = input.int(1200, "Lunch Start (HHMM)", minval=0, maxval=2359)
+lunchEndHHMM = input.int(1330, "Lunch End (HHMM)", minval=0, maxval=2359)
+
+blockWindow1 = input.bool(false, "Block Custom Window #1")
+window1StartHHMM = input.int(1000, "Window #1 Start (HHMM)", minval=0, maxval=2359)
+window1EndHHMM = input.int(1015, "Window #1 End (HHMM)", minval=0, maxval=2359)
+
+blockWindow2 = input.bool(false, "Block Custom Window #2")
+window2StartHHMM = input.int(1400, "Window #2 Start (HHMM)", minval=0, maxval=2359)
+window2EndHHMM = input.int(1415, "Window #2 End (HHMM)", minval=0, maxval=2359)
+
+f_hhmm_to_min(hhmm) =>
+    hh = math.floor(hhmm / 100)
+    mm = hhmm - (hh * 100)
+    hh * 60 + mm
+
+openMin = f_hhmm_to_min(930)
+closeMin = f_hhmm_to_min(1550)
+nowMin = hour * 60 + minute
+
+inOpenBlock = blockFirstMinutes > 0 and nowMin >= openMin and nowMin < (openMin + blockFirstMinutes)
+inCloseBlock = blockLastMinutes > 0 and nowMin <= closeMin and nowMin > (closeMin - blockLastMinutes)
+inLunchBlock = blockLunch and nowMin >= f_hhmm_to_min(lunchStartHHMM) and nowMin <= f_hhmm_to_min(lunchEndHHMM)
+inCustom1 = blockWindow1 and nowMin >= f_hhmm_to_min(window1StartHHMM) and nowMin <= f_hhmm_to_min(window1EndHHMM)
+inCustom2 = blockWindow2 and nowMin >= f_hhmm_to_min(window2StartHHMM) and nowMin <= f_hhmm_to_min(window2EndHHMM)
+
+timeWindowsOK = not (inOpenBlock or inCloseBlock or inLunchBlock or inCustom1 or inCustom2)
+
 // ==============================
 // 📊 HIGHER TIMEFRAME CONFIRMATION
 // ==============================
@@ -126,6 +160,17 @@ volumeMA = ta.sma(volume, 20)
 volumeSpike = volume > volumeMA * volumeRatioMin
 
 atr = ta.atr(14)
+
+// Institutional volatility/spike filters (avoid news/whipsaw candles)
+useVolatilityGuard = input.bool(true, "Volatility/Spike Guard (institutional)")
+maxAtrPct = input.float(0.60, "Max ATR% of Price", minval=0.10, maxval=3.0,
+     tooltip="Blocks entries when ATR is too large relative to price (news/high-vol regimes).")
+maxRangeATR = input.float(2.5, "Max Candle Range (ATR)", minval=0.5, maxval=10.0,
+     tooltip="Blocks entries on huge candles relative to ATR (spike candles).")
+
+atrPct = close != 0 ? (atr / close) * 100.0 : na
+rangeAtr = atr != 0 ? (high - low) / atr : na
+volatilityOK = not useVolatilityGuard or ((not na(atrPct) and atrPct <= maxAtrPct) and (not na(rangeAtr) and rangeAtr <= maxRangeATR))
 
 // ==============================
 // 📊 SUPPORT/RESISTANCE DETECTION
@@ -322,10 +367,25 @@ reversalRequiresEma21Break = input.bool(true, "Reversal Requires EMA21 Break")
 // 🔔 TRADERSPOST ALERT SETTINGS
 // ==============================
 enableAlerts = input.bool(true, "Enable TradersPost Alerts")
-emitExitAlerts = input.bool(true, "Emit TP/STOP Exit Alerts")
-includeBracketOnEntry = input.bool(true, "Include Stop + TP1 on Entry Alert")
+// Enforce a single execution mode to prevent conflicting exits.
+executionMode = input.string("SCALE_OUT", "Live Execution Mode", options=["BRACKET_ONLY", "SCALE_OUT"],
+     tooltip="BRACKET_ONLY sends ENTRY with stop+TP1 only. SCALE_OUT sends ENTRY plus TP/STOP exit alerts.")
+emitExitAlertsInput = input.bool(true, "Emit TP/STOP Exit Alerts (advanced)")
+includeBracketOnEntryInput = input.bool(true, "Include Stop + TP1 on Entry Alert (advanced)")
+
+emitExitAlerts = executionMode == "SCALE_OUT" ? emitExitAlertsInput : false
+includeBracketOnEntry = includeBracketOnEntryInput or (executionMode == "BRACKET_ONLY")
 
 traderspostTicker = input.string("MGC1!", "TradersPost Ticker", tooltip="Sent in JSON. Map in TradersPost to your broker symbol.")
+
+// Desync protection + idempotency
+enableHeartbeat = input.bool(false, "Send Heartbeat/SYNC Alerts")
+heartbeatEveryBars = input.int(12, "Heartbeat Every N Bars", minval=1, maxval=500,
+     tooltip="Heartbeat JSON helps diagnose missed webhooks/desync. Keep this modest to avoid spam.")
+
+// Emergency kill-switch (block entries, optionally flatten)
+killSwitch = input.bool(false, "EMERGENCY KILL SWITCH (no new entries)")
+flattenOnKill = input.bool(true, "Flatten On Kill Switch (send CLOSE alert)")
 
 // ==============================
 // 🧾 DAILY TRACKING (VIRTUAL)
@@ -370,11 +430,13 @@ var float lastTradeMAE = na
 var float lastTradeMFE = na
 var float lastTradePnL = na
 var string lastExitReason = ""
+var bool killSwitchPrev = false
 
 barsSinceLastTrade = bar_index - lastTradeBar
 cooldownOK = bar_index >= cooldownUntilBar
 lossStreakOK = consecutiveLosses < maxConsecutiveLosses
-canTrade = sessionOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades) and cooldownOK and lossStreakOK
+killOK = not killSwitch
+canTrade = sessionOK and timeWindowsOK and volatilityOK and killOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades) and cooldownOK and lossStreakOK
 
 // ==============================
 // 🤝 COOPERATIVE SIGNAL QUALITY GATES
@@ -419,19 +481,65 @@ shortSignal = canTrade and stopOKShort and srOKShort and htfOKShort and mtfOKSho
 // ==============================
 f_json_num(x) => str.tostring(x, "#.####")
 
+f_signal_id(_kind, _side, _reason) =>
+    // Uniqueness for idempotency: time + bar_index + kind/side/reason
+    _kind + "-" + _side + "-" + _reason + "-" + str.tostring(time) + "-" + str.tostring(bar_index)
+
 f_json_entry(_isLong, _qty, _stopPrice, _tp1Price, _score) =>
     action = _isLong ? "buy" : "sell"
-    base = '{"ticker":"' + traderspostTicker + '","action":"' + action + '","orderType":"market","quantity":' + str.tostring(_qty) + ',"confluenceScore":' + str.tostring(_score)
+    side = _isLong ? "LONG" : "SHORT"
+    sid = f_signal_id("ENTRY", side, "ENTRY")
+    base = '{"ticker":"' + traderspostTicker + '","action":"' + action + '","orderType":"market","quantity":' + str.tostring(_qty) + ',"confluenceScore":' + str.tostring(_score) + ',"signalId":"' + sid + '"'
     br = includeBracketOnEntry ? ',"stopLoss":{"stopPrice":' + f_json_num(_stopPrice) + '},"takeProfit":{"limitPrice":' + f_json_num(_tp1Price) + '}' : ""
     base + br + '}'
 
 f_json_exit(_isLong, _qty, _reason, _refPrice) =>
     action = _isLong ? "sell" : "buy"
-    '{"ticker":"' + traderspostTicker + '","action":"' + action + '","orderType":"market","quantity":' + f_json_num(_qty) + ',"reduceOnly":true,"reason":"' + _reason + '","referencePrice":' + f_json_num(_refPrice) + '}'
+    side = _isLong ? "LONG" : "SHORT"
+    sid = f_signal_id("EXIT", side, _reason)
+    '{"ticker":"' + traderspostTicker + '","action":"' + action + '","orderType":"market","quantity":' + f_json_num(_qty) + ',"reduceOnly":true,"reason":"' + _reason + '","referencePrice":' + f_json_num(_refPrice) + ',"signalId":"' + sid + '"}'
+
+f_json_heartbeat() =>
+    // Diagnostic heartbeat (does not trade by itself unless your router interprets it)
+    posSide = inPos ? (isLong ? "LONG" : "SHORT") : "FLAT"
+    '{"ticker":"' + traderspostTicker + '","signal":"HEARTBEAT","positionModel":"' + posSide + '","qtyRemaining":' + f_json_num(qtyRemaining) + ',"cooldownActive":' + (bar_index < cooldownUntilBar ? "true" : "false") + ',"consecutiveLosses":' + str.tostring(consecutiveLosses) + ',"maxConsecutiveLosses":' + str.tostring(maxConsecutiveLosses) + ',"killSwitch":' + (killSwitch ? "true" : "false") + ',"time":' + str.tostring(time) + ',"barIndex":' + str.tostring(bar_index) + '}'
 
 // ==============================
 // 📍 ENTRY (ALERT + MODEL STATE)
 // ==============================
+// Kill-switch edge detection: optionally flatten immediately (one-shot per toggle)
+killTriggered = killSwitch and not killSwitchPrev
+killSwitchPrev := killSwitch
+
+if enableAlerts and barstate.isconfirmed and killTriggered and flattenOnKill and inPos and qtyRemaining > 0
+    alert(f_json_exit(isLong, qtyRemaining, "KILL_SWITCH", close), alert.freq_once_per_bar_close)
+    // Treat as an exit for cooldown/loss tracking (virtual)
+    pnlPoints = (close - entryPrice) * (isLong ? 1 : -1)
+    pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
+    dailyRealizedPnL += pnlDollars
+    tradeRealizedPnL += pnlDollars
+    lastTradePnL := tradeRealizedPnL
+    lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+    lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+    lastExitReason := "KILL_SWITCH"
+    consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+    cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+    lastTradeBar := bar_index
+
+    inPos := false
+    entryPrice := na
+    currentStop := na
+    tp1_hit := false
+    tp2_hit := false
+    breakeven_active := false
+    trailing_active := false
+    qtyRemaining := 0.0
+    qtyOriginal := 0.0
+    entryBar := na
+    maePoints := 0.0
+    mfePoints := 0.0
+    tradeRealizedPnL := 0.0
+
 if enableAlerts and barstate.isconfirmed
     if longSignal and fixedContracts > 0
         inPos := true
@@ -479,6 +587,13 @@ if enableAlerts and barstate.isconfirmed
 
         tp1_price = entryPrice - (atr * tp1_ATR)
         alert(f_json_entry(false, fixedContracts, currentStop, tp1_price, confluenceShort), alert.freq_once_per_bar_close)
+
+// ==============================
+// 🫀 HEARTBEAT / SYNC (OPTIONAL)
+// ==============================
+if enableAlerts and barstate.isconfirmed and enableHeartbeat
+    if (bar_index % heartbeatEveryBars) == 0
+        alert(f_json_heartbeat(), alert.freq_once_per_bar_close)
 
 // ==============================
 // 📉 MAE/MFE TRACKING (INSTITUTIONAL METRICS)
