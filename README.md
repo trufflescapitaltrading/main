@@ -5,6 +5,7 @@ This repo contains a TradingView Pine v5 strategy focused on restoring your **V7
 ## Files
 
 - `mgc_master_v71_profit_logic_fixed.pine`: **Primary** — restored V7.1 profitable logic with execution fixes (stable entry IDs, exits tied via `from_entry`, contract qty consistency).
+- `mgc_master_v71_original_profit_logic_2025_11_05.pine`: **Original baseline** — preserves original V7.1 sizing + behavior for matching the historical backtest stats.
 - `trend_impulse_only_v1.pine`: Experimental rewrite (not recommended if win-rate collapses).
 
 ## How to use
