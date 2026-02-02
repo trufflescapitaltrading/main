@@ -57,3 +57,16 @@ If you want **70–80% win-rate behavior**, filter harder:
 - **Optional stop upgrades**: `alert()` events with `action:"modify_stop"` for profit protection / trailing updates
 - **Emergency flatten**: `alert()` with `action:"emergency_exit"` on max daily loss / gap loss
 - Avoid relying on `strategy.exit()` to execute live; use it for backtest while broker manages brackets from alerts
+
+## Institutional risk add-ons (what’s enforced)
+
+`mgc_master_v71_profit_logic_fixed.pine` adds **entry gates + alert-only exits** (does not alter the original profit logic):
+
+- **HTF/MTF alignment gate** via `request.security()` EMA trend direction
+- **HTF/MTF flip emergency exits** (alert flatten)
+- **MAE/MFE tracking** and optional **MAE emergency exit** (alert flatten)
+- **Consecutive loss kill-switch** (halts new entries; optional alert)
+- **Intraday peak-to-valley drawdown kill-switch** (halts + alert flatten)
+- **Time stop / losing timeout exits** (alert flatten)
+- **Volatility shock guard + cooldown** (blocks entries; optional shock flatten)
+- **Idempotency fields** in alerts: `signal_id`, plus `intent` / `position_intent`

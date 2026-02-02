@@ -39,11 +39,64 @@ emergencyCloseBacktest = input.bool(false, "Also Close in Backtest (strategy.clo
 enableNoTradeDiagnostics = input.bool(false, "Send No-Trade Diagnostics Alerts", group=group_deploy, tooltip="If a signal appears but is blocked by filters, send a diagnostic alert.")
 diagOnlyWhenSignal = input.bool(true, "Diagnostics Only When Signal Present", group=group_deploy)
 
+// ==================== INSTITUTIONAL RISK ADD-ONS (ENTRY GATES + ALERT-ONLY EXITS) ====================
+group_inst = "🏛️ Institutional Risk Add-ons"
+
+enableHTFMTF = input.bool(true, "Enable HTF/MTF Alignment Gate", group=group_inst)
+htfTf = input.timeframe("240", "HTF Timeframe", group=group_inst)
+mtfTf = input.timeframe("60", "MTF Timeframe", group=group_inst)
+htfEmaFastLen = input.int(21, "HTF EMA Fast", minval=5, maxval=200, group=group_inst)
+htfEmaSlowLen = input.int(55, "HTF EMA Slow", minval=10, maxval=300, group=group_inst)
+mtfEmaFastLen = input.int(21, "MTF EMA Fast", minval=5, maxval=200, group=group_inst)
+mtfEmaSlowLen = input.int(55, "MTF EMA Slow", minval=10, maxval=300, group=group_inst)
+requireHTFAlign = input.bool(true, "Require HTF Alignment", group=group_inst)
+requireMTFAlign = input.bool(false, "Require MTF Alignment", group=group_inst)
+
+exitOnHTFFlip = input.bool(true, "HTF Flip Emergency Exit (alert)", group=group_inst)
+exitOnMTFFlip = input.bool(false, "MTF Flip Emergency Exit (alert)", group=group_inst)
+
+enableMAETracker = input.bool(false, "MAE Emergency Exit (alert)", group=group_inst, tooltip="Uses per-trade MAE tracking; does not change TP/protection logic.")
+maeAtrLen = input.int(14, "MAE ATR Length", minval=5, maxval=50, group=group_inst)
+maeAtrThreshold = input.float(1.8, "MAE Threshold (ATR multiple)", minval=0.5, maxval=8.0, group=group_inst)
+
+enableConsecLossKill = input.bool(true, "Consecutive Loss Kill-Switch", group=group_inst)
+maxConsecutiveLosses = input.int(3, "Max Consecutive Losses", minval=1, maxval=10, group=group_inst)
+
+enableDailyDDKill = input.bool(true, "Intraday Drawdown Kill-Switch", group=group_inst)
+maxDailyDrawdownPct = input.float(1.5, "Max Intraday Drawdown % (peak->valley)", minval=0.2, maxval=10.0, group=group_inst)
+
+enableTimeStopExit = input.bool(false, "Time Stop Emergency Exit (alert)", group=group_inst)
+maxBarsInTrade = input.int(80, "Max Bars In Trade", minval=5, maxval=2000, group=group_inst)
+enableLosingTimeoutExit = input.bool(false, "Losing Timeout Exit (alert)", group=group_inst)
+losingTimeoutBars = input.int(25, "Losing Timeout Bars", minval=2, maxval=500, group=group_inst)
+losingTimeoutAtrMult = input.float(0.6, "Min Loss (ATR multiple)", minval=0.1, maxval=3.0, group=group_inst)
+
+enableVolatilityShockGuard = input.bool(true, "Volatility Shock Guard + Cooldown", group=group_inst)
+shockAtrLen = input.int(14, "Shock ATR Length", minval=5, maxval=50, group=group_inst)
+shockBarRangeAtrMult = input.float(2.8, "Shock: (High-Low) > ATR *", minval=1.0, maxval=10.0, group=group_inst)
+shockGapAtrMult = input.float(2.5, "Shock: |Close-Close[1]| > ATR *", minval=1.0, maxval=10.0, group=group_inst)
+shockCooldownBars = input.int(20, "Cooldown Bars After Shock", minval=0, maxval=500, group=group_inst)
+flattenOnShock = input.bool(false, "Flatten On Shock (alert)", group=group_inst)
+
+// Backtest helpers (keep OFF for live alert-only)
+instCloseBacktest = input.bool(false, "Also Close in Backtest for Inst Exits", group=group_inst)
+
 getAlertSymbol() =>
     tradersPostSymbol != "" ? tradersPostSymbol : syminfo.ticker
 
 hasAccountId() =>
     str.length(accountId) > 0
+
+// ==================== IDENTITY / IDEMPOTENCY FIELDS ====================
+mkSignalId(_side) =>
+    // deterministic per bar; broker-side should treat duplicate IDs as idempotent
+    str.tostring(time) + "_" + str.tostring(bar_index) + "_" + _side + "_" + getAlertSymbol() + "_" + timeframe.period
+
+// One-shot alert guards (reduce spam in live)
+var int lastMaxLossAlertBar = na
+var int lastGapLossAlertBar = na
+var int lastDDKillAlertBar = na
+var int lastShockAlertBar = na
 
 // ==================== INITIALIZATION & VALIDATION ====================
 var bool isInitialized = false
@@ -567,6 +620,32 @@ extremeVolatility = useVolatilityFilter and (atrRatio > maxVolatilityATR)
 tooLowVolatility = useVolatilityFilter and (atrRatio < minVolatilityATR)
 volatilityOK = not extremeVolatility and not tooLowVolatility
 
+// ==================== HTF/MTF TREND DIR ====================
+htfEmaFast = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaFastLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfEmaSlow = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaSlowLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfDir = htfEmaFast > htfEmaSlow ? 1 : -1
+
+mtfEmaFast = request.security(syminfo.tickerid, mtfTf, ta.ema(close, mtfEmaFastLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfEmaSlow = request.security(syminfo.tickerid, mtfTf, ta.ema(close, mtfEmaSlowLen), barmerge.gaps_off, barmerge.lookahead_off)
+mtfDir = mtfEmaFast > mtfEmaSlow ? 1 : -1
+
+htfOKLong = (not enableHTFMTF) or (not requireHTFAlign) or (htfDir == 1)
+htfOKShort = (not enableHTFMTF) or (not requireHTFAlign) or (htfDir == -1)
+mtfOKLong = (not enableHTFMTF) or (not requireMTFAlign) or (mtfDir == 1)
+mtfOKShort = (not enableHTFMTF) or (not requireMTFAlign) or (mtfDir == -1)
+
+// ==================== VOLATILITY SHOCK GUARD ====================
+shockAtr = ta.atr(shockAtrLen)
+shockRange = (high - low)
+shockGap = math.abs(close - close[1])
+isShock = enableVolatilityShockGuard and (shockAtr > 0) and ((shockRange > shockAtr * shockBarRangeAtrMult) or (shockGap > shockAtr * shockGapAtrMult))
+
+var int lastShockBar = na
+if isShock
+    lastShockBar := bar_index
+
+inShockCooldown = enableVolatilityShockGuard and not na(lastShockBar) and ((bar_index - lastShockBar) <= shockCooldownBars)
+
 // ==================== INDICATORS ====================
 rsi = ta.rsi(close, 6)
 momentumBullish = rsi > 30
@@ -681,6 +760,18 @@ if dayofweek(time) != dayofweek(time[1])
 dailyPnL += strategy.netprofit - strategy.netprofit[1]
 maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
 
+// ==================== INTRADAY PEAK->VALLEY DRAWDOWN KILL ====================
+var float dayPeakEquity = na
+var bool dailyDDKilled = false
+if dayofweek(time) != dayofweek(time[1])
+    dayPeakEquity := strategy.equity
+    dailyDDKilled := false
+
+dayPeakEquity := na(dayPeakEquity) ? strategy.equity : math.max(dayPeakEquity, strategy.equity)
+intradayDDPct = dayPeakEquity > 0 ? ((strategy.equity - dayPeakEquity) / dayPeakEquity) * 100.0 : 0.0
+if enableDailyDDKill and (intradayDDPct <= -maxDailyDrawdownPct)
+    dailyDDKilled := true
+
 sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPreMarket or isAfterHours)
 ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal and volatilityOK
 ultraSellCondition = ultraSellSignal and sessionAdjustedSignal and volatilityOK
@@ -695,25 +786,77 @@ strictSetupOKShort = (not enableStrictQuality) or setupOKShort
 strictEntryOKLong := strictEntryOKLong and strictRegimeOK and strictSetupOKLong
 strictEntryOKShort := strictEntryOKShort and strictRegimeOK and strictSetupOKShort
 
-longCondition = isInitialized and ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKLong and (strategy.position_size == 0)
-shortCondition = isInitialized and ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKShort and (strategy.position_size == 0)
+instEntryOKLong = htfOKLong and mtfOKLong and (not inShockCooldown) and (not dailyDDKilled) and (not (enableConsecLossKill and (consecutiveLosses >= maxConsecutiveLosses)))
+instEntryOKShort = htfOKShort and mtfOKShort and (not inShockCooldown) and (not dailyDDKilled) and (not (enableConsecLossKill and (consecutiveLosses >= maxConsecutiveLosses)))
+
+longCondition = isInitialized and ultraBuyCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKLong and instEntryOKLong and (strategy.position_size == 0)
+shortCondition = isInitialized and ultraSellCondition and (not maxLossReached) and (not equityTooLow) and ((not useHardStopFlag) or (not hardStopHit)) and ((not useGapProtection) or (not gapLossLimitReached)) and strictEntryOKShort and instEntryOKShort and (strategy.position_size == 0)
 
 // ==================== EMERGENCY CLOSE ALERTS (ALERT() ONLY) ====================
 if enableLiveAlerts and enableEmergencyAlerts and enableEmergencyCloseAlerts and (maxLossReached or gapLossLimitReached)
     alertSymbol = getAlertSymbol()
     reason = maxLossReached ? "max_daily_loss_reached" : "gap_loss_limit_reached"
     side = strategy.position_size > 0 ? "long" : strategy.position_size < 0 ? "short" : "flat"
-    emergencyAlert = '{"ticker":"' + alertSymbol + '"' +
-     ',"action":"emergency_exit"' +
-     ',"reason":"' + reason + '"' +
-     ',"side":"' + side + '"' +
-     ',"daily_pnl":' + str.tostring(dailyPnL) +
-     ',"daily_gap_loss":' + str.tostring(dailyGapLoss) +
-     ',"timestamp":"' + str.tostring(time) + '"' +
-     '}'
-    alert(emergencyAlert, alert.freq_once_per_bar)
+    shouldSend = maxLossReached ? (na(lastMaxLossAlertBar) or lastMaxLossAlertBar != bar_index) : (na(lastGapLossAlertBar) or lastGapLossAlertBar != bar_index)
+    if shouldSend
+        emergencyAlert = '{"ticker":"' + alertSymbol + '"' +
+         ',"action":"emergency_exit"' +
+         ',"intent":"FLATTEN"' +
+         ',"reason":"' + reason + '"' +
+         ',"side":"' + side + '"' +
+         ',"daily_pnl":' + str.tostring(dailyPnL) +
+         ',"daily_gap_loss":' + str.tostring(dailyGapLoss) +
+         ',"signal_id":"' + mkSignalId("EMERGENCY") + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+        alert(emergencyAlert, alert.freq_once_per_bar)
+        if maxLossReached
+            lastMaxLossAlertBar := bar_index
+        else
+            lastGapLossAlertBar := bar_index
     if emergencyCloseBacktest and (strategy.position_size != 0)
         strategy.close_all(comment="EMERGENCY")
+
+// Intraday drawdown kill-switch (alert flatten + optional backtest close)
+if enableLiveAlerts and enableEmergencyAlerts and enableEmergencyCloseAlerts and enableDailyDDKill and dailyDDKilled
+    alertSymbol = getAlertSymbol()
+    side = strategy.position_size > 0 ? "long" : strategy.position_size < 0 ? "short" : "flat"
+    if na(lastDDKillAlertBar) or lastDDKillAlertBar != bar_index
+        ddAlert = '{"ticker":"' + alertSymbol + '"' +
+         ',"action":"emergency_exit"' +
+         ',"intent":"HALT_TRADING"' +
+         ',"reason":"intraday_drawdown_kill"' +
+         ',"side":"' + side + '"' +
+         ',"intraday_dd_pct":' + str.tostring(intradayDDPct) +
+         ',"max_dd_pct":' + str.tostring(maxDailyDrawdownPct) +
+         ',"signal_id":"' + mkSignalId("DD_KILL") + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+        alert(ddAlert, alert.freq_once_per_bar)
+        lastDDKillAlertBar := bar_index
+    if instCloseBacktest and (strategy.position_size != 0)
+        strategy.close_all(comment="DD_KILL")
+
+// Volatility shock flatten (optional)
+if enableLiveAlerts and enableEmergencyAlerts and flattenOnShock and isShock
+    alertSymbol = getAlertSymbol()
+    side = strategy.position_size > 0 ? "long" : strategy.position_size < 0 ? "short" : "flat"
+    if na(lastShockAlertBar) or lastShockAlertBar != bar_index
+        shockAlert = '{"ticker":"' + alertSymbol + '"' +
+         ',"action":"emergency_exit"' +
+         ',"intent":"FLATTEN"' +
+         ',"reason":"volatility_shock"' +
+         ',"side":"' + side + '"' +
+         ',"shock_range":' + str.tostring(shockRange) +
+         ',"shock_gap":' + str.tostring(shockGap) +
+         ',"shock_atr":' + str.tostring(shockAtr) +
+         ',"signal_id":"' + mkSignalId("SHOCK") + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"' +
+         '}'
+        alert(shockAlert, alert.freq_once_per_bar)
+        lastShockAlertBar := bar_index
+    if instCloseBacktest and (strategy.position_size != 0)
+        strategy.close_all(comment="SHOCK")
 
 // ==================== ENTRIES (FIXED) ====================
 var string lastSignalType = "NONE"
@@ -737,6 +880,7 @@ if longCondition
         accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ""
         entryAlert = '{"ticker":"' + alertSymbol + '"' +
          ',"action":"buy"' +
+         ',"intent":"OPEN"' +
          ',"order_type":"' + orderType + '"' +
          ',"quantity":' + str.tostring(actualPositionSize) +
          ',"price":' + str.tostring(close) +
@@ -753,6 +897,13 @@ if longCondition
          ',"timeframe":"' + timeframe.period + '"' +
          ',"timestamp":"' + str.tostring(time) + '"' +
          accountField +
+         ',"signal_id":"' + mkSignalId("BUY") + '"' +
+         ',"position_intent":"LONG"' +
+         ',"htf_dir":' + str.tostring(htfDir) +
+         ',"mtf_dir":' + str.tostring(mtfDir) +
+         ',"shock_cooldown":' + str.tostring(inShockCooldown ? 1 : 0) +
+         ',"intraday_dd_kill":' + str.tostring(dailyDDKilled ? 1 : 0) +
+         ',"consecutive_losses":' + str.tostring(consecutiveLosses) +
          ',"setup_type":"' + (enableStrictQuality ? setupTypeLong : "ANY") + '"' +
          ',"strict_score":' + str.tostring(strictLongScore) +
          ',"signal_type":"' + (strongBuySignal ? "STRONG" : scalpBuySignal ? "SCALP" : instantBuySignal ? "INSTANT" : "MICRO") + '"' +
@@ -776,6 +927,7 @@ if shortCondition
         accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ""
         entryAlert = '{"ticker":"' + alertSymbol + '"' +
          ',"action":"sell"' +
+         ',"intent":"OPEN"' +
          ',"order_type":"' + orderType + '"' +
          ',"quantity":' + str.tostring(actualPositionSize) +
          ',"price":' + str.tostring(close) +
@@ -792,6 +944,13 @@ if shortCondition
          ',"timeframe":"' + timeframe.period + '"' +
          ',"timestamp":"' + str.tostring(time) + '"' +
          accountField +
+         ',"signal_id":"' + mkSignalId("SELL") + '"' +
+         ',"position_intent":"SHORT"' +
+         ',"htf_dir":' + str.tostring(htfDir) +
+         ',"mtf_dir":' + str.tostring(mtfDir) +
+         ',"shock_cooldown":' + str.tostring(inShockCooldown ? 1 : 0) +
+         ',"intraday_dd_kill":' + str.tostring(dailyDDKilled ? 1 : 0) +
+         ',"consecutive_losses":' + str.tostring(consecutiveLosses) +
          ',"setup_type":"' + (enableStrictQuality ? setupTypeShort : "ANY") + '"' +
          ',"strict_score":' + str.tostring(strictShortScore) +
          ',"signal_type":"' + (strongSellSignal ? "STRONG" : scalpSellSignal ? "SCALP" : instantSellSignal ? "INSTANT" : "MICRO") + '"' +
@@ -806,6 +965,17 @@ var bool trailingActivated = false
 var float lastTrailStopSent = na
 var float lastProtectionStopSent = na
 var int lastDiagBar = na
+var float worstLow = na
+var float worstHigh = na
+var float maeATR = na
+var float mfeATR = na
+var int closedTradesPrev = 0
+var int consecutiveLosses = 0
+var bool instKilledByConsec = false
+var bool sentTimeStop = false
+var bool sentLosingTimeout = false
+var bool sentMae = false
+var bool sentFlip = false
 
 if strategy.position_size != 0 and strategy.position_size[1] == 0
     entryBar := bar_index
@@ -816,6 +986,20 @@ if strategy.position_size != 0 and strategy.position_size[1] == 0
     trailingActivated := false
     lastTrailStopSent := na
     lastProtectionStopSent := na
+    worstLow := low
+    worstHigh := high
+    maeATR := 0.0
+    mfeATR := 0.0
+    sentTimeStop := false
+    sentLosingTimeout := false
+    sentMae := false
+    sentFlip := false
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    sentTimeStop := false
+    sentLosingTimeout := false
+    sentMae := false
+    sentFlip := false
 
 holdingPeriod = bar_index - entryBar
 maxHoldingReached = quickExitMode and not na(entryBar) and (holdingPeriod >= maxHoldingBars)
@@ -826,6 +1010,105 @@ if strategy.position_size != 0 and not na(entryPrice)
     profitTicks := strategy.position_size > 0 ? (close - entryPrice) / syminfo.mintick : (entryPrice - close) / syminfo.mintick
     breakevenTicks := currentCommission / syminfo.pointvalue / syminfo.mintick + currentSlippage
 
+// Track MAE/MFE per trade (in ATR multiples)
+maeAtr = ta.atr(maeAtrLen)
+if strategy.position_size != 0 and not na(entryPrice) and maeAtr > 0
+    worstLow := math.min(nz(worstLow, low), low)
+    worstHigh := math.max(nz(worstHigh, high), high)
+    maePtsNow = strategy.position_size > 0 ? (entryPrice - worstLow) : (worstHigh - entryPrice)
+    mfePtsNow = strategy.position_size > 0 ? (worstHigh - entryPrice) : (entryPrice - worstLow)
+    maeATR := maePtsNow / maeAtr
+    mfeATR := mfePtsNow / maeAtr
+
+// Time stop / losing timeout (alert-only)
+unrealizedPts = strategy.position_size > 0 ? (close - entryPrice) : (entryPrice - close)
+unrealizedAtr = maeAtr > 0 ? (unrealizedPts / maeAtr) : 0.0
+timeStopHit = enableTimeStopExit and strategy.position_size != 0 and not na(entryPrice) and (holdingPeriod >= maxBarsInTrade)
+losingTimeoutHit = enableLosingTimeoutExit and strategy.position_size != 0 and not na(entryPrice) and (holdingPeriod >= losingTimeoutBars) and (unrealizedPts < 0) and (math.abs(unrealizedAtr) >= losingTimeoutAtrMult)
+
+if enableLiveAlerts and enableEmergencyAlerts and (timeStopHit or losingTimeoutHit) and ((timeStopHit and not sentTimeStop) or (losingTimeoutHit and not sentLosingTimeout))
+    alertSymbol = getAlertSymbol()
+    side = strategy.position_size > 0 ? "long" : "short"
+    reason = timeStopHit ? "time_stop" : "losing_timeout"
+    exitAlert = '{"ticker":"' + alertSymbol + '"' +
+     ',"action":"emergency_exit"' +
+     ',"intent":"FLATTEN"' +
+     ',"reason":"' + reason + '"' +
+     ',"side":"' + side + '"' +
+     ',"holding_bars":' + str.tostring(holdingPeriod) +
+     ',"unrealized_atr":' + str.tostring(unrealizedAtr) +
+     ',"signal_id":"' + mkSignalId("TIMEOUT") + '"' +
+     ',"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+    alert(exitAlert, alert.freq_once_per_bar)
+    sentTimeStop := sentTimeStop or timeStopHit
+    sentLosingTimeout := sentLosingTimeout or losingTimeoutHit
+    if instCloseBacktest
+        strategy.close_all(comment=reason)
+
+// MAE emergency exit (alert-only)
+maeHit = enableMAETracker and strategy.position_size != 0 and not na(entryPrice) and (maeATR >= maeAtrThreshold)
+if enableLiveAlerts and enableEmergencyAlerts and maeHit and not sentMae
+    alertSymbol = getAlertSymbol()
+    side = strategy.position_size > 0 ? "long" : "short"
+    maeAlert = '{"ticker":"' + alertSymbol + '"' +
+     ',"action":"emergency_exit"' +
+     ',"intent":"FLATTEN"' +
+     ',"reason":"mae_exceeded"' +
+     ',"side":"' + side + '"' +
+     ',"mae_atr":' + str.tostring(maeATR) +
+     ',"mfe_atr":' + str.tostring(mfeATR) +
+     ',"threshold_atr":' + str.tostring(maeAtrThreshold) +
+     ',"signal_id":"' + mkSignalId("MAE") + '"' +
+     ',"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+    alert(maeAlert, alert.freq_once_per_bar)
+    sentMae := true
+    if instCloseBacktest
+        strategy.close_all(comment="MAE")
+
+// HTF/MTF flip exits (alert-only)
+htfFlipAgainst = enableHTFMTF and exitOnHTFFlip and strategy.position_size != 0 and ((strategy.position_size > 0 and htfDir == -1) or (strategy.position_size < 0 and htfDir == 1))
+mtfFlipAgainst = enableHTFMTF and exitOnMTFFlip and strategy.position_size != 0 and ((strategy.position_size > 0 and mtfDir == -1) or (strategy.position_size < 0 and mtfDir == 1))
+if enableLiveAlerts and enableEmergencyAlerts and (htfFlipAgainst or mtfFlipAgainst) and not sentFlip
+    alertSymbol = getAlertSymbol()
+    side = strategy.position_size > 0 ? "long" : "short"
+    reason = htfFlipAgainst ? "htf_flip" : "mtf_flip"
+    flipAlert = '{"ticker":"' + alertSymbol + '"' +
+     ',"action":"emergency_exit"' +
+     ',"intent":"FLATTEN"' +
+     ',"reason":"' + reason + '"' +
+     ',"side":"' + side + '"' +
+     ',"htf_dir":' + str.tostring(htfDir) +
+     ',"mtf_dir":' + str.tostring(mtfDir) +
+     ',"signal_id":"' + mkSignalId("FLIP") + '"' +
+     ',"timestamp":"' + str.tostring(time) + '"' +
+     '}'
+    alert(flipAlert, alert.freq_once_per_bar)
+    sentFlip := true
+    if instCloseBacktest
+        strategy.close_all(comment=reason)
+
+// Consecutive loss tracking using closed trades
+if strategy.closedtrades > closedTradesPrev
+    lastIdx = strategy.closedtrades - 1
+    lastProfit = strategy.closedtrades.profit(lastIdx)
+    consecutiveLosses := lastProfit < 0 ? (consecutiveLosses + 1) : 0
+    closedTradesPrev := strategy.closedtrades
+    if enableConsecLossKill and (consecutiveLosses >= maxConsecutiveLosses)
+        instKilledByConsec := true
+        if enableLiveAlerts and enableEmergencyAlerts and enableEmergencyCloseAlerts
+            alertSymbol = getAlertSymbol()
+            killAlert = '{"ticker":"' + alertSymbol + '"' +
+             ',"action":"emergency_exit"' +
+             ',"intent":"HALT_TRADING"' +
+             ',"reason":"consecutive_losses_kill"' +
+             ',"consecutive_losses":' + str.tostring(consecutiveLosses) +
+             ',"signal_id":"' + mkSignalId("CONSEC_KILL") + '"' +
+             ',"timestamp":"' + str.tostring(time) + '"' +
+             '}'
+            alert(killAlert, alert.freq_once_per_bar)
+
 // Profit protection (same logic as original; triggers and updates stop)
 if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
     if profitTicks >= profitProtectionTrigger and not protectionActive
@@ -834,10 +1117,12 @@ if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
             alertSymbol = getAlertSymbol()
             protectAlert = '{"ticker":"' + alertSymbol + '"' +
              ',"action":"modify_stop"' +
+             ',"intent":"MODIFY_STOP"' +
              ',"stop_type":"protection"' +
              ',"new_stop_price":' + str.tostring(entryPrice) +
              ',"reason":"profit_protection_triggered"' +
              ',"profit_ticks":' + str.tostring(profitTicks) +
+             ',"signal_id":"' + mkSignalId("PROTECT_TRIGGER") + '"' +
              ',"timestamp":"' + str.tostring(time) + '"' +
              '}'
             alert(protectAlert, alert.freq_once_per_bar)
@@ -862,10 +1147,12 @@ if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
                 alertSymbol = getAlertSymbol()
                 protUpdate = '{"ticker":"' + alertSymbol + '"' +
                  ',"action":"modify_stop"' +
+                 ',"intent":"MODIFY_STOP"' +
                  ',"stop_type":"protection"' +
                  ',"new_stop_price":' + str.tostring(protectionStop) +
                  ',"reason":"protection_update"' +
                  ',"profit_ticks":' + str.tostring(profitTicks) +
+                 ',"signal_id":"' + mkSignalId("PROTECT_UPDATE") + '"' +
                  ',"timestamp":"' + str.tostring(time) + '"' +
                  '}'
                 alert(protUpdate, alert.freq_once_per_bar)
@@ -904,10 +1191,12 @@ if enableLiveAlerts and enableStopModificationAlerts and enableTrailingAlerts an
         newStop = trailConditionLong ? trailStopLong : trailStopShort
         trailAlert = '{"ticker":"' + alertSymbol + '"' +
          ',"action":"modify_stop"' +
+         ',"intent":"MODIFY_STOP"' +
          ',"stop_type":"trailing"' +
          ',"trail_distance":' + str.tostring(trailDistancePts) +
          ',"new_stop_price":' + str.tostring(newStop) +
          ',"reason":"trailing_activated"' +
+         ',"signal_id":"' + mkSignalId("TRAIL_ACTIVATE") + '"' +
          ',"timestamp":"' + str.tostring(time) + '"' +
          '}'
         alert(trailAlert, alert.freq_once_per_bar)
@@ -921,10 +1210,12 @@ if enableLiveAlerts and enableStopModificationAlerts and enableTrailingAlerts an
             alertSymbol = getAlertSymbol()
             trailUpdate = '{"ticker":"' + alertSymbol + '"' +
              ',"action":"modify_stop"' +
+             ',"intent":"MODIFY_STOP"' +
              ',"stop_type":"trailing"' +
              ',"trail_distance":' + str.tostring(trailDistancePts) +
              ',"new_stop_price":' + str.tostring(newStop) +
              ',"reason":"trailing_update"' +
+             ',"signal_id":"' + mkSignalId("TRAIL_UPDATE") + '"' +
              ',"timestamp":"' + str.tostring(time) + '"' +
              '}'
             alert(trailUpdate, alert.freq_once_per_bar)
@@ -941,15 +1232,26 @@ if enableLiveAlerts and enableNoTradeDiagnostics
             diag =
              '{"ticker":"' + alertSymbol + '"' +
              ',"action":"diagnostic"' +
+             ',"intent":"DIAGNOSTIC"' +
              ',"reason":"entry_blocked"' +
              ',"signal_buy":' + str.tostring(ultraBuySignal ? 1 : 0) +
              ',"signal_sell":' + str.tostring(ultraSellSignal ? 1 : 0) +
              ',"blocked_max_loss":' + str.tostring(maxLossReached ? 1 : 0) +
              ',"blocked_gap_loss":' + str.tostring(gapLossLimitReached ? 1 : 0) +
+             ',"blocked_intraday_dd":' + str.tostring(dailyDDKilled ? 1 : 0) +
              ',"blocked_volatility":' + str.tostring((not volatilityOK) ? 1 : 0) +
+             ',"blocked_shock_cooldown":' + str.tostring(inShockCooldown ? 1 : 0) +
              ',"blocked_session":' + str.tostring((not sessionAdjustedSignal) ? 1 : 0) +
              ',"blocked_equity":' + str.tostring(equityTooLow ? 1 : 0) +
              ',"blocked_hardstop":' + str.tostring((useHardStopFlag and hardStopHit) ? 1 : 0) +
+             ',"blocked_consec_losses":' + str.tostring((enableConsecLossKill and consecutiveLosses >= maxConsecutiveLosses) ? 1 : 0) +
+             ',"consecutive_losses":' + str.tostring(consecutiveLosses) +
+             ',"htf_dir":' + str.tostring(htfDir) +
+             ',"mtf_dir":' + str.tostring(mtfDir) +
+             ',"htf_ok_long":' + str.tostring(htfOKLong ? 1 : 0) +
+             ',"htf_ok_short":' + str.tostring(htfOKShort ? 1 : 0) +
+             ',"mtf_ok_long":' + str.tostring(mtfOKLong ? 1 : 0) +
+             ',"mtf_ok_short":' + str.tostring(mtfOKShort ? 1 : 0) +
              ',"strict_on":' + str.tostring(enableStrictQuality ? 1 : 0) +
              ',"strict_adx":' + str.tostring(math.round(strictAdx, 1)) +
              ',"strict_score_long":' + str.tostring(strictLongScore) +
@@ -961,6 +1263,7 @@ if enableLiveAlerts and enableNoTradeDiagnostics
              ',"regime_ok":' + str.tostring(regimeOK ? 1 : 0) +
              ',"trend_stable":' + str.tostring(stableTrendOK ? 1 : 0) +
              ',"strict_trades_today":' + str.tostring(strictTradesToday) +
+             ',"signal_id":"' + mkSignalId("DIAG") + '"' +
              ',"timestamp":"' + str.tostring(time) + '"' +
              '}'
             alert(diag, alert.freq_once_per_bar)
@@ -988,9 +1291,11 @@ if strategy.position_size > 0 and not na(entryPrice)
             alertSymbol = getAlertSymbol()
             exitAlert = '{"ticker":"' + alertSymbol + '"' +
              ',"action":"exit"' +
+             ',"intent":"CLOSE"' +
              ',"reason":"max_holding_time"' +
              ',"side":"long"' +
              ',"holding_bars":' + str.tostring(holdingPeriod) +
+             ',"signal_id":"' + mkSignalId("MAXTIME_LONG") + '"' +
              ',"timestamp":"' + str.tostring(time) + '"' +
              '}'
             alert(exitAlert, alert.freq_once_per_bar)
@@ -1015,9 +1320,11 @@ if strategy.position_size < 0 and not na(entryPrice)
             alertSymbol = getAlertSymbol()
             exitAlert = '{"ticker":"' + alertSymbol + '"' +
              ',"action":"exit"' +
+             ',"intent":"CLOSE"' +
              ',"reason":"max_holding_time"' +
              ',"side":"short"' +
              ',"holding_bars":' + str.tostring(holdingPeriod) +
+             ',"signal_id":"' + mkSignalId("MAXTIME_SHORT") + '"' +
              ',"timestamp":"' + str.tostring(time) + '"' +
              '}'
             alert(exitAlert, alert.freq_once_per_bar)
