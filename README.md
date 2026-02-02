@@ -27,3 +27,33 @@ When enabled, alerts emit JSON payloads including:
 - Optional: `action:"diagnostic"` when a signal is blocked
 
 If `Account ID` is provided, the payload includes `"account":"..."`.
+
+## Perfect Trade Setup (Checklist)
+
+Only allow trades when **most** of these are true:
+
+- **Regime**
+  - `volatilityOK == true`
+  - Market is **not ranging** (avoid `rangingMarket == true`)
+  - Best when **SuperTrend direction is stable** and **Hull slopes agree**
+- **Direction alignment**
+  - **Long**: `trend == 1`, `slopeMain == 1`, `hullAnyBullish == true`, price above/near `smaBasis`
+  - **Short**: `trend == -1`, `slopeMain == -1`, `hullAnyBearish == true`, price below/near `smaBasis`
+- **Entry type**
+  - **Continuation**: pullback to envelope/basis in-trend, then resumption (highest win-rate subtype)
+  - **Impulse**: breakout/touch + strong slope/trend confirmation (best in regular session)
+- **Avoid**
+  - First/last ~15 minutes of RTH (unless explicitly designed for it)
+  - ATR ratio too low/high (dead chop or chaos)
+
+If you want **70–80% win-rate behavior**, filter harder:
+
+- **Continuation only** (or continuation + best impulse)
+- Cap trades per session/day
+
+## Live deployment best practice (alert() only)
+
+- **Entry alert places bracket at broker**: entry alert JSON includes `stop_loss` + `take_profit_1..4`
+- **Optional stop upgrades**: `alert()` events with `action:"modify_stop"` for profit protection / trailing updates
+- **Emergency flatten**: `alert()` with `action:"emergency_exit"` on max daily loss / gap loss
+- Avoid relying on `strategy.exit()` to execute live; use it for backtest while broker manages brackets from alerts
