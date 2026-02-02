@@ -1,0 +1,613 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © MGC Master Strategy V8.0 - TREND/IMPULSE ONLY - WINS > LOSSES
+
+//@version=5
+strategy("🚀 TREND/IMPULSE MASTER - WINS > LOSSES [V8.0]", 
+     overlay=true, 
+     initial_capital=25000,
+     default_qty_type=strategy.cash,
+     default_qty_value=1000,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=1.60,
+     slippage=2,
+     calc_on_every_tick=true,
+     pyramiding=0,  // ✅ No pyramiding to avoid position sizing issues
+     process_orders_on_close=false,
+     max_bars_back=5000)
+
+// ==================== 🔴 LIVE TRADING CONFIGURATION ====================
+group_live = "🔴 Live Trading Setup"
+enableLiveAlerts = input.bool(true, "Enable Live Trading Alerts", group=group_live)
+brokerType = input.string("TradersPost", "Broker Type", options=["TradersPost", "Tradovate Direct"], group=group_live)
+accountId = input.string("", "Account ID (Optional)", group=group_live)
+tradersPostSymbol = input.string("", "Symbol Override", group=group_live)
+enableEntryAlerts = input.bool(true, "Send Entry Alerts", group=group_live)
+enableExitAlerts = input.bool(true, "Send Exit Alerts", group=group_live)
+enableEmergencyAlerts = input.bool(true, "Send Emergency Alerts", group=group_live)
+
+getAlertSymbol() => tradersPostSymbol != "" ? tradersPostSymbol : syminfo.ticker
+hasAccountId() => str.length(accountId) > 0
+
+// ==================== INSTRUMENT DETECTION ====================
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+
+// ==================== POSITION SIZING ====================
+group_size = "Position Sizing"
+useManualPositionSize = input.bool(true, "Use Manual Position Sizes", group=group_size)
+mnqManualContracts = input.int(1, "MNQ Contracts", minval=1, maxval=10, group=group_size)
+mclManualContracts = input.int(1, "MCL Contracts", minval=1, maxval=10, group=group_size)
+mgcManualContracts = input.int(1, "MGC Contracts", minval=1, maxval=10, group=group_size)
+
+currentManualContracts = isMNQ ? mnqManualContracts : isMCL ? mclManualContracts : mgcManualContracts
+
+// ==================== 💰 RISK/REWARD - WINS > LOSSES ====================
+group_rr = "💰 Risk/Reward (WINS > LOSSES)"
+stopAtrMultiplier = input.float(1.0, "Stop Loss (ATR Multiple)", minval=0.6, maxval=1.5, group=group_rr, 
+     tooltip="Smaller = tighter stops. 1.0 = tight, 1.5 = loose")
+     
+// 🎯 TARGETS MUST BE BIGGER THAN STOPS
+tp1AtrMultiplier = input.float(2.0, "TP1 Target (ATR Multiple)", minval=1.5, maxval=4.0, group=group_rr)
+tp2AtrMultiplier = input.float(3.0, "TP2 Target (ATR Multiple)", minval=2.0, maxval=5.0, group=group_rr)
+tp3AtrMultiplier = input.float(4.5, "TP3 Target (ATR Multiple)", minval=3.0, maxval=7.0, group=group_rr)
+
+// Position allocation
+tp1Percent = input.int(60, "TP1 Exit %", minval=40, maxval=80, group=group_rr)
+tp2Percent = input.int(30, "TP2 Exit %", minval=10, maxval=40, group=group_rr)
+tp3Percent = input.int(10, "TP3 Exit %", minval=5, maxval=30, group=group_rr)
+
+// ==================== 📊 TREND DETECTION - NO CHOPPY TRADES ====================
+group_trend = "📊 Trend Detection (NO CHOP)"
+enableStrictTrendFilter = input.bool(true, "STRICT TREND FILTER", group=group_trend, 
+     tooltip="Only trade in clear trends - NO choppy conditions")
+
+// ADX for trend strength
+adxLength = input.int(14, "ADX Length", minval=8, maxval=20, group=group_trend)
+adxThreshold = input.int(25, "ADX Threshold (Trend vs Chop)", minval=20, maxval=35, group=group_trend,
+     tooltip="Higher = stricter. 25+ = trending, <25 = choppy")
+
+// Trend strength via price action
+trendLookback = input.int(20, "Trend Lookback Period", minval=10, maxval=30, group=group_trend)
+minTrendStrength = input.float(0.3, "Min Trend Strength %", minval=0.2, maxval=0.6, group=group_trend,
+     tooltip="% price must move in lookback to qualify as trend")
+
+// ==================== ⚡ IMPULSE DETECTION ====================
+group_impulse = "⚡ Impulse/Spike Detection"
+enableImpulseEntry = input.bool(true, "Enable Impulse Entries", group=group_impulse)
+impulseLookback = input.int(3, "Impulse Lookback Bars", minval=2, maxval=5, group=group_impulse)
+impulseThreshold = input.float(1.5, "Impulse Threshold (ATR Multiple)", minval=1.2, maxval=2.5, group=group_impulse,
+     tooltip="Price spike must be this * ATR to qualify")
+
+// ==================== 🔄 CONTINUATION PATTERN ====================
+group_continuation = "🔄 Continuation Detection"
+enableContinuation = input.bool(true, "Enable Continuation Entries", group=group_continuation)
+pullbackDepth = input.float(0.4, "Max Pullback Depth", minval=0.3, maxval=0.6, group=group_continuation,
+     tooltip="How deep pullback can be (as % of trend)")
+
+// ==================== TIME & FREQUENCY ====================
+group_time = "Time & Frequency Control"
+avoidFirstMinutes = input.int(15, "Avoid First X Minutes", minval=5, maxval=30, group=group_time)
+avoidLastMinutes = input.int(15, "Avoid Last X Minutes", minval=5, maxval=30, group=group_time)
+maxTradesPerDay = input.int(12, "Max Trades Per Day", minval=5, maxval=20, group=group_time)
+minBarsBetweenTrades = input.int(8, "Min Bars Between Trades", minval=3, maxval=15, group=group_time)
+
+timezoneOffset = input.int(-5, "Timezone Offset (ET)", group=group_time)
+
+// ==================== PROFIT PROTECTION ====================
+group_protect = "Profit Protection"
+enableProfitProtection = input.bool(true, "Enable Profit Protection", group=group_protect)
+profitProtectionTrigger = input.int(15, "Trigger (ticks in profit)", minval=8, maxval=30, group=group_protect)
+profitProtectionTrail = input.int(5, "Trail Amount (ticks)", minval=3, maxval=10, group=group_protect)
+
+var float protectionStop = na
+var bool protectionActive = false
+
+// ==================== RISK MANAGEMENT ====================
+group_risk = "Risk Management"
+maxDailyLoss = input.float(2.0, "Max Daily Loss %", minval=1.0, maxval=3.0, group=group_risk)
+maxConsecutiveLosses = input.int(3, "Stop After X Consecutive Losses", minval=2, maxval=5, group=group_risk)
+
+// ==================== HULL MA ====================
+hullLength = input.int(21, "Hull MA Length", minval=15, maxval=30)
+hma(src, len) => 
+    len_safe = math.max(len, 2)
+    ta.wma(2 * ta.wma(src, math.round(len_safe / 2)) - ta.wma(src, len_safe), math.round(math.sqrt(len_safe)))
+
+hullMA = hma(close, hullLength)
+hullTrend = hullMA > hullMA[1] ? 1 : hullMA < hullMA[1] ? -1 : 0
+
+// ==================== EMA TREND ====================
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+emaTrend = emaFast > emaSlow ? 1 : -1
+
+// ==================== ATR ====================
+atr = ta.atr(14)
+
+// ==================== 📊 ADX - TREND vs CHOP DETECTOR ====================
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+
+// ADX > threshold = TRENDING (good to trade)
+// ADX < threshold = CHOPPY (DON'T trade)
+isTrending = adx >= adxThreshold
+isChoppy = adx < adxThreshold
+
+// ==================== 📈 TREND STRENGTH CALCULATION ====================
+getTrendStrength() =>
+    highest = ta.highest(high, trendLookback)
+    lowest = ta.lowest(low, trendLookback)
+    priceRange = highest - lowest
+    
+    if priceRange == 0
+        0.0
+    else
+        // Measure how much price moved in trend direction
+        priceMove = close - close[trendLookback]
+        math.abs(priceMove / priceRange)
+
+trendStrength = getTrendStrength()
+hasStrongTrend = trendStrength >= minTrendStrength
+
+// Determine trend direction
+trendDirection = if trendStrength >= minTrendStrength
+    close > close[trendLookback] ? 1 : -1
+else
+    0
+
+// ==================== ⚡ IMPULSE MOVE DETECTION ====================
+getImpulseMove() =>
+    // Check for sharp price spike in recent bars
+    recentMove = math.abs(close - close[impulseLookback])
+    avgMove = atr
+    
+    isImpulse = recentMove > (avgMove * impulseThreshold)
+    impulseDirection = close > close[impulseLookback] ? 1 : -1
+    
+    [isImpulse, impulseDirection]
+
+[hasImpulse, impulseDirection] = getImpulseMove()
+
+// Volume confirmation for impulse
+volumeSpike = volume > ta.sma(volume, 20) * 1.3
+
+// ==================== 🔄 CONTINUATION PATTERN DETECTION ====================
+getContinuationSetup() =>
+    // Look for pullback in established trend
+    
+    // Need established trend first (20+ bars)
+    trendEstablished = (close > close[20] and emaTrend == 1) or (close < close[20] and emaTrend == -1)
+    
+    if not trendEstablished
+        [false, 0]
+    else
+        // Check for pullback
+        if emaTrend == 1
+            // Uptrend - look for pullback
+            recentHigh = ta.highest(high, 10)
+            pullback = (recentHigh - close) / (recentHigh - ta.lowest(low, 20))
+            
+            // Pullback should be shallow (not too deep)
+            validPullback = pullback > 0.1 and pullback < pullbackDepth
+            
+            // Now bouncing back up
+            bouncing = close > close[1] and close > close[2]
+            
+            isContinuation = validPullback and bouncing and hullTrend == 1
+            [isContinuation, 1]
+            
+        else
+            // Downtrend - look for bounce then continuation
+            recentLow = ta.lowest(low, 10)
+            bounce = (close - recentLow) / (ta.highest(high, 20) - recentLow)
+            
+            validBounce = bounce > 0.1 and bounce < pullbackDepth
+            
+            // Now dropping back down
+            dropping = close < close[1] and close < close[2]
+            
+            isContinuation = validBounce and dropping and hullTrend == -1
+            [isContinuation, -1]
+
+[isContinuation, continuationDirection] = getContinuationSetup()
+
+// ==================== RSI ====================
+rsi = ta.rsi(close, 14)
+
+// ==================== 🎯 TRADE TYPE CLASSIFICATION ====================
+// 1. TREND TRADE: Clear trend + ADX confirming
+isTrendTrade = enableStrictTrendFilter and isTrending and hasStrongTrend
+
+// 2. IMPULSE TRADE: Sharp spike with volume
+isImpulseTrade = enableImpulseEntry and hasImpulse and volumeSpike
+
+// 3. CONTINUATION TRADE: Pullback in trend then resumption  
+isContinuationTrade = enableContinuation and isContinuation
+
+// ==================== TIME FILTERS ====================
+currentTime = math.round((hour + timezoneOffset) * 100 + minute)
+isRegularSession = (currentTime >= 930) and (currentTime <= 1600)
+inOpeningRange = isRegularSession and (currentTime >= 930 and currentTime < (930 + avoidFirstMinutes))
+inClosingRange = isRegularSession and (currentTime > (1600 - avoidLastMinutes) and currentTime <= 1600)
+inRestrictedTime = inOpeningRange or inClosingRange
+
+// ==================== TRADE FREQUENCY LIMITER ====================
+var int lastEntryBar = 0
+var int tradesToday = 0
+var int currentDay = 0
+var int consecutiveLosses = 0
+
+if dayofweek != currentDay
+    currentDay := dayofweek
+    tradesToday := 0
+
+barsSinceLastTrade = bar_index - lastEntryBar
+canTrade = tradesToday < maxTradesPerDay and 
+         barsSinceLastTrade >= minBarsBetweenTrades and
+         consecutiveLosses < maxConsecutiveLosses
+
+// ==================== 🚀 ENTRY SIGNALS ====================
+
+// LONG SIGNALS
+trendLongSignal = isTrendTrade and trendDirection == 1 and emaTrend == 1 and hullTrend == 1 and rsi < 70
+
+impulseLongSignal = isImpulseTrade and impulseDirection == 1 and rsi < 75
+
+continuationLongSignal = isContinuationTrade and continuationDirection == 1
+
+// Combine all long signals
+longSignal = trendLongSignal or impulseLongSignal or continuationLongSignal
+
+// SHORT SIGNALS
+trendShortSignal = isTrendTrade and trendDirection == -1 and emaTrend == -1 and hullTrend == -1 and rsi > 30
+
+impulseShortSignal = isImpulseTrade and impulseDirection == -1 and rsi > 25
+
+continuationShortSignal = isContinuationTrade and continuationDirection == -1
+
+// Combine all short signals
+shortSignal = trendShortSignal or impulseShortSignal or continuationShortSignal
+
+// ==================== 🚫 MANDATORY FILTERS ====================
+// NEVER trade if choppy
+allowTrade = not isChoppy and canTrade and not inRestrictedTime
+
+// ==================== DAILY LOSS LIMIT ====================
+var float dailyPnL = 0.0
+if dayofweek != dayofweek[1]
+    dailyPnL := 0.0
+
+dailyPnL += strategy.netprofit - strategy.netprofit[1]
+maxLossReached = dailyPnL < -strategy.initial_capital * maxDailyLoss / 100
+
+// ==================== 💎 FINAL ENTRY CONDITIONS ====================
+longCondition = longSignal and allowTrade and (not maxLossReached) and (strategy.position_size == 0)
+shortCondition = shortSignal and allowTrade and (not maxLossReached) and (strategy.position_size == 0)
+
+// Classify trade type for alerts
+getTradeType() =>
+    if trendLongSignal or trendShortSignal
+        "TREND"
+    else if impulseLongSignal or impulseShortSignal
+        "IMPULSE"
+    else if continuationLongSignal or continuationShortSignal
+        "CONTINUATION"
+    else
+        "UNKNOWN"
+
+tradeType = getTradeType()
+
+// ==================== 💰 STOP & TARGET CALCULATION ====================
+// TIGHT STOP (1.0 ATR default)
+stopDistance = atr * stopAtrMultiplier
+
+// LARGE TARGETS (2.0, 3.0, 4.5 ATR)
+tp1Distance = atr * tp1AtrMultiplier
+tp2Distance = atr * tp2AtrMultiplier
+tp3Distance = atr * tp3AtrMultiplier
+
+// ==================== ENTRIES ====================
+if longCondition
+    strategy.entry("Long", strategy.long, qty=currentManualContracts)
+    lastEntryBar := bar_index
+    tradesToday += 1
+    
+    if enableLiveAlerts and enableEntryAlerts
+        stopPrice = close - stopDistance
+        tp1Price = close + tp1Distance
+        tp2Price = close + tp2Distance
+        tp3Price = close + tp3Distance
+        
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        alert('{"ticker":"' + getAlertSymbol() + '"' + 
+             ',"action":"buy"' + 
+             ',"quantity":' + str.tostring(currentManualContracts) + 
+             ',"price":' + str.tostring(close) + 
+             ',"stop_loss":' + str.tostring(stopPrice) + 
+             ',"take_profit_1":' + str.tostring(tp1Price) + 
+             ',"take_profit_2":' + str.tostring(tp2Price) + 
+             ',"take_profit_3":' + str.tostring(tp3Price) + 
+             ',"tp1_percent":' + str.tostring(tp1Percent) + 
+             ',"tp2_percent":' + str.tostring(tp2Percent) + 
+             ',"tp3_percent":' + str.tostring(tp3Percent) + 
+             ',"trade_type":"' + tradeType + '"' + 
+             ',"adx":' + str.tostring(math.round(adx, 1)) + 
+             ',"trend_strength":' + str.tostring(math.round(trendStrength * 100, 1)) + 
+             accountField + 
+             '}', alert.freq_once_per_bar)
+
+if shortCondition
+    strategy.entry("Short", strategy.short, qty=currentManualContracts)
+    lastEntryBar := bar_index
+    tradesToday += 1
+    
+    if enableLiveAlerts and enableEntryAlerts
+        stopPrice = close + stopDistance
+        tp1Price = close - tp1Distance
+        tp2Price = close - tp2Distance
+        tp3Price = close - tp3Distance
+        
+        accountField = hasAccountId() ? ',"account":"' + accountId + '"' : ''
+        
+        alert('{"ticker":"' + getAlertSymbol() + '"' + 
+             ',"action":"sell"' + 
+             ',"quantity":' + str.tostring(currentManualContracts) + 
+             ',"price":' + str.tostring(close) + 
+             ',"stop_loss":' + str.tostring(stopPrice) + 
+             ',"take_profit_1":' + str.tostring(tp1Price) + 
+             ',"take_profit_2":' + str.tostring(tp2Price) + 
+             ',"take_profit_3":' + str.tostring(tp3Price) + 
+             ',"tp1_percent":' + str.tostring(tp1Percent) + 
+             ',"tp2_percent":' + str.tostring(tp2Percent) + 
+             ',"tp3_percent":' + str.tostring(tp3Percent) + 
+             ',"trade_type":"' + tradeType + '"' + 
+             ',"adx":' + str.tostring(math.round(adx, 1)) + 
+             ',"trend_strength":' + str.tostring(math.round(trendStrength * 100, 1)) + 
+             accountField + 
+             '}', alert.freq_once_per_bar)
+
+// ==================== EXIT MANAGEMENT ====================
+var float entryPrice = na
+var int entryBar = na
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryPrice := strategy.position_avg_price
+    entryBar := bar_index
+    protectionActive := false
+    protectionStop := na
+
+// Calculate profit in ticks
+profitTicks = 0.0
+if strategy.position_size != 0 and not na(entryPrice)
+    profitTicks := strategy.position_size > 0 ? 
+         (close - entryPrice) / syminfo.mintick : 
+         (entryPrice - close) / syminfo.mintick
+
+// Profit protection
+if enableProfitProtection and profitTicks >= profitProtectionTrigger and not protectionActive
+    protectionActive := true
+    if strategy.position_size > 0
+        protectionStop := close - (profitProtectionTrail * syminfo.mintick)
+    else
+        protectionStop := close + (profitProtectionTrail * syminfo.mintick)
+
+// Update trailing protection
+if protectionActive and not na(protectionStop)
+    if strategy.position_size > 0
+        newStop = close - (profitProtectionTrail * syminfo.mintick)
+        protectionStop := math.max(protectionStop, newStop)
+    else
+        newStop = close + (profitProtectionTrail * syminfo.mintick)
+        protectionStop := math.min(protectionStop, newStop)
+
+// LONG EXITS
+if strategy.position_size > 0
+    baseStopLoss = entryPrice - stopDistance
+    
+    tp1Points = math.round(tp1Distance / syminfo.mintick)
+    tp2Points = math.round(tp2Distance / syminfo.mintick)
+    tp3Points = math.round(tp3Distance / syminfo.mintick)
+    
+    // Set TPs with base stop
+    strategy.exit("TP1", qty_percent=tp1Percent, profit=tp1Points, stop=baseStopLoss, comment="TP1")
+    strategy.exit("TP2", qty_percent=tp2Percent, profit=tp2Points, stop=baseStopLoss, comment="TP2")
+    strategy.exit("TP3", qty_percent=tp3Percent, profit=tp3Points, stop=baseStopLoss, comment="TP3")
+    
+    // Override with protection if active
+    if protectionActive and not na(protectionStop)
+        strategy.exit("Protect", stop=protectionStop, comment="Protect")
+
+// SHORT EXITS
+if strategy.position_size < 0
+    baseStopLoss = entryPrice + stopDistance
+    
+    tp1Points = math.round(tp1Distance / syminfo.mintick)
+    tp2Points = math.round(tp2Distance / syminfo.mintick)
+    tp3Points = math.round(tp3Distance / syminfo.mintick)
+    
+    strategy.exit("TP1", qty_percent=tp1Percent, profit=tp1Points, stop=baseStopLoss, comment="TP1")
+    strategy.exit("TP2", qty_percent=tp2Percent, profit=tp2Points, stop=baseStopLoss, comment="TP2")
+    strategy.exit("TP3", qty_percent=tp3Percent, profit=tp3Points, stop=baseStopLoss, comment="TP3")
+    
+    if protectionActive and not na(protectionStop)
+        strategy.exit("Protect", stop=protectionStop, comment="Protect")
+
+// ==================== TRACK CONSECUTIVE LOSSES ====================
+var int totalTrades = 0
+var int winningTrades = 0
+var float totalProfit = 0.0
+var float totalLoss = 0.0
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    wasLong = strategy.position_size[1] > 0
+    exitPrice = close
+    
+    pnl = wasLong ? (exitPrice - entryPrice) : (entryPrice - exitPrice)
+    pnlDollars = pnl * syminfo.pointvalue
+    
+    totalTrades += 1
+    
+    if pnl > 0
+        consecutiveLosses := 0
+        winningTrades += 1
+        totalProfit += pnlDollars
+    else
+        consecutiveLosses += 1
+        totalLoss += math.abs(pnlDollars)
+    
+    // Send exit alert
+    if enableLiveAlerts and enableExitAlerts
+        exitSide = wasLong ? "long" : "short"
+        exitReason = protectionActive ? "protection_trail" : "tp_or_sl"
+        
+        alert('{"ticker":"' + getAlertSymbol() + '"' + 
+             ',"action":"exit_complete"' + 
+             ',"side":"' + exitSide + '"' + 
+             ',"exit_price":' + str.tostring(exitPrice) + 
+             ',"entry_price":' + str.tostring(entryPrice) + 
+             ',"pnl":' + str.tostring(pnlDollars) + 
+             ',"exit_reason":"' + exitReason + '"' + 
+             ',"total_trades":' + str.tostring(totalTrades) + 
+             ',"win_rate":' + str.tostring(totalTrades > 0 ? math.round((winningTrades / totalTrades) * 100, 1) : 0) + 
+             '}', alert.freq_once_per_bar)
+    
+    entryPrice := na
+    entryBar := na
+    protectionActive := false
+    protectionStop := na
+
+// ==================== EMERGENCY ALERTS ====================
+if maxLossReached and enableLiveAlerts and enableEmergencyAlerts
+    alert('{"ticker":"' + getAlertSymbol() + '"' + 
+         ',"action":"emergency"' + 
+         ',"reason":"max_daily_loss_reached"' + 
+         ',"daily_pnl":' + str.tostring(dailyPnL) + 
+         '}', alert.freq_once_per_bar)
+
+if consecutiveLosses >= maxConsecutiveLosses and enableLiveAlerts and enableEmergencyAlerts
+    alert('{"ticker":"' + getAlertSymbol() + '"' + 
+         ',"action":"emergency"' + 
+         ',"reason":"consecutive_loss_limit"' + 
+         ',"consecutive_losses":' + str.tostring(consecutiveLosses) + 
+         '}', alert.freq_once_per_bar)
+
+// ==================== PLOTS ====================
+plot(hullMA, "Hull MA", hullTrend == 1 ? color.green : color.red, 2)
+plot(emaFast, "EMA Fast", color.new(color.blue, 50))
+plot(emaSlow, "EMA Slow", color.new(color.orange, 50))
+
+// Plot current stop level
+var float displayStop = na
+if strategy.position_size > 0
+    displayStop := protectionActive and not na(protectionStop) ? protectionStop : entryPrice - stopDistance
+else if strategy.position_size < 0
+    displayStop := protectionActive and not na(protectionStop) ? protectionStop : entryPrice + stopDistance
+else
+    displayStop := na
+
+plot(strategy.position_size != 0 ? displayStop : na, "Stop Level", 
+     protectionActive ? color.orange : color.red, 2, plot.style_cross)
+
+// Entry signals
+plotshape(longCondition and trendLongSignal, "TREND LONG", shape.triangleup, 
+     location.belowbar, color.green, size=size.normal, text="TREND")
+plotshape(longCondition and impulseLongSignal, "IMPULSE LONG", shape.triangleup, 
+     location.belowbar, color.lime, size=size.normal, text="IMPULSE")
+plotshape(longCondition and continuationLongSignal, "CONT LONG", shape.triangleup, 
+     location.belowbar, color.aqua, size=size.normal, text="CONT")
+
+plotshape(shortCondition and trendShortSignal, "TREND SHORT", shape.triangledown, 
+     location.abovebar, color.red, size=size.normal, text="TREND")
+plotshape(shortCondition and impulseShortSignal, "IMPULSE SHORT", shape.triangledown, 
+     location.abovebar, color.orange, size=size.normal, text="IMPULSE")
+plotshape(shortCondition and continuationShortSignal, "CONT SHORT", shape.triangledown, 
+     location.abovebar, color.fuchsia, size=size.normal, text="CONT")
+
+// Background colors
+bgcolor(isChoppy ? color.new(color.red, 95) : na, title="CHOPPY - NO TRADE")
+bgcolor(isTrending ? color.new(color.green, 97) : na, title="TRENDING - OK TO TRADE")
+bgcolor(protectionActive ? color.new(color.orange, 95) : na, title="Protection Active")
+bgcolor(consecutiveLosses >= 2 ? color.new(color.red, 90) : na, title="Consecutive Losses Warning")
+
+// ==================== MARKET REGIME TABLE ====================
+var table regimeTable = table.new(position=position.top_right, columns=2, rows=6, 
+     bgcolor=color.new(color.black, 10), border_width=2)
+
+if barstate.islast
+    // ADX Status
+    adxColor = isTrending ? color.new(color.green, 60) : color.new(color.red, 60)
+    table.cell(regimeTable, 0, 0, "ADX", text_color=color.gray, text_size=size.small)
+    table.cell(regimeTable, 1, 0, str.tostring(math.round(adx, 1)), 
+         text_color=color.white, text_size=size.normal, bgcolor=adxColor)
+    
+    // Market State
+    marketState = isTrending ? "TRENDING ✓" : "CHOPPY ✗"
+    stateColor = isTrending ? color.new(color.green, 60) : color.new(color.red, 60)
+    table.cell(regimeTable, 0, 1, "Market", text_color=color.gray, text_size=size.small)
+    table.cell(regimeTable, 1, 1, marketState, text_color=color.white, text_size=size.small, bgcolor=stateColor)
+    
+    // Trend Strength
+    table.cell(regimeTable, 0, 2, "Strength", text_color=color.gray, text_size=size.tiny)
+    table.cell(regimeTable, 1, 2, str.tostring(math.round(trendStrength * 100, 1)) + "%", 
+         text_color=color.white, text_size=size.tiny)
+    
+    // Trade Count
+    table.cell(regimeTable, 0, 3, "Trades Today", text_color=color.gray, text_size=size.tiny)
+    table.cell(regimeTable, 1, 3, str.tostring(tradesToday) + "/" + str.tostring(maxTradesPerDay), 
+         text_color=color.white, text_size=size.tiny)
+    
+    // Consecutive Losses
+    lossColor = consecutiveLosses >= 2 ? color.new(color.red, 60) : color.new(color.gray, 80)
+    table.cell(regimeTable, 0, 4, "Consec Loss", text_color=color.gray, text_size=size.tiny)
+    table.cell(regimeTable, 1, 4, str.tostring(consecutiveLosses), 
+         text_color=color.white, text_size=size.tiny, bgcolor=lossColor)
+    
+    // Risk/Reward
+    rrRatio = tp1AtrMultiplier / stopAtrMultiplier
+    table.cell(regimeTable, 0, 5, "Risk:Reward", text_color=color.gray, text_size=size.tiny)
+    table.cell(regimeTable, 1, 5, "1:" + str.tostring(math.round(rrRatio, 1)), 
+         text_color=color.lime, text_size=size.tiny, bgcolor=color.new(color.green, 80))
+
+// ==================== PERFORMANCE TABLE ====================
+var table perfTable = table.new(position=position.bottom_right, columns=2, rows=5, 
+     bgcolor=color.new(color.black, 10), border_width=1)
+
+if barstate.islast
+    winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0
+    avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0
+    avgLoss = (totalTrades - winningTrades) > 0 ? totalLoss / (totalTrades - winningTrades) : 0
+    
+    table.cell(perfTable, 0, 0, "💰 WINS > LOSSES", text_color=color.white, 
+         text_size=size.small, bgcolor=color.new(color.green, 70))
+    table.cell(perfTable, 1, 0, "V8.0", text_color=color.white, 
+         text_size=size.small, bgcolor=color.new(color.green, 70))
+    
+    table.cell(perfTable, 0, 1, "Win Rate", text_color=color.gray, text_size=size.tiny)
+    winColor = winRate >= 50 ? color.lime : color.orange
+    table.cell(perfTable, 1, 1, str.tostring(math.round(winRate, 1)) + "%", 
+         text_color=winColor, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 2, "Avg Win", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 2, "$" + str.tostring(math.round(avgWin, 2)), 
+         text_color=color.lime, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 3, "Avg Loss", text_color=color.gray, text_size=size.tiny)
+    table.cell(perfTable, 1, 3, "$" + str.tostring(math.round(avgLoss, 2)), 
+         text_color=color.red, text_size=size.tiny)
+    
+    table.cell(perfTable, 0, 4, "Win/Loss Ratio", text_color=color.gray, text_size=size.tiny)
+    wlRatio = avgLoss > 0 ? avgWin / avgLoss : 0
+    ratioColor = wlRatio >= 1.5 ? color.lime : wlRatio >= 1.0 ? color.yellow : color.red
+    table.cell(perfTable, 1, 4, str.tostring(math.round(wlRatio, 2)) + ":1", 
+         text_color=ratioColor, text_size=size.tiny)
+
+// ==================== DATA WINDOW PLOTS ====================
+plot(adx, "ADX Value", color=color.new(color.purple, 80), display=display.data_window)
+plot(trendStrength * 100, "Trend Strength %", color=color.new(color.blue, 80), display=display.data_window)
+plot(profitTicks, "Profit (ticks)", color=color.new(color.green, 80), display=display.data_window)
+plot(protectionActive ? 1 : 0, "Protection Active", color=color.new(color.orange, 80), display=display.data_window)
+plot(isTrending ? 1 : 0, "Is Trending", color=color.new(color.green, 80), display=display.data_window)
+plot(isChoppy ? 1 : 0, "Is Choppy", color=color.new(color.red, 80), display=display.data_window)
+plot(tradesToday, "Trades Today", color=color.new(color.yellow, 80), display=display.data_window)
+plot(consecutiveLosses, "Consecutive Losses", color=color.new(color.red, 80), display=display.data_window)
