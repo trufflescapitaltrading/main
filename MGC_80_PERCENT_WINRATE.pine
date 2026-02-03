@@ -718,93 +718,93 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
             tradeRealizedPnL := 0.0
 
         else
-        // Determine the highest TP stage reached this bar
-        stage = tp3Touched ? 3 : tp2Touched ? 2 : tp1Touched ? 1 : 0
+            // Determine the highest TP stage reached this bar
+            stage = tp3Touched ? 3 : tp2Touched ? 2 : tp1Touched ? 1 : 0
 
-        // Contract allocation:
-        // - TP1 is % of ORIGINAL
-        // - TP2 is % of REMAINING after TP1 (works better for small contract counts)
-        tp1_qty_target = math.round(qtyOriginal * (tp1_Percent / 100.0))
-        tp1_qty_target := math.min(tp1_qty_target, qtyOriginal)
-        remaining_after_tp1 = math.max(qtyOriginal - tp1_qty_target, 0)
-        tp2_qty_target = math.round(remaining_after_tp1 * (tp2_Percent / 100.0))
-        tp2_qty_target := math.min(tp2_qty_target, remaining_after_tp1)
-        tp3_qty_target = math.max(qtyOriginal - tp1_qty_target - tp2_qty_target, 0)
+            // Contract allocation:
+            // - TP1 is % of ORIGINAL
+            // - TP2 is % of REMAINING after TP1 (works better for small contract counts)
+            tp1_qty_target = math.round(qtyOriginal * (tp1_Percent / 100.0))
+            tp1_qty_target := math.min(tp1_qty_target, qtyOriginal)
+            remaining_after_tp1 = math.max(qtyOriginal - tp1_qty_target, 0)
+            tp2_qty_target = math.round(remaining_after_tp1 * (tp2_Percent / 100.0))
+            tp2_qty_target := math.min(tp2_qty_target, remaining_after_tp1)
+            tp3_qty_target = math.max(qtyOriginal - tp1_qty_target - tp2_qty_target, 0)
 
-        // Fire the missing exits needed to "catch up" to the stage.
-        if stage >= 1 and not tp1_hit and tp1_qty_target > 0 and qtyRemaining > 0
-            qtyOut = math.min(tp1_qty_target, qtyRemaining)
-            alert(f_json_exit(isLong, qtyOut, "TP1", tp1_price), alert.freq_once_per_bar_close)
-            pnlPoints = (tp1_price - entryPrice) * (isLong ? 1 : -1)
-            pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
-            dailyRealizedPnL += pnlDollars
-            tradeRealizedPnL += pnlDollars
-            qtyRemaining -= qtyOut
-            tp1_hit := true
+            // Fire the missing exits needed to "catch up" to the stage.
+            if stage >= 1 and not tp1_hit and tp1_qty_target > 0 and qtyRemaining > 0
+                qtyOut = math.min(tp1_qty_target, qtyRemaining)
+                alert(f_json_exit(isLong, qtyOut, "TP1", tp1_price), alert.freq_once_per_bar_close)
+                pnlPoints = (tp1_price - entryPrice) * (isLong ? 1 : -1)
+                pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
+                dailyRealizedPnL += pnlDollars
+                tradeRealizedPnL += pnlDollars
+                qtyRemaining -= qtyOut
+                tp1_hit := true
 
-        if stage >= 2 and tp1_hit and not tp2_hit and tp2_qty_target > 0 and qtyRemaining > 0
-            qtyOut = math.min(tp2_qty_target, qtyRemaining)
-            alert(f_json_exit(isLong, qtyOut, "TP2", tp2_price), alert.freq_once_per_bar_close)
-            pnlPoints = (tp2_price - entryPrice) * (isLong ? 1 : -1)
-            pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
-            dailyRealizedPnL += pnlDollars
-            tradeRealizedPnL += pnlDollars
-            qtyRemaining -= qtyOut
-            tp2_hit := true
+            if stage >= 2 and tp1_hit and not tp2_hit and tp2_qty_target > 0 and qtyRemaining > 0
+                qtyOut = math.min(tp2_qty_target, qtyRemaining)
+                alert(f_json_exit(isLong, qtyOut, "TP2", tp2_price), alert.freq_once_per_bar_close)
+                pnlPoints = (tp2_price - entryPrice) * (isLong ? 1 : -1)
+                pnlDollars = pnlPoints * syminfo.pointvalue * qtyOut
+                dailyRealizedPnL += pnlDollars
+                tradeRealizedPnL += pnlDollars
+                qtyRemaining -= qtyOut
+                tp2_hit := true
 
-        if stage >= 3 and tp2_hit and qtyRemaining > 0
-            alert(f_json_exit(isLong, qtyRemaining, "TP3", tp3_price), alert.freq_once_per_bar_close)
-            pnlPoints = (tp3_price - entryPrice) * (isLong ? 1 : -1)
-            pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
-            dailyRealizedPnL += pnlDollars
-            tradeRealizedPnL += pnlDollars
+            if stage >= 3 and tp2_hit and qtyRemaining > 0
+                alert(f_json_exit(isLong, qtyRemaining, "TP3", tp3_price), alert.freq_once_per_bar_close)
+                pnlPoints = (tp3_price - entryPrice) * (isLong ? 1 : -1)
+                pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
+                dailyRealizedPnL += pnlDollars
+                tradeRealizedPnL += pnlDollars
 
-            lastTradePnL := tradeRealizedPnL
-            lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
-            lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
-            lastExitReason := "TP3"
-            consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
-            cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
-            lastTradeBar := bar_index
+                lastTradePnL := tradeRealizedPnL
+                lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+                lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+                lastExitReason := "TP3"
+                consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+                cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+                lastTradeBar := bar_index
 
-            // reset model
-            inPos := false
-            entryPrice := na
-            currentStop := na
-            tp1_hit := false
-            tp2_hit := false
-            breakeven_active := false
-            trailing_active := false
-            qtyRemaining := 0.0
-            qtyOriginal := 0.0
-            entryBar := na
-            maePoints := 0.0
-            mfePoints := 0.0
-            tradeRealizedPnL := 0.0
+                // reset model
+                inPos := false
+                entryPrice := na
+                currentStop := na
+                tp1_hit := false
+                tp2_hit := false
+                breakeven_active := false
+                trailing_active := false
+                qtyRemaining := 0.0
+                qtyOriginal := 0.0
+                entryBar := na
+                maePoints := 0.0
+                mfePoints := 0.0
+                tradeRealizedPnL := 0.0
 
-        // safety reset if fully scaled out
-        if inPos and qtyRemaining <= 0
-            lastTradePnL := tradeRealizedPnL
-            lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
-            lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
-            lastExitReason := "SCALED_OUT"
-            consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
-            cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
-            lastTradeBar := bar_index
+            // safety reset if fully scaled out
+            if inPos and qtyRemaining <= 0
+                lastTradePnL := tradeRealizedPnL
+                lastTradeMAE := maePoints * syminfo.pointvalue * qtyOriginal
+                lastTradeMFE := mfePoints * syminfo.pointvalue * qtyOriginal
+                lastExitReason := "SCALED_OUT"
+                consecutiveLosses := tradeRealizedPnL < 0 ? (consecutiveLosses + 1) : 0
+                cooldownUntilBar := bar_index + (tradeRealizedPnL < 0 ? cooldownAfterLossBars : cooldownAfterWinBars)
+                lastTradeBar := bar_index
 
-            inPos := false
-            entryPrice := na
-            currentStop := na
-            tp1_hit := false
-            tp2_hit := false
-            breakeven_active := false
-            trailing_active := false
-            qtyRemaining := 0.0
-            qtyOriginal := 0.0
-            entryBar := na
-            maePoints := 0.0
-            mfePoints := 0.0
-            tradeRealizedPnL := 0.0
+                inPos := false
+                entryPrice := na
+                currentStop := na
+                tp1_hit := false
+                tp2_hit := false
+                breakeven_active := false
+                trailing_active := false
+                qtyRemaining := 0.0
+                qtyOriginal := 0.0
+                entryBar := na
+                maePoints := 0.0
+                mfePoints := 0.0
+                tradeRealizedPnL := 0.0
 
 // ==============================
 // 📊 DISPLAYS
