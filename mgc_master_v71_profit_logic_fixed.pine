@@ -98,6 +98,9 @@ var int lastGapLossAlertBar = na
 var int lastDDKillAlertBar = na
 var int lastShockAlertBar = na
 
+// Used by institutional gates and alert payloads (updated later on trade close).
+var int consecutiveLosses = 0
+
 // ==================== INITIALIZATION & VALIDATION ====================
 var bool isInitialized = false
 var int initBarsRequired = 50
@@ -294,74 +297,8 @@ if dayofweek(time) != dayofweek(time[1])
     strictTradesToday := 0
     strictLastEntryBar := na
 
-strictBarsSinceLast = na(strictLastEntryBar) ? 10_000 : (bar_index - strictLastEntryBar)
+strictBarsSinceLast = na(strictLastEntryBar) ? 10000 : (bar_index - strictLastEntryBar)
 strictFreqOK = (not enableStrictQuality) or ((strictTradesToday < strictMaxTradesPerDay) and (strictBarsSinceLast >= strictMinBarsBetweenTrades))
-
-// ==================== "PERFECT SETUP" (ENTRY CHECKLIST) ====================
-regimeOK = volatilityOK and (not rangingMarket)
-stableTrendOK = not trendChange
-
-dirOKLong = (trend == 1) and (slopeMain == 1) and hullAnyBullish and (close >= smaBasis) and (close <= upperEnv * 1.002)
-dirOKShort = (trend == -1) and (slopeMain == -1) and hullAnyBearish and (close <= smaBasis) and (close >= lowerEnv * 0.998)
-
-// Continuation: pullback to basis/envelope in-trend, then resumption
-continuationLong = regimeOK and dirOKLong and (low <= smaBasis or low <= lowerEnv * 1.0005) and (close > close[1])
-continuationShort = regimeOK and dirOKShort and (high >= smaBasis or high >= upperEnv * 0.9995) and (close < close[1])
-
-// Impulse: breakout/touch + strong confirmation (best in regular session)
-impulseLong = isRegularSession and regimeOK and dirOKLong and (microBreakoutUp or envelopeTouch) and strongBuySignal
-impulseShort = isRegularSession and regimeOK and dirOKShort and (microBreakoutDn or envelopeTouch) and strongSellSignal
-
-// Setup gating (entry-only)
-setupOKLong = if strictSetupMode == "ALL"
-    true
-else if strictSetupMode == "CONTINUATION_ONLY"
-    continuationLong
-else
-    continuationLong or impulseLong
-
-setupOKShort = if strictSetupMode == "ALL"
-    true
-else if strictSetupMode == "CONTINUATION_ONLY"
-    continuationShort
-else
-    continuationShort or impulseShort
-
-setupTypeLong = continuationLong ? "CONTINUATION" : impulseLong ? "IMPULSE" : "OTHER"
-setupTypeShort = continuationShort ? "CONTINUATION" : impulseShort ? "IMPULSE" : "OTHER"
-
-getQualityScore(_isLong) =>
-    int score = 0
-    // 1) Direction alignment (Hull + SuperTrend)
-    if _isLong and (trend == 1) and hullAnyBullish and (slopeMain == 1)
-        score += 1
-    if (not _isLong) and (trend == -1) and hullAnyBearish and (slopeMain == -1)
-        score += 1
-    // 2) RSI in a favorable band (avoid extremes)
-    if _isLong and (rsi >= 35) and (rsi <= 70)
-        score += 1
-    if (not _isLong) and (rsi <= 65) and (rsi >= 30)
-        score += 1
-    // 3) Price location (continuation-friendly: not fully extended beyond envelope)
-    if _isLong and (close >= smaBasis) and (close <= upperEnv * 1.001)
-        score += 1
-    if (not _isLong) and (close <= smaBasis) and (close >= lowerEnv * 0.999)
-        score += 1
-    // 4) Volatility regime OK
-    if volatilityOK
-        score += 1
-    // 5) Session OK (if enabled)
-    if sessionAdjustedSignal
-        score += 1
-    // 6) Volume confirmation
-    if volume > ta.sma(volume, 20)
-        score += 1
-    score
-
-strictLongScore = getQualityScore(true)
-strictShortScore = getQualityScore(false)
-strictScoreOKLong = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictLongScore >= strictMinQualityScore)
-strictScoreOKShort = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictShortScore >= strictMinQualityScore)
 
 // ==================== SIGNAL DETECTION ====================
 enableMicroSignals = input.bool(true, "Enable Micro Signals", group="Signal Detection")
@@ -776,6 +713,72 @@ sessionAdjustedSignal = (not enableSessionFilters) or (isRegularSession or isPre
 ultraBuyCondition = ultraBuySignal and sessionAdjustedSignal and volatilityOK
 ultraSellCondition = ultraSellSignal and sessionAdjustedSignal and volatilityOK
 
+// ==================== "PERFECT SETUP" (ENTRY CHECKLIST) ====================
+regimeOK = volatilityOK and (not rangingMarket)
+stableTrendOK = not trendChange
+
+dirOKLong = (trend == 1) and (slopeMain == 1) and hullAnyBullish and (close >= smaBasis) and (close <= upperEnv * 1.002)
+dirOKShort = (trend == -1) and (slopeMain == -1) and hullAnyBearish and (close <= smaBasis) and (close >= lowerEnv * 0.998)
+
+// Continuation: pullback to basis/envelope in-trend, then resumption
+continuationLong = regimeOK and dirOKLong and (low <= smaBasis or low <= lowerEnv * 1.0005) and (close > close[1])
+continuationShort = regimeOK and dirOKShort and (high >= smaBasis or high >= upperEnv * 0.9995) and (close < close[1])
+
+// Impulse: breakout/touch + strong confirmation (best in regular session)
+impulseLong = isRegularSession and regimeOK and dirOKLong and (microBreakoutUp or envelopeTouch) and strongBuySignal
+impulseShort = isRegularSession and regimeOK and dirOKShort and (microBreakoutDn or envelopeTouch) and strongSellSignal
+
+// Setup gating (entry-only)
+setupOKLong = if strictSetupMode == "ALL"
+    true
+else if strictSetupMode == "CONTINUATION_ONLY"
+    continuationLong
+else
+    continuationLong or impulseLong
+
+setupOKShort = if strictSetupMode == "ALL"
+    true
+else if strictSetupMode == "CONTINUATION_ONLY"
+    continuationShort
+else
+    continuationShort or impulseShort
+
+setupTypeLong = continuationLong ? "CONTINUATION" : impulseLong ? "IMPULSE" : "OTHER"
+setupTypeShort = continuationShort ? "CONTINUATION" : impulseShort ? "IMPULSE" : "OTHER"
+
+getQualityScore(_isLong) =>
+    int score = 0
+    // 1) Direction alignment (Hull + SuperTrend)
+    if _isLong and (trend == 1) and hullAnyBullish and (slopeMain == 1)
+        score += 1
+    if (not _isLong) and (trend == -1) and hullAnyBearish and (slopeMain == -1)
+        score += 1
+    // 2) RSI in a favorable band (avoid extremes)
+    if _isLong and (rsi >= 35) and (rsi <= 70)
+        score += 1
+    if (not _isLong) and (rsi <= 65) and (rsi >= 30)
+        score += 1
+    // 3) Price location (continuation-friendly: not fully extended beyond envelope)
+    if _isLong and (close >= smaBasis) and (close <= upperEnv * 1.001)
+        score += 1
+    if (not _isLong) and (close <= smaBasis) and (close >= lowerEnv * 0.999)
+        score += 1
+    // 4) Volatility regime OK
+    if volatilityOK
+        score += 1
+    // 5) Session OK (if enabled)
+    if sessionAdjustedSignal
+        score += 1
+    // 6) Volume confirmation
+    if volume > ta.sma(volume, 20)
+        score += 1
+    score
+
+strictLongScore = getQualityScore(true)
+strictShortScore = getQualityScore(false)
+strictScoreOKLong = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictLongScore >= strictMinQualityScore)
+strictScoreOKShort = (not enableStrictQuality) or (not strictQualityScoreEnabled) or (strictShortScore >= strictMinQualityScore)
+
 strictEntryOKLong = (not enableStrictQuality) or (strictAdxOK and strictTimeOK and strictFreqOK and strictScoreOKLong)
 strictEntryOKShort = (not enableStrictQuality) or (strictAdxOK and strictTimeOK and strictFreqOK and strictScoreOKShort)
 
@@ -970,7 +973,6 @@ var float worstHigh = na
 var float maeATR = na
 var float mfeATR = na
 var int closedTradesPrev = 0
-var int consecutiveLosses = 0
 var bool instKilledByConsec = false
 var bool sentTimeStop = false
 var bool sentLosingTimeout = false
@@ -1130,7 +1132,7 @@ if enableProfitProtection and strategy.position_size != 0 and not na(entryPrice)
             lastProtectionStopSent := entryPrice
 
     if protectionActive
-        dynamicBuffer = profitProtectionBuffer
+        float dynamicBuffer = profitProtectionBuffer
         if tightenNearTP1
             tp1DistanceCalc = futuresStopDistance * 1.5 / syminfo.mintick
             progressToTP1 = profitTicks / tp1DistanceCalc
