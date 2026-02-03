@@ -810,8 +810,11 @@ if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemai
 // 📊 DISPLAYS
 // ==============================
 var table perfTable = table.new(position.top_right, 2, 13, bgcolor=color.new(color.black, 85))
+if barstate.isfirst
+    // Pine tables don't support `colspan` in table.cell(); use merge instead.
+    table.merge_cells(perfTable, 0, 0, 1, 0)
 if barstate.isconfirmed
-    table.cell(perfTable, 0, 0, "MGC ALERT-ONLY", colspan=2, bgcolor=color.new(color.gold, 60), text_color=color.white)
+    table.cell(perfTable, 0, 0, "MGC ALERT-ONLY", bgcolor=color.new(color.gold, 60), text_color=color.white)
     table.cell(perfTable, 0, 1, "Daily Trades", text_color=color.white)
     table.cell(perfTable, 1, 1, str.tostring(dailyTrades) + "/" + str.tostring(maxTradesPerDay), text_color=maxTradesReached ? color.orange : color.lime)
     table.cell(perfTable, 0, 2, "Daily P&L (virtual)", text_color=color.white)
