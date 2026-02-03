@@ -1,14 +1,18 @@
 //@version=5
-indicator("MGC 80% WIN RATE SYSTEM — ALERT ONLY (TradersPost) — 10-Point Confluence",
+strategy("MGC 80% WIN RATE SYSTEM — Strategy + Alert-Only (TradersPost) — 10-Point Confluence",
      overlay=true,
+     initial_capital=25000,
+     pyramiding=0,
+     process_orders_on_close=true,
      max_bars_back=500)
 
 // =====================================================================
 // 🎯 MGC 80% WIN RATE SYSTEM (ALERT ONLY)
 // =====================================================================
-// TradingView indicator that sends JSON webhooks via alert() to TradersPost.
-// - No strategy/backtest functions are used.
-// - Maintains an internal "virtual position" to sequence TP/STOP alerts.
+// Strategy + alert-only hybrid:
+// - Use strategy orders for backtesting when enabled
+// - Use alert() JSON webhooks for live TradersPost automation
+// - Maintains internal state for alert sequencing/metrics
 //
 // Recommended TradingView alert:
 // - Condition: "Any alert() function call"
@@ -366,7 +370,8 @@ reversalRequiresEma21Break = input.bool(true, "Reversal Requires EMA21 Break")
 // ==============================
 // 🔔 TRADERSPOST ALERT SETTINGS
 // ==============================
-enableAlerts = input.bool(true, "Enable TradersPost Alerts")
+enableStrategyOrders = input.bool(true, "Enable Strategy Orders (Backtest)")
+enableAlerts = input.bool(true, "Enable TradersPost Alerts (Live)")
 // Enforce a single execution mode to prevent conflicting exits.
 executionMode = input.string("SCALE_OUT", "Live Execution Mode", options=["BRACKET_ONLY", "SCALE_OUT"],
      tooltip="BRACKET_ONLY sends ENTRY with stop+TP1 only. SCALE_OUT sends ENTRY plus TP/STOP exit alerts.")
@@ -431,11 +436,17 @@ var float lastTradeMFE = na
 var float lastTradePnL = na
 var string lastExitReason = ""
 var bool killSwitchPrev = false
+var float atrAtEntry = na
 
 barsSinceLastTrade = bar_index - lastTradeBar
 cooldownOK = bar_index >= cooldownUntilBar
 lossStreakOK = consecutiveLosses < maxConsecutiveLosses
 killOK = not killSwitch
+// Use strategy position as source of truth for position state
+inPos := strategy.position_size != 0
+isLong := strategy.position_size > 0
+qtyRemaining := inPos ? math.abs(strategy.position_size) : 0.0
+
 canTrade = sessionOK and timeWindowsOK and volatilityOK and killOK and not maxLossReached and not maxTradesReached and (not inPos) and (barsSinceLastTrade >= minBarsBetweenTrades) and cooldownOK and lossStreakOK
 
 // ==============================
@@ -511,8 +522,10 @@ f_json_heartbeat() =>
 killTriggered = killSwitch and not killSwitchPrev
 killSwitchPrev := killSwitch
 
-if enableAlerts and barstate.isconfirmed and killTriggered and flattenOnKill and inPos and qtyRemaining > 0
+if barstate.isconfirmed and killTriggered and flattenOnKill and inPos and qtyRemaining > 0
     alert(f_json_exit(isLong, qtyRemaining, "KILL_SWITCH", close), alert.freq_once_per_bar_close)
+    if enableStrategyOrders
+        strategy.close_all(comment="KILL_SWITCH")
     // Treat as an exit for cooldown/loss tracking (virtual)
     pnlPoints = (close - entryPrice) * (isLong ? 1 : -1)
     pnlDollars = pnlPoints * syminfo.pointvalue * qtyRemaining
@@ -540,53 +553,64 @@ if enableAlerts and barstate.isconfirmed and killTriggered and flattenOnKill and
     mfePoints := 0.0
     tradeRealizedPnL := 0.0
 
-if enableAlerts and barstate.isconfirmed
-    if longSignal and fixedContracts > 0
-        inPos := true
-        isLong := true
-        entryPrice := close
-        qtyOriginal := fixedContracts
-        qtyRemaining := fixedContracts
-        entryBar := bar_index
-        maePoints := 0.0
-        mfePoints := 0.0
-        tradeRealizedPnL := 0.0
+if barstate.isconfirmed
+    // Strategy entries (backtest)
+    if enableStrategyOrders and longSignal and fixedContracts > 0
+        strategy.entry("Long", strategy.long, qty=fixedContracts, comment="Long score " + str.tostring(confluenceLong))
+    if enableStrategyOrders and shortSignal and fixedContracts > 0
+        strategy.entry("Short", strategy.short, qty=fixedContracts, comment="Short score " + str.tostring(confluenceShort))
 
-        // Cooperative stop: uses both ATR and swing structure (whichever is safer)
-        currentStop := stopCandidateLong
-        tp1_hit := false
-        tp2_hit := false
-        breakeven_active := false
-        trailing_active := false
+    // Live alerts for entries (webhook)
+    if enableAlerts
+        if longSignal and fixedContracts > 0
+            modeledEntry = close
+            modeledStop = stopCandidateLong
+            modeledTp1 = modeledEntry + (atr * tp1_ATR)
+            alert(f_json_entry(true, fixedContracts, modeledStop, modeledTp1, confluenceLong), alert.freq_once_per_bar_close)
+        if shortSignal and fixedContracts > 0
+            modeledEntry = close
+            modeledStop = stopCandidateShort
+            modeledTp1 = modeledEntry - (atr * tp1_ATR)
+            alert(f_json_entry(false, fixedContracts, modeledStop, modeledTp1, confluenceShort), alert.freq_once_per_bar_close)
 
-        dailyTrades += 1
-        lastTradeBar := bar_index
+// Sync internal state to actual strategy position (entry/flat)
+posOpened = strategy.position_size != 0 and strategy.position_size[1] == 0
+posClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
 
-        tp1_price = entryPrice + (atr * tp1_ATR)
-        alert(f_json_entry(true, fixedContracts, currentStop, tp1_price, confluenceLong), alert.freq_once_per_bar_close)
+if posOpened
+    entryPrice := strategy.position_avg_price
+    atrAtEntry := atr
+    qtyOriginal := math.abs(strategy.position_size)
+    qtyRemaining := qtyOriginal
+    entryBar := bar_index
+    maePoints := 0.0
+    mfePoints := 0.0
+    tradeRealizedPnL := 0.0
+    tp1_hit := false
+    tp2_hit := false
+    breakeven_active := false
+    trailing_active := false
 
-    if shortSignal and fixedContracts > 0
-        inPos := true
-        isLong := false
-        entryPrice := close
-        qtyOriginal := fixedContracts
-        qtyRemaining := fixedContracts
-        entryBar := bar_index
-        maePoints := 0.0
-        mfePoints := 0.0
-        tradeRealizedPnL := 0.0
+    // Initial cooperative stop from entry price
+    atrStop = (strategy.position_size > 0) ? (entryPrice - (atrAtEntry * initialStopATR)) : (entryPrice + (atrAtEntry * initialStopATR))
+    structStop = (strategy.position_size > 0) ? (na(lastPivotLow) ? na : (lastPivotLow - (atrAtEntry * stopStructureBufferATR))) : (na(lastPivotHigh) ? na : (lastPivotHigh + (atrAtEntry * stopStructureBufferATR)))
+    currentStop := na(structStop) ? atrStop : ((strategy.position_size > 0) ? math.min(atrStop, structStop) : math.max(atrStop, structStop))
 
-        currentStop := stopCandidateShort
-        tp1_hit := false
-        tp2_hit := false
-        breakeven_active := false
-        trailing_active := false
+    dailyTrades += 1
 
-        dailyTrades += 1
-        lastTradeBar := bar_index
-
-        tp1_price = entryPrice - (atr * tp1_ATR)
-        alert(f_json_entry(false, fixedContracts, currentStop, tp1_price, confluenceShort), alert.freq_once_per_bar_close)
+if posClosed
+    // enforce spacing from the exit
+    lastTradeBar := bar_index
+    entryPrice := na
+    atrAtEntry := na
+    currentStop := na
+    qtyOriginal := 0.0
+    qtyRemaining := 0.0
+    entryBar := na
+    tp1_hit := false
+    tp2_hit := false
+    breakeven_active := false
+    trailing_active := false
 
 // ==============================
 // 🫀 HEARTBEAT / SYNC (OPTIONAL)
@@ -627,10 +651,35 @@ if useCooperativeStops and inPos and not na(entryPrice)
 // ==============================
 // 🎯 EXITS (TP1/TP2/TP3 + STOP) — ALERT ONLY
 // ==============================
+// Use entry ATR for fixed targets (more stable)
+tp1_price = inPos and not na(entryPrice) ? (isLong ? entryPrice + (atrAtEntry * tp1_ATR) : entryPrice - (atrAtEntry * tp1_ATR)) : na
+tp2_price = inPos and not na(entryPrice) ? (isLong ? entryPrice + (atrAtEntry * tp2_ATR) : entryPrice - (atrAtEntry * tp2_ATR)) : na
+tp3_price = inPos and not na(entryPrice) ? (isLong ? entryPrice + (atrAtEntry * tp3_ATR) : entryPrice - (atrAtEntry * tp3_ATR)) : na
+
+// Strategy exits (backtest)
+if enableStrategyOrders and inPos and not na(entryPrice) and barstate.isconfirmed
+    // Convert TP2 percent-of-remaining into absolute percent of original position.
+    tp1_abs = tp1_Percent
+    tp2_abs = (100 - tp1_Percent) * (tp2_Percent / 100.0)
+    tp3_abs = 100.0 - tp1_abs - tp2_abs
+
+    if executionMode == "BRACKET_ONLY"
+        if isLong
+            strategy.exit("Bracket_Long", "Long", limit=tp1_price, stop=currentStop, comment="Bracket")
+        else
+            strategy.exit("Bracket_Short", "Short", limit=tp1_price, stop=currentStop, comment="Bracket")
+    else
+        if isLong
+            strategy.exit("TP1_Long", "Long", qty_percent=tp1_abs, limit=tp1_price, stop=currentStop, comment="TP1")
+            strategy.exit("TP2_Long", "Long", qty_percent=tp2_abs, limit=tp2_price, stop=currentStop, comment="TP2")
+            strategy.exit("TP3_Long", "Long", qty_percent=tp3_abs, limit=tp3_price, stop=currentStop, comment="TP3")
+        else
+            strategy.exit("TP1_Short", "Short", qty_percent=tp1_abs, limit=tp1_price, stop=currentStop, comment="TP1")
+            strategy.exit("TP2_Short", "Short", qty_percent=tp2_abs, limit=tp2_price, stop=currentStop, comment="TP2")
+            strategy.exit("TP3_Short", "Short", qty_percent=tp3_abs, limit=tp3_price, stop=currentStop, comment="TP3")
+
+// Live exit alerts (webhook)
 if enableAlerts and emitExitAlerts and inPos and not na(entryPrice) and qtyRemaining > 0 and barstate.isconfirmed
-    tp1_price = isLong ? entryPrice + (atr * tp1_ATR) : entryPrice - (atr * tp1_ATR)
-    tp2_price = isLong ? entryPrice + (atr * tp2_ATR) : entryPrice - (atr * tp2_ATR)
-    tp3_price = isLong ? entryPrice + (atr * tp3_ATR) : entryPrice - (atr * tp3_ATR)
 
     tp1Touched = isLong ? (high >= tp1_price) : (low <= tp1_price)
     tp2Touched = isLong ? (high >= tp2_price) : (low <= tp2_price)
