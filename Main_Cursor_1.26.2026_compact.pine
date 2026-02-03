@@ -715,6 +715,8 @@ maxPositionSize = input.float(12.0, "Max Position Size (% of Equity)", minval=5,
 
 enableTradersPostAlerts = input.bool(true, "Enable TradersPost Alerts")
 
+forceTradersPostAlerts = input.bool(true, "Force TradersPost alerts ON", group="TradersPost Router")
+
 tradersPostSymbol = input.string("MNQH2026", "TradersPost Symbol (Default / fallback)")
 
 tradersPostSymbolMNQ = input.string("MNQH2026", "TradersPost Symbol - MNQ (Update contract month!)")
@@ -736,6 +738,8 @@ tpStrategyName = input.string("V16_STRICT_DIRECTION", "TradersPost: strategy nam
 tpNumericFormat = input.string("strings", "TradersPost: numeric format", options=["strings", "numbers"], group="TradersPost Router")
 
 tpInstanceTag = input.string("AUTO", "TradersPost: instance tag (for matching alerts to trades)", group="TradersPost Router")
+
+enableTradersPostAlerts_eff = forceTradersPostAlerts ? true : enableTradersPostAlerts
 
 tpNum(x) =>
 
@@ -5499,7 +5503,7 @@ if topstepExitNow and not exitIssuedThisBar
 
     lastExitReason := "TOPSTEP_RTH_EXIT"
 
-    if enableTradersPostAlerts and not tookTradeThisBar
+    if enableTradersPostAlerts_eff and not tookTradeThisBar
 
         alert(tpExitWebhook("topstep_rth_exit"), alert.freq_once_per_bar)
 
@@ -5517,7 +5521,7 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
 
         lastExitReason := "HARD_STOP"
 
-        if enableTradersPostAlerts and not tookTradeThisBar
+        if enableTradersPostAlerts_eff and not tookTradeThisBar
 
             alert(tpExitWebhook("hard_stop"), alert.freq_once_per_bar)
 
@@ -5531,7 +5535,7 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
 
         lastExitReason := "QUICK_EXIT_RED"
 
-        if enableTradersPostAlerts and not tookTradeThisBar
+        if enableTradersPostAlerts_eff and not tookTradeThisBar
 
             alert(tpExitWebhook("quick_exit_red"), alert.freq_once_per_bar)
 
@@ -5545,7 +5549,7 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
 
         lastExitReason := "TIME_STOP_RED"
 
-        if enableTradersPostAlerts and not tookTradeThisBar
+        if enableTradersPostAlerts_eff and not tookTradeThisBar
 
             alert(tpExitWebhook("time_stop_red"), alert.freq_once_per_bar)
 
@@ -5559,7 +5563,7 @@ if isMNQ and (mnqIs3m or mnqIs5m) and strategy.position_size != 0 and not exitIs
 
         lastExitReason := "MAE_PROTECT"
 
-        if enableTradersPostAlerts and not tookTradeThisBar
+        if enableTradersPostAlerts_eff and not tookTradeThisBar
 
             alert(tpExitWebhook("mae_protection"), alert.freq_once_per_bar)
 
@@ -5581,7 +5585,7 @@ if isMES and (mesIs3m or mesIs5m) and strategy.position_size != 0 and not exitIs
 
         lastExitReason := "HARD_STOP"
 
-        if enableTradersPostAlerts and not tookTradeThisBar
+        if enableTradersPostAlerts_eff and not tookTradeThisBar
 
             alert(tpExitWebhook("hard_stop"), alert.freq_once_per_bar)
 
@@ -5655,7 +5659,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 
          isUAESession ? "UAE" : "OTHER"
 
-    if tpExitOnReverseSignal and enableTradersPostAlerts and entryOK and not tpFlat and not tookLocal
+    if tpExitOnReverseSignal and enableTradersPostAlerts_eff and entryOK and not tpFlat and not tookLocal
 
         if (longCondition and tpShort) or (shortCondition and tpLong)
 
@@ -5703,7 +5707,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 
                 tookLocal := true
 
-    if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 and enableTradersPostAlerts
+    if entryOK and longCondition and tpFlat and allowEntryLong and tpEntryQty > 0 and enableTradersPostAlerts_eff
 
         bool is3m_chart = timeframe.period == "3"
 
@@ -5769,7 +5773,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 
         alert(longEntryMessage, tpAlertFreq)
 
-    if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts
+    if entryOK and shortCondition and tpFlat and allowEntryShort and tpEntryQty > 0 and enableTradersPostAlerts_eff
 
         bool is3m_chart = timeframe.period == "3"
 
@@ -5835,7 +5839,7 @@ f_traderspostAlerts(_tpTradeId, _tookTrade) =>
 
         alert(shortEntryMessage, tpAlertFreq)
 
-    if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts and strategy.position_size != 0 and not tookLocal
+    if tpSendEODExitAlert and useEndOfDayExits and eodWindowStart and enableTradersPostAlerts_eff and strategy.position_size != 0 and not tookLocal
 
         exitSigId = tpSignalId("exit", strategy.position_size > 0 ? "LONG" : "SHORT")
 
