@@ -384,8 +384,8 @@ ph = ta.pivothigh(pivotPeriod, pivotPeriod)
 pl = ta.pivotlow(pivotPeriod, pivotPeriod)
 
 var float center = na
-lastpp = ph ? ph : pl ? pl : na
-if lastpp and not na(lastpp)
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
     center := na(center) ? lastpp : (center + lastpp) / 2
 else if na(center)
     center := close
@@ -957,6 +957,7 @@ plot(upperEnv, color=color.orange, title="Envelope Upper")
 plot(lowerEnv, color=color.orange, title="Envelope Lower")
 plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
 
+/* DUPLICATE SCRIPT REMOVED (was pasted twice)
 //@version=5  
 strategy("1.2.2026 WORKING FILE 🏆 +V.MGC1!.01 11.5.2025 21:56 ULTIMATE - MASTER MVJ6 PROFITABLE LOGIC V7.1 [LIVE TRADING READY]", 
      overlay=true, 
@@ -1969,4 +1970,4 @@ plot(hullFast, color=color.gray, title="Hull MA Fast")
 plot(upperEnv, color=color.orange, title="Envelope Upper")
 plot(lowerEnv, color=color.orange, title="Envelope Lower")
 plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
-
+*/
