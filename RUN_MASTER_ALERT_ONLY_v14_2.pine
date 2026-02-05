@@ -475,13 +475,16 @@ tpDist = useAtrStops ? math.max(safeATR * atrTpMult, tpDistCustom) : tpDistCusto
 // =============================================================================
 buildEntryJson(_isLong, _qty, _signalPrice, _limitPrice, _sl, _tp, _signalType) =>
     // Always include BOTH price-based and amount-based fields
-    stopAmt = priceDiffToDollars(_signalPrice, _sl)
-    tpAmt = priceDiffToDollars(_tp, _signalPrice)
+    // Amounts are calculated off the intended entry price (limit if used),
+    // so the bridge can place brackets relative to the actual fill more safely.
+    stopAmt = priceDiffToDollars(_limitPrice, _sl)
+    tpAmt = priceDiffToDollars(_tp, _limitPrice)
     act = _isLong ? "buy" : "sell"
     ot = useLimitEntries ? "limit" : "market"
     sess = getActiveSession()
     tkr = getInstrumentTicker()
     tf = timeframe.period
+    orderPrice = useLimitEntries ? _limitPrice : _signalPrice
 
     msg =
          '{"ticker":"' + tkr + '"' +
@@ -489,7 +492,7 @@ buildEntryJson(_isLong, _qty, _signalPrice, _limitPrice, _sl, _tp, _signalType) 
          ',"order_type":"' + ot + '"' +
          ',"quantity":' + jsonValInt(_qty) +
          ',"signal_price":' + jsonValFloat(_signalPrice, "#.####") +
-         ',"price":' + jsonValFloat(_signalPrice, "#.####")
+         ',"price":' + jsonValFloat(orderPrice, "#.####")
 
     if useLimitEntries
         msg := msg + ',"limit_price":' + jsonValFloat(_limitPrice, "#.####")
