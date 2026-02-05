@@ -1,0 +1,552 @@
+//@version=5
+// RUN MASTER — Alert-only Live Execution Layer (Tradovate/TradersPost/TopstepX)
+// Notes:
+// - This script is designed to emit `alert()` JSON messages only.
+// - It includes a slippage guard using marketable LIMIT entries (caps catastrophic fills).
+// - It blocks ranging/consolidation trades unless a breakout/impulse condition is present.
+// - It emits optional "update_stop" alerts after breakeven to support trailing-stop workflows (platform support required).
+//
+// IMPORTANT:
+// - You still MUST verify TradersPost field mapping so SL/TP are actually placed.
+// - Nothing here can guarantee 80% win-rate or fixed daily returns; those are market-dependent.
+
+strategy(
+     "RUN 🔥 V.14.1 — ALERT ONLY LIVE (Slippage Guard + Trend/Breakout Filter)",
+     overlay=true,
+     initial_capital=25000,
+     pyramiding=1,
+     calc_on_every_tick=true,
+     process_orders_on_close=false
+)
+
+// =========================
+// ✅ EXECUTION MODE (ALERT ONLY)
+// =========================
+execGroup = "Live Execution (Alerts Only)"
+
+enableAlerts = input.bool(true, "Enable Alerts", group=execGroup)
+alertOnBarCloseOnly = input.bool(true, "Alert only on bar close (recommended)", group=execGroup)
+
+// Slippage protection: marketable LIMIT caps worst fill price
+useMarketableLimitEntries = input.bool(true, "Use marketable LIMIT entries (caps slippage)", group=execGroup)
+maxEntrySlippageTicks = input.int(40, "Max entry slippage (ticks)", minval=1, maxval=500, group=execGroup)
+entryLimitExtraTicks = input.int(0, "Extra ticks on entry limit (optional)", minval=0, maxval=200, group=execGroup)
+
+// Webhook payload compatibility (send redundant fields)
+sendRedundantStopFields = input.bool(true, "Send redundant SL/TP keys (snake_case + camelCase)", group=execGroup)
+sendDollarStops = input.bool(true, "Include $ stop/takeprofit amounts (fill-relative)", group=execGroup)
+includeSignalPrice = input.bool(true, "Include signal_price in JSON", group=execGroup)
+
+strategyTag = input.string("RUN_MASTER", "Strategy tag", group=execGroup)
+accountTag = input.string("", "Account tag (optional)", group=execGroup)
+
+// Optional stop updates after breakeven (requires automation support)
+enableUpdateStopAlerts = input.bool(true, "Send update_stop alerts after breakeven", group=execGroup)
+minStopUpdateTicks = input.int(8, "Min stop change (ticks) to send update", minval=1, maxval=200, group=execGroup)
+
+// =========================
+// ✅ MARKET/INSTRUMENT DETECTION
+// =========================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+
+instrumentName =
+     isMYM ? "MYM" :
+     isMNQ ? "MNQ" :
+     isMES ? "MES" :
+     isMCL ? "MCL" :
+     isMGC ? "MGC" :
+     isM2K ? "M2K" : "Unknown"
+
+getInstrumentTicker() =>
+    isMYM ? "MYM1!" :
+     isMNQ ? "MNQ1!" :
+     isMES ? "MES1!" :
+     isMCL ? "MCL1!" :
+     isMGC ? "MGC1!" :
+     isM2K ? "M2K1!" : syminfo.ticker
+
+// =========================
+// ✅ TIMEZONE-CORRECT SESSION FILTERS (ET)
+// =========================
+sessGroup = "Sessions (ET)"
+enableNoTradeZone = input.bool(true, "No-Trade Zone 00:00–06:00 ET", group=sessGroup)
+enableSessionFilters = input.bool(true, "Enable Session Filters", group=sessGroup)
+preMarketStart = input.int(600, "Pre-Market Start (ET)", minval=0, maxval=2359, group=sessGroup)
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359, group=sessGroup)
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359, group=sessGroup)
+afterHoursEnd = input.int(1700, "After Hours End (ET)", minval=0, maxval=2359, group=sessGroup)
+
+etHour = hour(time, "America/New_York")
+etMin  = minute(time, "America/New_York")
+timeET = etHour * 100 + etMin
+
+isNoTrade = enableNoTradeZone and (timeET >= 0 and timeET < 600)
+isPreMarket = enableSessionFilters and timeET >= preMarketStart and timeET < regularSessionStart
+isRegular = enableSessionFilters and timeET >= regularSessionStart and timeET <= regularSessionEnd
+isAfterHours = enableSessionFilters and timeET > regularSessionEnd and timeET <= afterHoursEnd
+sessionOK = not enableSessionFilters or isPreMarket or isRegular or isAfterHours
+
+// =========================
+// ✅ CORE INDICATORS (lean but compatible)
+// =========================
+baseAtrPeriod = input.int(8, "ATR Period", minval=3, maxval=50)
+atr = ta.atr(baseAtrPeriod)
+safeATR = math.max(atr, syminfo.mintick * 10)
+
+// Trend / Range regime filter
+adxPeriod = input.int(14, "ADX Period", minval=5, maxval=50)
+minADXForTrendTrades = input.float(18.0, "Min ADX for continuation/trend trades", minval=5, maxval=50)
+
+fastEMA = ta.ema(close, 9)
+slowEMA = ta.ema(close, 21)
+emaBull = fastEMA > slowEMA
+emaBear = fastEMA < slowEMA
+
+// Simple Hull MA for continuation bias
+hma(src, len) =>
+    half_length = math.round(len / 2)
+    sqrt_length = math.round(math.sqrt(len))
+    ta.wma(2 * ta.wma(src, half_length) - ta.wma(src, len), sqrt_length)
+
+hullLenMain = input.int(25, "Hull Main", minval=5, maxval=100)
+hullLenFast = input.int(9, "Hull Fast", minval=3, maxval=50)
+hMain = hma(close, math.max(hullLenMain, 2))
+hFast = hma(close, math.max(hullLenFast, 2))
+
+slopeMain = hMain > hMain[1] ? 1 : hMain < hMain[1] ? -1 : 0
+slopeFast = hFast > hFast[1] ? 1 : hFast < hFast[1] ? -1 : 0
+
+// Envelope breakout proxy
+envLen = input.int(12, "Envelope SMA Length", minval=3, maxval=100)
+envDevPct = input.float(0.8, "Envelope Deviation %", minval=0.1, maxval=5.0)
+smaBasis = ta.sma(close, envLen)
+upperEnv = smaBasis * (1 + envDevPct / 100)
+lowerEnv = smaBasis * (1 - envDevPct / 100)
+
+volMaLen = input.int(20, "Volume MA", minval=5, maxval=200)
+volumeMA = ta.sma(volume, volMaLen)
+strongVolume = volume > volumeMA * 1.2
+
+breakoutLookback = input.int(20, "Breakout lookback", minval=5, maxval=200)
+breakoutUp = close > ta.highest(high, breakoutLookback)[1]
+breakoutDn = close < ta.lowest(low, breakoutLookback)[1]
+
+envelopeBreakoutUp = close > upperEnv and strongVolume
+envelopeBreakoutDn = close < lowerEnv and strongVolume
+
+impulseBreakoutUp = breakoutUp or envelopeBreakoutUp
+impulseBreakoutDn = breakoutDn or envelopeBreakoutDn
+
+adx = ta.adx(adxPeriod)
+isTrending = adx >= minADXForTrendTrades
+isRanging = adx < (minADXForTrendTrades - 3)
+
+// Allow ranging only if true impulse/breakout is present
+allowRangingIfImpulse = input.bool(true, "Allow ranging ONLY for impulse/breakout", group="Signal Quality")
+regimeOK_Long = isTrending or (allowRangingIfImpulse and impulseBreakoutUp)
+regimeOK_Short = isTrending or (allowRangingIfImpulse and impulseBreakoutDn)
+
+// =========================
+// ✅ MTF CONFIRMATION (optional, light)
+// =========================
+mtfGroup = "MTF Confirmation"
+enableMTF = input.bool(false, "Enable MTF Confirmation", group=mtfGroup)
+mtfMode = input.string("Filter", "MTF Mode", options=["Confirmation", "Filter", "Advisory"], group=mtfGroup)
+mtf_tf1 = input.timeframe("15", "MTF 1", group=mtfGroup)
+mtf_tf2 = input.timeframe("60", "MTF 2", group=mtfGroup)
+mtf_tf3 = input.timeframe("240", "MTF 3", group=mtfGroup)
+mtfAlignThreshold = input.int(66, "MTF Alignment % Threshold", minval=0, maxval=100, group=mtfGroup)
+
+mtfTrend(tf) =>
+    tf_close = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    tf_ema   = request.security(syminfo.tickerid, tf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+    tf_close > tf_ema ? 1 : tf_close < tf_ema ? -1 : 0
+
+mtfScore() =>
+    if not enableMTF
+        100
+    else
+        a1 = mtfTrend(mtf_tf1)
+        a2 = mtfTrend(mtf_tf2)
+        a3 = mtfTrend(mtf_tf3)
+        align = (a1 == a2 ? 1 : 0) + (a1 == a3 ? 1 : 0) + (a2 == a3 ? 1 : 0)
+        align * 33
+
+mtf_alignment_pct = mtfScore()
+mtfFilterPass = not enableMTF or mtfMode != "Filter" or mtf_alignment_pct >= mtfAlignThreshold
+
+// =========================
+// ✅ “5-STAR” QUALITY GATE (fixed so it isn’t always true)
+// =========================
+gateGroup = "Quality Gates"
+require5Star = input.bool(false, "Require 5-Star Gate", group=gateGroup)
+minStarsRequired = input.int(3, "Minimum Stars Required (1–5)", minval=1, maxval=5, group=gateGroup)
+
+// Star components:
+star_priceRangeExpanding = breakoutUp or breakoutDn
+
+// FIX: directional momentum must be meaningful separation, not just (emaBull or emaBear)
+star_directionalMomentum = math.abs(fastEMA - slowEMA) > (safeATR * 0.10)
+
+star_increasingVelocity = math.abs(close - close[1]) > math.abs(close[1] - close[2])
+star_notTightRange = (ta.highest(high, breakoutLookback) - ta.lowest(low, breakoutLookback)) > (safeATR * 1.2)
+star_atrExpanding = safeATR > ta.sma(safeATR, 3)
+
+starScore = 0
+starScore += star_priceRangeExpanding ? 1 : 0
+starScore += star_directionalMomentum ? 1 : 0
+starScore += star_increasingVelocity ? 1 : 0
+starScore += star_notTightRange ? 1 : 0
+starScore += star_atrExpanding ? 1 : 0
+
+fiveStarOK = starScore >= minStarsRequired
+fiveStarPass = not require5Star or fiveStarOK
+
+// =========================
+// ✅ PER-INSTRUMENT SL/TP (price units) + Qty (contracts)
+// =========================
+perInstGroup = "Per-Instrument SL/TP/Qty"
+
+useCustom = input.bool(false, "Use Custom Per-Instrument SL/TP/Qty", group=perInstGroup)
+
+// Defaults (safe-ish starter values; you MUST tune per instrument/timeframe)
+defSL_MES = input.float(7.0, "MES SL (points)", group=perInstGroup)
+defTP_MES = input.float(10.0, "MES TP (points)", group=perInstGroup)
+defSL_MNQ = input.float(25.0, "MNQ SL (points)", group=perInstGroup)
+defTP_MNQ = input.float(35.0, "MNQ TP (points)", group=perInstGroup)
+defSL_MYM = input.float(60.0, "MYM SL (points)", group=perInstGroup)
+defTP_MYM = input.float(90.0, "MYM TP (points)", group=perInstGroup)
+defSL_M2K = input.float(9.0, "M2K SL (points)", group=perInstGroup)
+defTP_M2K = input.float(14.0, "M2K TP (points)", group=perInstGroup)
+defSL_MCL = input.float(0.30, "MCL SL (price)", group=perInstGroup)
+defTP_MCL = input.float(0.50, "MCL TP (price)", group=perInstGroup)
+defSL_MGC = input.float(4.0, "MGC SL (price)", group=perInstGroup)
+defTP_MGC = input.float(7.0, "MGC TP (price)", group=perInstGroup)
+
+fixedQty = input.int(1, "Contracts", minval=1, maxval=10, group=perInstGroup)
+
+getSL() =>
+    isMES ? defSL_MES :
+     isMNQ ? defSL_MNQ :
+     isMYM ? defSL_MYM :
+     isM2K ? defSL_M2K :
+     isMCL ? defSL_MCL :
+     isMGC ? defSL_MGC : defSL_MES
+
+getTP() =>
+    isMES ? defTP_MES :
+     isMNQ ? defTP_MNQ :
+     isMYM ? defTP_MYM :
+     isM2K ? defTP_M2K :
+     isMCL ? defTP_MCL :
+     isMGC ? defTP_MGC : defTP_MES
+
+// =========================
+// ✅ DAILY TRADE LIMIT + INSTRUMENT LOSS LIMIT (ENFORCED)
+// =========================
+riskGroup = "Risk Limits"
+enableDailyTradeLimit = input.bool(true, "Enable Daily Trade Limit", group=riskGroup)
+maxDailyTrades = input.int(20, "Max Daily Trades", minval=1, maxval=200, group=riskGroup)
+
+enableIndividualRiskLimits = input.bool(false, "Enable Instrument Daily Loss Caps ($)", group=riskGroup)
+maxDailyLoss_MYM = input.float(75.0, "MYM max daily loss ($)", minval=0, group=riskGroup)
+maxDailyLoss_MNQ = input.float(150.0, "MNQ max daily loss ($)", minval=0, group=riskGroup)
+maxDailyLoss_MES = input.float(150.0, "MES max daily loss ($)", minval=0, group=riskGroup)
+maxDailyLoss_M2K = input.float(150.0, "M2K max daily loss ($)", minval=0, group=riskGroup)
+maxDailyLoss_MCL = input.float(150.0, "MCL max daily loss ($)", minval=0, group=riskGroup)
+maxDailyLoss_MGC = input.float(150.0, "MGC max daily loss ($)", minval=0, group=riskGroup)
+
+getMaxDailyLoss() =>
+    isMYM ? maxDailyLoss_MYM :
+     isMNQ ? maxDailyLoss_MNQ :
+     isMES ? maxDailyLoss_MES :
+     isM2K ? maxDailyLoss_M2K :
+     isMCL ? maxDailyLoss_MCL :
+     isMGC ? maxDailyLoss_MGC : 0.0
+
+var int todayTradeCount = 0
+var float todayLossDollars = 0.0
+var float instrumentLossDollars = 0.0
+var int prevClosedTrades = 0
+
+isNewDay = ta.change(dayofmonth(time, "America/New_York")) != 0 or barstate.isfirst
+if isNewDay
+    todayTradeCount := 0
+    todayLossDollars := 0.0
+    instrumentLossDollars := 0.0
+    prevClosedTrades := strategy.closedtrades
+
+// Track realized P/L from simulated strategy fills (for gating). If you do not use strategy entries, this won't move.
+if strategy.closedtrades > prevClosedTrades
+    lastIdx = strategy.closedtrades - 1
+    lastProfit = strategy.closedtrades.profit(lastIdx)
+    prevClosedTrades := strategy.closedtrades
+    if lastProfit < 0
+        todayLossDollars += math.abs(lastProfit)
+        instrumentLossDollars += math.abs(lastProfit)
+
+maxTradesReached = enableDailyTradeLimit and todayTradeCount >= maxDailyTrades
+instrumentRiskLimitReached = enableIndividualRiskLimits and getMaxDailyLoss() > 0 and instrumentLossDollars >= getMaxDailyLoss()
+
+// =========================
+// ✅ SIGNALS (continuation/momentum; range only on impulse/breakout)
+// =========================
+sigGroup = "Signals"
+rsiPeriod = input.int(6, "RSI Period", minval=2, maxval=50, group=sigGroup)
+rsi = ta.rsi(close, rsiPeriod)
+minRSIForLong = input.float(40, "Min RSI for Long", minval=10, maxval=80, group=sigGroup)
+maxRSIForShort = input.float(60, "Max RSI for Short", minval=20, maxval=90, group=sigGroup)
+
+momentumBull = rsi >= minRSIForLong and rsi <= 70
+momentumBear = rsi <= maxRSIForShort and rsi >= 30
+
+continuationLong =
+    emaBull and slopeMain == 1 and slopeFast == 1 and close >= smaBasis and strongVolume and momentumBull
+
+continuationShort =
+    emaBear and slopeMain == -1 and slopeFast == -1 and close <= smaBasis and strongVolume and momentumBear
+
+impulseLong = impulseBreakoutUp and emaBull and (slopeMain >= 0)
+impulseShort = impulseBreakoutDn and emaBear and (slopeMain <= 0)
+
+longSignal = (regimeOK_Long and (continuationLong or impulseLong)) and sessionOK and not isNoTrade
+shortSignal = (regimeOK_Short and (continuationShort or impulseShort)) and sessionOK and not isNoTrade
+
+// =========================
+// ✅ JSON HELPERS (TradersPost/Tradovate)
+// =========================
+priceDiffToDollars(p1, p2) =>
+    math.abs(p1 - p2) * syminfo.pointvalue
+
+f_jsonNum(x) =>
+    // Avoid scientific notation issues
+    str.tostring(x, format.mintick)
+
+// Build entry JSON with redundant SL/TP keys to reduce mapping failures
+buildEntryJson(_action, _qty, _orderType, _limitPrice, _stopPrice, _tpPrice, _stopAmt, _tpAmt) =>
+    string s =
+         "{" +
+         "\"ticker\":\"" + getInstrumentTicker() + "\"," +
+         "\"symbol\":\"" + getInstrumentTicker() + "\"," +
+         "\"instrument\":\"" + instrumentName + "\"," +
+         "\"action\":\"" + _action + "\"," +
+         "\"quantity\":" + str.tostring(_qty) + "," +
+         "\"order_type\":\"" + _orderType + "\"," +
+         "\"strategy\":\"" + strategyTag + "\""
+    if accountTag != ""
+        s += ",\"account\":\"" + accountTag + "\""
+    if includeSignalPrice
+        s += ",\"signal_price\":" + f_jsonNum(close)
+    s += ",\"timeframe\":\"" + timeframe.period + "\""
+    if enableMTF
+        s += ",\"mtf_alignment_pct\":" + str.tostring(mtf_alignment_pct)
+    if require5Star
+        s += ",\"fiveStarOK\":" + (fiveStarOK ? "true" : "false") + ",\"starScore\":" + str.tostring(starScore)
+
+    if _orderType == "limit"
+        s += ",\"limit_price\":" + f_jsonNum(_limitPrice)
+
+    // Absolute prices (some connectors expect these)
+    s += ",\"stop_loss\":" + f_jsonNum(_stopPrice) + ",\"take_profit\":" + f_jsonNum(_tpPrice)
+    if sendRedundantStopFields
+        s += ",\"stopLoss\":" + f_jsonNum(_stopPrice) + ",\"takeProfit\":" + f_jsonNum(_tpPrice)
+        s += ",\"stopPrice\":" + f_jsonNum(_stopPrice) + ",\"takeProfitPrice\":" + f_jsonNum(_tpPrice)
+
+    // Dollar amounts (fill-relative; best for slippage)
+    if sendDollarStops
+        s += ",\"stop_loss_amount\":" + str.tostring(_stopAmt, "#.##") + ",\"take_profit_amount\":" + str.tostring(_tpAmt, "#.##")
+        if sendRedundantStopFields
+            s += ",\"stopLossAmount\":" + str.tostring(_stopAmt, "#.##") + ",\"takeProfitAmount\":" + str.tostring(_tpAmt, "#.##")
+
+    s += "}"
+    s
+
+buildUpdateStopJson(_qty, _newStop) =>
+    "{" +
+    "\"ticker\":\"" + getInstrumentTicker() + "\"," +
+    "\"symbol\":\"" + getInstrumentTicker() + "\"," +
+    "\"instrument\":\"" + instrumentName + "\"," +
+    "\"action\":\"update_stop\"," +
+    "\"quantity\":" + str.tostring(_qty) + "," +
+    "\"new_stop\":" + f_jsonNum(_newStop) + "," +
+    "\"strategy\":\"" + strategyTag + "\"," +
+    "\"timeframe\":\"" + timeframe.period + "\"" +
+    (includeSignalPrice ? ",\"signal_price\":" + f_jsonNum(close) : "") +
+    "}"
+
+buildExitJson(_qty, _reason) =>
+    "{" +
+    "\"ticker\":\"" + getInstrumentTicker() + "\"," +
+    "\"symbol\":\"" + getInstrumentTicker() + "\"," +
+    "\"instrument\":\"" + instrumentName + "\"," +
+    "\"action\":\"exit\"," +
+    "\"quantity\":" + str.tostring(_qty) + "," +
+    "\"reason\":\"" + _reason + "\"," +
+    "\"strategy\":\"" + strategyTag + "\"," +
+    "\"timeframe\":\"" + timeframe.period + "\"" +
+    "}"
+
+// =========================
+// ✅ POSITION STATE (local, alert-driven)
+// =========================
+// We track a "virtual" position based on emitted alerts to support breakeven/trailing update messages.
+// This keeps the script alert-only and avoids relying on strategy fills.
+var int vPos = 0          // 1 long, -1 short, 0 flat
+var float vEntry = na
+var float vStop = na
+var float vTP = na
+var float vPeak = 0.0
+var float vLastStopSent = na
+var int vBars = 0
+
+// Breakeven + trailing settings (price units)
+beGroup = "Breakeven + Trailing"
+enableBreakeven = input.bool(true, "Enable Breakeven Stop", group=beGroup)
+breakevenAfterATR = input.float(1.0, "Breakeven triggers after profit >= ATR x", minval=0.1, maxval=10, group=beGroup)
+breakevenPlusTicks = input.int(2, "Breakeven + ticks", minval=0, maxval=50, group=beGroup)
+enableTrailingAfterBE = input.bool(true, "Enable trailing AFTER breakeven", group=beGroup)
+trailATRMult = input.float(1.2, "Trailing distance (ATR x)", minval=0.1, maxval=10, group=beGroup)
+
+// Alert throttle / dedupe
+shouldAlertNow = not alertOnBarCloseOnly or barstate.isconfirmed
+var int lastEntryAlertBar = na
+var int lastStopUpdateBar = na
+
+// =========================
+// ✅ ENTRY ALERTS (with slippage guard)
+// =========================
+qty = fixedQty
+slDist = getSL()
+tpDist = getTP()
+
+slippageTicks = maxEntrySlippageTicks + entryLimitExtraTicks
+slipPx = slippageTicks * syminfo.mintick
+
+longLimit = close + slipPx
+shortLimit = close - slipPx
+
+// Compute bracket from SIGNAL price (connector should prefer $ amounts, which are fill-relative)
+longStop = close - slDist
+longTP = close + tpDist
+shortStop = close + slDist
+shortTP = close - tpDist
+
+stopAmt = slDist * syminfo.pointvalue
+tpAmt = tpDist * syminfo.pointvalue
+
+entryAllowed = not maxTradesReached and not instrumentRiskLimitReached and fiveStarPass and mtfFilterPass
+
+wantLong = enableAlerts and shouldAlertNow and vPos == 0 and entryAllowed and longSignal
+wantShort = enableAlerts and shouldAlertNow and vPos == 0 and entryAllowed and shortSignal
+
+if wantLong and (na(lastEntryAlertBar) or lastEntryAlertBar != bar_index)
+    orderType = useMarketableLimitEntries ? "limit" : "market"
+    msg = buildEntryJson("buy", qty, orderType, longLimit, longStop, longTP, stopAmt, tpAmt)
+    alert(msg, alert.freq_once_per_bar_close)
+    lastEntryAlertBar := bar_index
+    todayTradeCount += 1
+
+    // Virtual position state
+    vPos := 1
+    vEntry := close
+    vStop := longStop
+    vTP := longTP
+    vPeak := 0.0
+    vLastStopSent := vStop
+    vBars := 0
+
+if wantShort and (na(lastEntryAlertBar) or lastEntryAlertBar != bar_index)
+    orderType = useMarketableLimitEntries ? "limit" : "market"
+    msg = buildEntryJson("sell", qty, orderType, shortLimit, shortStop, shortTP, stopAmt, tpAmt)
+    alert(msg, alert.freq_once_per_bar_close)
+    lastEntryAlertBar := bar_index
+    todayTradeCount += 1
+
+    vPos := -1
+    vEntry := close
+    vStop := shortStop
+    vTP := shortTP
+    vPeak := 0.0
+    vLastStopSent := vStop
+    vBars := 0
+
+// =========================
+// ✅ VIRTUAL EXIT + STOP UPDATE ALERTS
+// =========================
+if vPos != 0 and not na(vEntry)
+    vBars += 1
+    vProfitPx = vPos == 1 ? (close - vEntry) : (vEntry - close)
+    vPeak := math.max(vPeak, vProfitPx)
+
+    // Breakeven trigger
+    beTrigPx = safeATR * breakevenAfterATR
+    beReached = enableBreakeven and vProfitPx >= beTrigPx
+
+    // Breakeven stop (include small buffer for fees/slippage)
+    beStop = vPos == 1 ? (vEntry + breakevenPlusTicks * syminfo.mintick) : (vEntry - breakevenPlusTicks * syminfo.mintick)
+
+    // Trailing (only after BE reached)
+    trailDist = safeATR * trailATRMult
+    trailStop = vPos == 1 ? (close - trailDist) : (close + trailDist)
+
+    // Candidate stop is max/min depending on direction
+    newStop =
+        vPos == 1 ?
+            (beReached ? math.max(vStop, beStop) : vStop) :
+            (beReached ? math.min(vStop, beStop) : vStop)
+
+    if enableTrailingAfterBE and beReached
+        newStop :=
+            vPos == 1 ? math.max(newStop, trailStop) : math.min(newStop, trailStop)
+
+    // Send update_stop if stop materially changes
+    stopChangedEnough = not na(vLastStopSent) and math.abs(newStop - vLastStopSent) >= (minStopUpdateTicks * syminfo.mintick)
+    if enableUpdateStopAlerts and stopChangedEnough and shouldAlertNow and (na(lastStopUpdateBar) or lastStopUpdateBar != bar_index)
+        alert(buildUpdateStopJson(qty, newStop), alert.freq_once_per_bar_close)
+        vLastStopSent := newStop
+        lastStopUpdateBar := bar_index
+
+    vStop := newStop
+
+    // Virtual exits (to emit exit alerts if the script believes stop/TP is hit)
+    hitTP = vPos == 1 ? high >= vTP : low <= vTP
+    hitSL = vPos == 1 ? low <= vStop : high >= vStop
+
+    if hitTP and shouldAlertNow
+        alert(buildExitJson(qty, "take_profit_hit"), alert.freq_once_per_bar_close)
+        vPos := 0
+        vEntry := na
+        vStop := na
+        vTP := na
+        vPeak := 0.0
+        vLastStopSent := na
+        vBars := 0
+    else if hitSL and shouldAlertNow
+        alert(buildExitJson(qty, "stop_loss_hit"), alert.freq_once_per_bar_close)
+        vPos := 0
+        vEntry := na
+        vStop := na
+        vTP := na
+        vPeak := 0.0
+        vLastStopSent := na
+        vBars := 0
+
+// =========================
+// ✅ PLOTS (visual sanity)
+// =========================
+plot(hMain, color=slopeMain == 1 ? color.lime : slopeMain == -1 ? color.red : color.gray, linewidth=2, title="Hull Main")
+plot(hFast, color=color.new(color.gray, 0), title="Hull Fast")
+plot(upperEnv, color=color.new(color.orange, 0), title="Upper Env")
+plot(lowerEnv, color=color.new(color.orange, 0), title="Lower Env")
+plotchar(adx, title="ADX", char=".", location=location.top, color=isTrending ? color.lime : color.gray)
+
+bgcolor(isNoTrade ? color.new(color.red, 92) : na, title="No-Trade Zone (ET)")
+
+plotshape(wantLong, title="Long Alert", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny, text="BUY")
+plotshape(wantShort, title="Short Alert", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="SELL")
+
