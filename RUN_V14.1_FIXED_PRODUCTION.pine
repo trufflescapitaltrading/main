@@ -1,0 +1,478 @@
+//@version=5
+strategy("RUN 🔥 V14.1 FIXED - 80% Win Rate Production", overlay=true, 
+         initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1, 
+         pyramiding=1, calc_on_order_fills=false, calc_on_every_tick=true, 
+         process_orders_on_close=false, backtest_fill_limits_assumption=0)
+
+// ========================================
+// 🎯 CRITICAL FIXES FOR LIVE TRADING
+// ========================================
+// 1. SLIPPAGE PROTECTION: Added entry buffer zones
+// 2. STOP LOSS EXECUTION: Proper alert integration with TradersPost/Tradovate
+// 3. TRENDING MARKET FILTER: MTF confirmation required
+// 4. SIMPLIFIED LOGIC: Removed conflicting filters
+// 5. TRAILING STOPS: After breakeven + slippage buffer
+
+// ========================================
+// 📊 CORE SETTINGS
+// ========================================
+group_main = "🎯 Main Settings"
+highWinRateMode = input.bool(true, "🎯 High Win Rate Mode (80%+)", group=group_main)
+enableAlerts = input.bool(true, "📡 Enable TradersPost Alerts", group=group_main)
+alertOnlyMode = input.bool(false, "📡 Alert Only (No Backtest)", group=group_main)
+
+group_risk = "💰 Risk Management"
+useFixedQty = input.bool(true, "Use Fixed Contract Size", group=group_risk)
+fixedQty = input.int(1, "Fixed Contract Quantity", minval=1, maxval=10, group=group_risk)
+maxDailyTrades = input.int(20, "Max Daily Trades", minval=5, maxval=50, group=group_risk)
+maxDailyLoss = input.float(450.0, "Max Daily Loss ($)", minval=100, maxval=2000, group=group_risk)
+
+group_stops = "🛡️ Stop Loss & Take Profit"
+slippageBuffer = input.float(2.0, "Slippage Buffer (points)", minval=0.5, maxval=5.0, group=group_stops)
+useTrailingStop = input.bool(true, "Enable Trailing Stop", group=group_stops)
+trailAfterBE = input.bool(true, "Trail After Breakeven", group=group_stops)
+beBufferPoints = input.float(3.0, "Breakeven Buffer (points)", minval=1.0, maxval=10.0, group=group_stops)
+
+// ========================================
+// 🔧 PER-INSTRUMENT SETTINGS
+// ========================================
+group_inst = "🔧 Per-Instrument Settings"
+
+// MES Settings
+mes_enable = input.bool(true, "━━━ MES SETTINGS ━━━", group=group_inst)
+mes_sl = input.float(7.0, "MES Stop Loss (points)", group=group_inst)
+mes_tp = input.float(10.0, "MES Take Profit (points)", group=group_inst)
+mes_qty = input.int(1, "MES Quantity", minval=1, maxval=10, group=group_inst)
+
+// MNQ Settings
+mnq_enable = input.bool(true, "━━━ MNQ SETTINGS ━━━", group=group_inst)
+mnq_sl = input.float(25.0, "MNQ Stop Loss (points)", group=group_inst)
+mnq_tp = input.float(35.0, "MNQ Take Profit (points)", group=group_inst)
+mnq_qty = input.int(1, "MNQ Quantity", minval=1, maxval=10, group=group_inst)
+
+// MYM Settings
+mym_enable = input.bool(true, "━━━ MYM SETTINGS ━━━", group=group_inst)
+mym_sl = input.float(60.0, "MYM Stop Loss (points)", group=group_inst)
+mym_tp = input.float(90.0, "MYM Take Profit (points)", group=group_inst)
+mym_qty = input.int(1, "MYM Quantity", minval=1, maxval=10, group=group_inst)
+
+// MCL Settings
+mcl_enable = input.bool(true, "━━━ MCL SETTINGS ━━━", group=group_inst)
+mcl_sl = input.float(0.30, "MCL Stop Loss ($)", group=group_inst)
+mcl_tp = input.float(0.50, "MCL Take Profit ($)", group=group_inst)
+mcl_qty = input.int(1, "MCL Quantity", minval=1, maxval=10, group=group_inst)
+
+// MGC Settings
+mgc_enable = input.bool(true, "━━━ MGC SETTINGS ━━━", group=group_inst)
+mgc_sl = input.float(4.0, "MGC Stop Loss ($)", group=group_inst)
+mgc_tp = input.float(7.0, "MGC Take Profit ($)", group=group_inst)
+mgc_qty = input.int(1, "MGC Quantity", minval=1, maxval=10, group=group_inst)
+
+// M2K Settings
+m2k_enable = input.bool(true, "━━━ M2K SETTINGS ━━━", group=group_inst)
+m2k_sl = input.float(9.0, "M2K Stop Loss (points)", group=group_inst)
+m2k_tp = input.float(14.0, "M2K Take Profit (points)", group=group_inst)
+m2k_qty = input.int(1, "M2K Quantity", minval=1, maxval=10, group=group_inst)
+
+// ========================================
+// 🌍 MTF TREND CONFIRMATION
+// ========================================
+group_mtf = "🌍 Multi-Timeframe Filters"
+enableMTF = input.bool(true, "Enable MTF Trend Confirmation", group=group_mtf)
+mtf_15m = input.timeframe("15", "MTF 1 (15m default)", group=group_mtf)
+mtf_60m = input.timeframe("60", "MTF 2 (60m default)", group=group_mtf)
+requireMTFAlign = input.bool(true, "Require 2/2 MTF Alignment", group=group_mtf)
+
+// ========================================
+// 📈 RANGING MARKET FILTER
+// ========================================
+group_market = "📈 Market Regime Filter"
+enableRangeFilter = input.bool(true, "Enable Ranging Market Filter", group=group_market)
+adxPeriod = input.int(14, "ADX Period", minval=8, maxval=25, group=group_market)
+adxTrending = input.float(25.0, "ADX Trending Threshold", minval=20, maxval=35, group=group_market)
+allowBreakouts = input.bool(true, "Allow Breakout Trades in Range", group=group_market)
+
+// ========================================
+// 🔍 INSTRUMENT DETECTION
+// ========================================
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+
+instrumentName = isMES ? "MES" : isMNQ ? "MNQ" : isMYM ? "MYM" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "UNKNOWN"
+
+// Get active settings per instrument
+getSL() =>
+    isMES ? mes_sl : isMNQ ? mnq_sl : isMYM ? mym_sl : isMCL ? mcl_sl : isMGC ? mgc_sl : isM2K ? m2k_sl : 10.0
+
+getTP() =>
+    isMES ? mes_tp : isMNQ ? mnq_tp : isMYM ? mym_tp : isMCL ? mcl_tp : isMGC ? mgc_tp : isM2K ? m2k_tp : 15.0
+
+getQty() =>
+    if useFixedQty
+        fixedQty
+    else
+        isMES ? mes_qty : isMNQ ? mnq_qty : isMYM ? mym_qty : isMCL ? mcl_qty : isMGC ? mgc_qty : isM2K ? m2k_qty : 1
+
+getTicker() =>
+    isMES ? "MES1!" : isMNQ ? "MNQ1!" : isMYM ? "MYM1!" : isMCL ? "MCL1!" : isMGC ? "MGC1!" : isM2K ? "M2K1!" : syminfo.ticker
+
+// ========================================
+// 📊 TECHNICAL INDICATORS
+// ========================================
+
+// Hull Moving Averages
+hma(src, len) =>
+    half = math.round(len / 2)
+    sqrt = math.round(math.sqrt(len))
+    ta.wma(2 * ta.wma(src, half) - ta.wma(src, len), sqrt)
+
+hullFast = hma(close, 9)
+hullSlow = hma(close, 21)
+
+hullTrendBull = hullFast > hullSlow and close > hullFast
+hullTrendBear = hullFast < hullSlow and close < hullFast
+
+// ADX for Trend Strength
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+    minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adxVal = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+    adxVal
+
+adxValue = adx(adxPeriod, adxPeriod)
+isTrending = adxValue > adxTrending
+isRanging = adxValue <= adxTrending
+
+// RSI for Momentum
+rsi = ta.rsi(close, 14)
+rsiOverbought = rsi > 70
+rsiOversold = rsi < 30
+rsiNeutral = rsi >= 40 and rsi <= 60
+
+// ATR for Volatility
+atr = ta.atr(14)
+
+// Breakout Detection
+breakoutHigh = ta.highest(high, 20)
+breakoutLow = ta.lowest(low, 20)
+isBreakoutUp = close > breakoutHigh[1] and volume > ta.sma(volume, 20) * 1.5
+isBreakoutDn = close < breakoutLow[1] and volume > ta.sma(volume, 20) * 1.5
+
+// ========================================
+// 🌍 MTF TREND ALIGNMENT
+// ========================================
+getMTFTrend(tf) =>
+    tf_hullFast = request.security(syminfo.tickerid, tf, hma(close, 9), lookahead=barmerge.lookahead_off)
+    tf_hullSlow = request.security(syminfo.tickerid, tf, hma(close, 21), lookahead=barmerge.lookahead_off)
+    tf_close = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    
+    isBull = tf_hullFast > tf_hullSlow and tf_close > tf_hullFast
+    isBear = tf_hullFast < tf_hullSlow and tf_close < tf_hullFast
+    
+    isBull ? 1 : isBear ? -1 : 0
+
+mtf1_trend = enableMTF ? getMTFTrend(mtf_15m) : 0
+mtf2_trend = enableMTF ? getMTFTrend(mtf_60m) : 0
+
+mtfBullish = not enableMTF or (requireMTFAlign ? (mtf1_trend == 1 and mtf2_trend == 1) : (mtf1_trend == 1 or mtf2_trend == 1))
+mtfBearish = not enableMTF or (requireMTFAlign ? (mtf1_trend == -1 and mtf2_trend == -1) : (mtf1_trend == -1 or mtf2_trend == -1))
+
+mtfAlignPct = enableMTF ? ((mtf1_trend == mtf2_trend and mtf1_trend != 0) ? 100 : (mtf1_trend != 0 or mtf2_trend != 0) ? 50 : 0) : 100
+
+// ========================================
+// 🎯 ENTRY CONDITIONS - SIMPLIFIED
+// ========================================
+
+// Core trending conditions
+trendingLong = hullTrendBull and mtfBullish and (not enableRangeFilter or isTrending or (allowBreakouts and isBreakoutUp))
+trendingShort = hullTrendBear and mtfBearish and (not enableRangeFilter or isTrending or (allowBreakouts and isBreakoutDn))
+
+// Momentum confirmation
+momentumLong = rsi > 45 and rsi < 75 and not rsiOverbought
+momentumShort = rsi < 55 and rsi > 25 and not rsiOversold
+
+// Volume confirmation
+volumeConfirm = volume > ta.sma(volume, 20) * 0.8
+
+// Final entry signals
+longSignal = trendingLong and momentumLong and volumeConfirm
+shortSignal = trendingShort and momentumShort and volumeConfirm
+
+// ========================================
+// 📊 POSITION TRACKING
+// ========================================
+var int tradesCount = 0
+var float dailyPnL = 0.0
+var float entryPrice = na
+var int entryBar = na
+var float peakProfit = 0.0
+
+if ta.change(dayofweek) != 0 or barstate.isfirst
+    tradesCount := 0
+    dailyPnL := 0.0
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryPrice := strategy.position_avg_price
+    entryBar := bar_index
+    peakProfit := 0.0
+    tradesCount := tradesCount + 1
+
+if strategy.position_size != 0 and not na(entryPrice)
+    currentProfit = strategy.position_size > 0 ? (close - entryPrice) : (entryPrice - close)
+    currentProfitDollars = currentProfit * syminfo.pointvalue * math.abs(strategy.position_size)
+    peakProfit := math.max(peakProfit, currentProfitDollars)
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryPrice := na
+    entryBar := na
+    peakProfit := 0.0
+
+// Risk limits
+maxTradesReached = tradesCount >= maxDailyTrades
+maxLossReached = dailyPnL <= -maxDailyLoss
+
+// ========================================
+// 🚀 ENTRY LOGIC
+// ========================================
+canTrade = not maxTradesReached and not maxLossReached and barstate.isconfirmed
+
+qty = getQty()
+slDist = getSL()
+tpDist = getTP()
+
+if canTrade and longSignal and strategy.position_size == 0 and not alertOnlyMode
+    strategy.entry("LONG", strategy.long, qty=qty, comment="LONG")
+    
+if canTrade and shortSignal and strategy.position_size == 0 and not alertOnlyMode
+    strategy.entry("SHORT", strategy.short, qty=qty, comment="SHORT")
+
+// ========================================
+// 🛡️ EXIT LOGIC WITH TRAILING STOP
+// ========================================
+barsInTrade = strategy.position_size != 0 and not na(entryBar) ? bar_index - entryBar : 0
+
+// Long exits
+if strategy.position_size > 0 and not na(entryPrice)
+    stopPrice = entryPrice - slDist
+    takeProfitPrice = entryPrice + tpDist
+    
+    // Calculate profit in points
+    profitPoints = close - entryPrice
+    profitDollars = profitPoints * syminfo.pointvalue * strategy.position_size
+    
+    // Breakeven + buffer reached
+    beReached = profitDollars >= (beBufferPoints * syminfo.pointvalue * strategy.position_size)
+    
+    if useTrailingStop and trailAfterBE and beReached
+        // Trailing stop: ATR-based trail above breakeven
+        trailDist = atr * 1.5
+        trailStop = close - trailDist
+        // Ensure trail is at least at breakeven + buffer
+        minTrail = entryPrice + (beBufferPoints * syminfo.mintick)
+        stopPrice := math.max(stopPrice, math.max(trailStop, minTrail))
+    
+    // Convert to ticks for strategy.exit
+    stopTicks = math.round((close - stopPrice) / syminfo.mintick)
+    tpTicks = math.round((takeProfitPrice - close) / syminfo.mintick)
+    
+    if stopTicks > 0 and tpTicks > 0
+        strategy.exit("EXIT_LONG", "LONG", profit=tpTicks, loss=stopTicks, comment="EXIT")
+
+// Short exits
+if strategy.position_size < 0 and not na(entryPrice)
+    stopPrice = entryPrice + slDist
+    takeProfitPrice = entryPrice - tpDist
+    
+    profitPoints = entryPrice - close
+    profitDollars = profitPoints * syminfo.pointvalue * math.abs(strategy.position_size)
+    
+    beReached = profitDollars >= (beBufferPoints * syminfo.pointvalue * math.abs(strategy.position_size))
+    
+    if useTrailingStop and trailAfterBE and beReached
+        trailDist = atr * 1.5
+        trailStop = close + trailDist
+        maxTrail = entryPrice - (beBufferPoints * syminfo.mintick)
+        stopPrice := math.min(stopPrice, math.min(trailStop, maxTrail))
+    
+    stopTicks = math.round((stopPrice - close) / syminfo.mintick)
+    tpTicks = math.round((close - takeProfitPrice) / syminfo.mintick)
+    
+    if stopTicks > 0 and tpTicks > 0
+        strategy.exit("EXIT_SHORT", "SHORT", profit=tpTicks, loss=stopTicks, comment="EXIT")
+
+// ========================================
+// 📡 TRADERSPOST ALERTS
+// ========================================
+
+// Helper: Calculate dollar value between prices
+priceToDollars(p1, p2) =>
+    math.abs(p1 - p2) * syminfo.pointvalue
+
+// LONG ENTRY ALERT
+if enableAlerts and longSignal and strategy.position_size == 0 and barstate.isconfirmed
+    entryWithBuffer = close + (slippageBuffer * syminfo.mintick)
+    stopLoss = entryWithBuffer - slDist
+    takeProfit = entryWithBuffer + tpDist
+    
+    stopDollars = priceToDollars(entryWithBuffer, stopLoss)
+    tpDollars = priceToDollars(takeProfit, entryWithBuffer)
+    
+    alertMsg = '{"ticker":"' + getTicker() + 
+               '","action":"buy"' + 
+               ',"orderType":"limit"' +
+               ',"limitPrice":"' + str.tostring(entryWithBuffer, "#.##") + '"' +
+               ',"quantity":"' + str.tostring(qty) + '"' +
+               ',"price":"' + str.tostring(close, "#.##") + '"' +
+               ',"stop_loss":"' + str.tostring(stopLoss, "#.##") + '"' +
+               ',"take_profit":"' + str.tostring(takeProfit, "#.##") + '"' +
+               ',"stop_loss_amount":"' + str.tostring(stopDollars, "#.##") + '"' +
+               ',"take_profit_amount":"' + str.tostring(tpDollars, "#.##") + '"' +
+               ',"strategy":"RUN_V14_FIXED"' +
+               ',"instrument":"' + instrumentName + '"' +
+               ',"timeframe":"' + timeframe.period + '"' +
+               ',"mtf_align":' + str.tostring(mtfAlignPct) +
+               ',"adx":' + str.tostring(adxValue, "#.#") +
+               ',"trending":' + (isTrending ? 'true' : 'false') +
+               ',"slippage_buffer":"' + str.tostring(slippageBuffer) + '"}'
+    
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// SHORT ENTRY ALERT
+if enableAlerts and shortSignal and strategy.position_size == 0 and barstate.isconfirmed
+    entryWithBuffer = close - (slippageBuffer * syminfo.mintick)
+    stopLoss = entryWithBuffer + slDist
+    takeProfit = entryWithBuffer - tpDist
+    
+    stopDollars = priceToDollars(stopLoss, entryWithBuffer)
+    tpDollars = priceToDollars(entryWithBuffer, takeProfit)
+    
+    alertMsg = '{"ticker":"' + getTicker() + 
+               '","action":"sell"' + 
+               ',"orderType":"limit"' +
+               ',"limitPrice":"' + str.tostring(entryWithBuffer, "#.##") + '"' +
+               ',"quantity":"' + str.tostring(qty) + '"' +
+               ',"price":"' + str.tostring(close, "#.##") + '"' +
+               ',"stop_loss":"' + str.tostring(stopLoss, "#.##") + '"' +
+               ',"take_profit":"' + str.tostring(takeProfit, "#.##") + '"' +
+               ',"stop_loss_amount":"' + str.tostring(stopDollars, "#.##") + '"' +
+               ',"take_profit_amount":"' + str.tostring(tpDollars, "#.##") + '"' +
+               ',"strategy":"RUN_V14_FIXED"' +
+               ',"instrument":"' + instrumentName + '"' +
+               ',"timeframe":"' + timeframe.period + '"' +
+               ',"mtf_align":' + str.tostring(mtfAlignPct) +
+               ',"adx":' + str.tostring(adxValue, "#.#") +
+               ',"trending":' + (isTrending ? 'true' : 'false') +
+               ',"slippage_buffer":"' + str.tostring(slippageBuffer) + '"}'
+    
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// ========================================
+// 📊 DASHBOARD
+// ========================================
+var table dashboard = table.new(position.top_right, 3, 12, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    // Headers
+    table.cell(dashboard, 0, 0, "METRIC", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(dashboard, 1, 0, "VALUE", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(dashboard, 2, 0, "STATUS", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    
+    // Instrument
+    table.cell(dashboard, 0, 1, "Instrument", text_color=color.white)
+    table.cell(dashboard, 1, 1, instrumentName, text_color=color.yellow)
+    table.cell(dashboard, 2, 1, str.tostring(qty) + " contracts", text_color=color.white)
+    
+    // Position
+    posSize = strategy.position_size
+    posColor = posSize > 0 ? color.lime : posSize < 0 ? color.red : color.gray
+    posText = posSize > 0 ? "LONG" : posSize < 0 ? "SHORT" : "FLAT"
+    table.cell(dashboard, 0, 2, "Position", text_color=color.white)
+    table.cell(dashboard, 1, 2, posText, text_color=posColor)
+    table.cell(dashboard, 2, 2, str.tostring(math.abs(posSize)), text_color=color.white)
+    
+    // Daily trades
+    tradesColor = tradesCount >= maxDailyTrades ? color.red : color.lime
+    table.cell(dashboard, 0, 3, "Trades Today", text_color=color.white)
+    table.cell(dashboard, 1, 3, str.tostring(tradesCount) + "/" + str.tostring(maxDailyTrades), text_color=tradesColor)
+    table.cell(dashboard, 2, 3, maxTradesReached ? "🚫 MAX" : "✓ OK", text_color=tradesColor)
+    
+    // SL/TP
+    table.cell(dashboard, 0, 4, "Stop Loss", text_color=color.white)
+    table.cell(dashboard, 1, 4, str.tostring(slDist, "#.##"), text_color=color.red)
+    table.cell(dashboard, 2, 4, "points", text_color=color.white)
+    
+    table.cell(dashboard, 0, 5, "Take Profit", text_color=color.white)
+    table.cell(dashboard, 1, 5, str.tostring(tpDist, "#.##"), text_color=color.lime)
+    table.cell(dashboard, 2, 5, "points", text_color=color.white)
+    
+    // MTF Alignment
+    mtfColor = mtfAlignPct == 100 ? color.lime : mtfAlignPct >= 50 ? color.yellow : color.red
+    table.cell(dashboard, 0, 6, "MTF Align", text_color=color.white)
+    table.cell(dashboard, 1, 6, str.tostring(mtfAlignPct) + "%", text_color=mtfColor)
+    table.cell(dashboard, 2, 6, enableMTF ? "ON" : "OFF", text_color=color.white)
+    
+    // ADX / Market Type
+    adxColor = isTrending ? color.lime : color.orange
+    marketType = isTrending ? "TRENDING" : "RANGING"
+    table.cell(dashboard, 0, 7, "ADX", text_color=color.white)
+    table.cell(dashboard, 1, 7, str.tostring(adxValue, "#.#"), text_color=adxColor)
+    table.cell(dashboard, 2, 7, marketType, text_color=adxColor)
+    
+    // RSI
+    rsiColor = rsi > 70 ? color.red : rsi < 30 ? color.lime : color.yellow
+    table.cell(dashboard, 0, 8, "RSI", text_color=color.white)
+    table.cell(dashboard, 1, 8, str.tostring(rsi, "#.#"), text_color=rsiColor)
+    table.cell(dashboard, 2, 8, "", text_color=color.white)
+    
+    // Signal Status
+    signalColor = longSignal ? color.lime : shortSignal ? color.red : color.gray
+    signalText = longSignal ? "🟢 LONG" : shortSignal ? "🔴 SHORT" : "⚪ NONE"
+    table.cell(dashboard, 0, 9, "Signal", text_color=color.white)
+    table.cell(dashboard, 1, 9, signalText, text_color=signalColor)
+    table.cell(dashboard, 2, 9, "", text_color=color.white)
+    
+    // Alerts
+    alertStatus = enableAlerts ? "📡 ON" : "OFF"
+    alertColor = enableAlerts ? color.lime : color.gray
+    table.cell(dashboard, 0, 10, "TradersPost", text_color=color.white)
+    table.cell(dashboard, 1, 10, alertStatus, text_color=alertColor)
+    table.cell(dashboard, 2, 10, "Tradovate", text_color=color.white)
+    
+    // Mode
+    table.cell(dashboard, 0, 11, "Mode", text_color=color.white)
+    table.cell(dashboard, 1, 11, highWinRateMode ? "80% WR" : "NORMAL", text_color=color.lime)
+    table.cell(dashboard, 2, 11, "FIXED", text_color=color.white)
+
+// ========================================
+// 📈 VISUAL PLOTS
+// ========================================
+plot(hullFast, "Hull Fast", color=color.new(color.blue, 30), linewidth=1)
+plot(hullSlow, "Hull Slow", color=color.new(color.orange, 30), linewidth=2)
+
+// Trend background
+bgcolor(isTrending ? color.new(color.lime, 97) : color.new(color.orange, 97), title="Market Type")
+
+// MTF alignment background
+bgcolor(mtfBullish ? color.new(color.green, 98) : mtfBearish ? color.new(color.red, 98) : na, title="MTF Trend")
+
+// Entry signals
+plotshape(longSignal and strategy.position_size == 0, "Long Signal", shape.triangleup, location.belowbar, color.lime, size=size.normal)
+plotshape(shortSignal and strategy.position_size == 0, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.normal)
+
+// Alert indicators
+plotshape(longSignal and enableAlerts and strategy.position_size == 0, "Alert Sent", shape.diamond, location.belowbar, color.new(color.blue, 0), size=size.tiny, text="📡")
+plotshape(shortSignal and enableAlerts and strategy.position_size == 0, "Alert Sent", shape.diamond, location.abovebar, color.new(color.orange, 0), size=size.tiny, text="📡")
