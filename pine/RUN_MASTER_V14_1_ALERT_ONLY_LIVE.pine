@@ -340,6 +340,8 @@ buildEntryJson(_action, _qty, _orderType, _limitPrice, _stopPrice, _tpPrice, _st
          "\"strategy\":\"" + strategyTag + "\""
     if accountTag != ""
         s += ",\"account\":\"" + accountTag + "\""
+    // Many connectors expect a `price` field even for market orders.
+    s += ",\"price\":" + f_jsonNum(close)
     if includeSignalPrice
         s += ",\"signal_price\":" + f_jsonNum(close)
     s += ",\"timeframe\":\"" + timeframe.period + "\""
@@ -350,6 +352,8 @@ buildEntryJson(_action, _qty, _orderType, _limitPrice, _stopPrice, _tpPrice, _st
 
     if _orderType == "limit"
         s += ",\"limit_price\":" + f_jsonNum(_limitPrice)
+        // Helpful metadata for debugging slippage caps.
+        s += ",\"max_slippage_ticks\":" + str.tostring(maxEntrySlippageTicks) + ",\"max_slippage_price\":" + f_jsonNum(maxEntrySlippageTicks * syminfo.mintick)
 
     // Absolute prices (some connectors expect these)
     s += ",\"stop_loss\":" + f_jsonNum(_stopPrice) + ",\"take_profit\":" + f_jsonNum(_tpPrice)
