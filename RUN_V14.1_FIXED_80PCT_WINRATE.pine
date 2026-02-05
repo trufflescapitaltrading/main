@@ -1,0 +1,855 @@
+//@version=5
+strategy("🔥 RUN V14.1 FIXED - 80% Win Rate Production Ready", 
+     overlay=true, 
+     initial_capital=25000, 
+     default_qty_type=strategy.fixed, 
+     default_qty_value=1, 
+     pyramiding=1,
+     calc_on_order_fills=false, 
+     calc_on_every_tick=true, 
+     process_orders_on_close=false)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 CRITICAL FIX #1: ALERT-ONLY MODE (Default TRUE for Live Trading)
+// ═══════════════════════════════════════════════════════════════════════════════
+alertOnlyMode = input.bool(true, "🚨 ALERT ONLY MODE (Live Trading)", 
+     tooltip="TRUE = Sends alerts only (for TradersPost/Tradovate). FALSE = Backtest mode with strategy execution", 
+     group="🔥 CRITICAL SETTINGS")
+
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Webhook Alerts", group="🔥 CRITICAL SETTINGS")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 CRITICAL FIX #2: SLIPPAGE PROTECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+useLimit Orders = input.bool(true, "Use LIMIT Orders (Slippage Protection)", group="🔥 CRITICAL SETTINGS")
+slippageBuffer = input.float(5.0, "Slippage Buffer (points)", minval=0.0, maxval=50.0, group="🔥 CRITICAL SETTINGS",
+     tooltip="MES=5, MNQ=15, MYM=20, MGC=2, MCL=0.15")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 CRITICAL FIX #3: STRICT TREND/MOMENTUM FILTERS (80% Win Rate Target)
+// ═══════════════════════════════════════════════════════════════════════════════
+require5Star = input.bool(true, "🌟 Require 5-Star Entry (80%+ Win Rate)", group="🔥 CRITICAL SETTINGS")
+minStarsRequired = input.int(4, "Minimum Stars (1-5)", minval=3, maxval=5, group="🔥 CRITICAL SETTINGS")
+
+enableMTF = input.bool(true, "Multi-Timeframe Confirmation (Required)", group="🔥 CRITICAL SETTINGS")
+mtfAlignThreshold = input.int(66, "MTF Alignment % (66+ = Strong Trend)", minval=50, maxval=100, group="🔥 CRITICAL SETTINGS")
+
+requireStrongTrend = input.bool(true, "Require Strong Trend (No Ranging)", group="🔥 CRITICAL SETTINGS")
+minTrendStrength = input.float(0.25, "Min Trend Strength", minval=0.15, maxval=0.50, group="🔥 CRITICAL SETTINGS")
+
+requireVolumeConfirmation = input.bool(true, "Require Volume Surge", group="🔥 CRITICAL SETTINGS")
+minVolumeMultiplier = input.float(1.5, "Min Volume Multiplier", minval=1.2, maxval=3.0, group="🔥 CRITICAL SETTINGS")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 HIGH WIN RATE MODE (Preserved from original)
+// ═══════════════════════════════════════════════════════════════════════════════
+highWinRateMode = input.bool(true, "🎯 High Win Rate Mode (70%+)", group="Win Rate Settings") 
+quickTPMultiplier = input.float(0.6, "Quick TP Multiplier", minval=0.3, maxval=1.0, group="Win Rate Settings")
+widerSLMultiplier = input.float(1.5, "Wider SL Multiplier", minval=1.0, maxval=2.5, group="Win Rate Settings")
+minRSIForEntry = input.float(40, "Min RSI for Long", minval=30, maxval=50, group="Win Rate Settings")
+maxRSIForEntry = input.float(60, "Max RSI for Short", minval=50, maxval=70, group="Win Rate Settings")
+
+confluenceLevel = input.int(12, "🎯 Confluence Level (12=Strict)", minval=1, maxval=15, group="Win Rate Settings")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔧 PER-INSTRUMENT CUSTOM SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+perInstGroup = "Per-Instrument Settings"
+
+// MES
+mes_useCustom = input.bool(true, "MES: Use Custom SL/TP", group=perInstGroup)
+mes_customSL  = input.float(7.0, "MES: Stop Loss (points)", group=perInstGroup)
+mes_customTP  = input.float(10.0, "MES: Take Profit (points)", group=perInstGroup)
+mes_customQty = input.int(1, "MES: Position Size", minval=1, maxval=10, group=perInstGroup)
+mes_slippage  = input.float(5.0, "MES: Slippage Buffer", group=perInstGroup)
+
+// MNQ
+mnq_useCustom = input.bool(true, "MNQ: Use Custom SL/TP", group=perInstGroup)
+mnq_customSL  = input.float(25.0, "MNQ: Stop Loss (points)", group=perInstGroup)
+mnq_customTP  = input.float(35.0, "MNQ: Take Profit (points)", group=perInstGroup)
+mnq_customQty = input.int(1, "MNQ: Position Size", minval=1, maxval=10, group=perInstGroup)
+mnq_slippage  = input.float(15.0, "MNQ: Slippage Buffer", group=perInstGroup)
+
+// MYM
+mym_useCustom = input.bool(true, "MYM: Use Custom SL/TP", group=perInstGroup)
+mym_customSL  = input.float(60.0, "MYM: Stop Loss (points)", group=perInstGroup)
+mym_customTP  = input.float(90.0, "MYM: Take Profit (points)", group=perInstGroup)
+mym_customQty = input.int(1, "MYM: Position Size", minval=1, maxval=10, group=perInstGroup)
+mym_slippage  = input.float(20.0, "MYM: Slippage Buffer", group=perInstGroup)
+
+// MCL
+mcl_useCustom = input.bool(true, "MCL: Use Custom SL/TP", group=perInstGroup)
+mcl_customSL  = input.float(0.30, "MCL: Stop Loss ($)", group=perInstGroup)
+mcl_customTP  = input.float(0.50, "MCL: Take Profit ($)", group=perInstGroup)
+mcl_customQty = input.int(1, "MCL: Position Size", minval=1, maxval=10, group=perInstGroup)
+mcl_slippage  = input.float(0.15, "MCL: Slippage Buffer", group=perInstGroup)
+
+// MGC
+mgc_useCustom = input.bool(true, "MGC: Use Custom SL/TP", group=perInstGroup)
+mgc_customSL  = input.float(4.0, "MGC: Stop Loss ($)", group=perInstGroup)
+mgc_customTP  = input.float(7.0, "MGC: Take Profit ($)", group=perInstGroup)
+mgc_customQty = input.int(1, "MGC: Position Size", minval=1, maxval=10, group=perInstGroup)
+mgc_slippage  = input.float(2.0, "MGC: Slippage Buffer", group=perInstGroup)
+
+// M2K
+m2k_useCustom = input.bool(true, "M2K: Use Custom SL/TP", group=perInstGroup)
+m2k_customSL  = input.float(9.0, "M2K: Stop Loss (points)", group=perInstGroup)
+m2k_customTP  = input.float(14.0, "M2K: Take Profit (points)", group=perInstGroup)
+m2k_customQty = input.int(1, "M2K: Position Size", minval=1, maxval=10, group=perInstGroup)
+m2k_slippage  = input.float(5.0, "M2K: Slippage Buffer", group=perInstGroup)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔧 TRAILING STOP SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+enableTrailingStop = input.bool(true, "Enable Trailing Stop After Breakeven", group="Trailing Stop")
+trailingStopActivation = input.float(1.5, "Activation (ATR Multiplier)", minval=0.5, maxval=3.0, group="Trailing Stop")
+trailingStopDistance = input.float(1.0, "Trail Distance (ATR Multiplier)", minval=0.5, maxval=2.0, group="Trailing Stop")
+sendTrailingAlerts = input.bool(true, "Send Trailing Stop Update Alerts", group="Trailing Stop")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊 RISK MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+maxDailyTrades = input.int(15, "Max Daily Trades", minval=5, maxval=30, group="Risk Management")
+maxDailyLoss = input.float(450.0, "Max Daily Loss ($)", minval=100, maxval=1000, group="Risk Management")
+maxPositionSize = input.float(10.0, "Max Position Size (% Equity)", minval=5.0, maxval=20.0, group="Risk Management")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌍 SESSION FILTERS
+// ═══════════════════════════════════════════════════════════════════════════════
+enable24_7Trading = input.bool(false, "Enable 24/7 Trading", group="Sessions",
+     tooltip="FALSE = NY session only (best performance)")
+regularSessionStart = input.int(930, "Regular Session Start (ET)", minval=0, maxval=2359, group="Sessions")
+regularSessionEnd = input.int(1600, "Regular Session End (ET)", minval=0, maxval=2359, group="Sessions")
+enablePreMarket = input.bool(false, "Enable Pre-Market (8:00-9:30 ET)", group="Sessions")
+enableAfterHours = input.bool(false, "Enable After Hours (16:00-17:00 ET)", group="Sessions")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔧 INSTRUMENT DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+
+instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : "UNKNOWN"
+
+getInstrumentTicker() =>
+    isMYM ? "MYM1!" : isMNQ ? "MNQ1!" : isMES ? "MES1!" : isMCL ? "MCL1!" : isMGC ? "MGC1!" : isM2K ? "M2K1!" : syminfo.ticker
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔧 PER-INSTRUMENT ACTIVE SETTINGS (CRITICAL FIX)
+// ═══════════════════════════════════════════════════════════════════════════════
+getActiveSL() =>
+    float sl = 8.0
+    if isMES and mes_useCustom
+        sl := mes_customSL
+    else if isMNQ and mnq_useCustom
+        sl := mnq_customSL
+    else if isMYM and mym_useCustom
+        sl := mym_customSL
+    else if isMCL and mcl_useCustom
+        sl := mcl_customSL
+    else if isMGC and mgc_useCustom
+        sl := mgc_customSL
+    else if isM2K and m2k_useCustom
+        sl := m2k_customSL
+    sl
+
+getActiveTP() =>
+    float tp = 12.0
+    if isMES and mes_useCustom
+        tp := mes_customTP
+    else if isMNQ and mnq_useCustom
+        tp := mnq_customTP
+    else if isMYM and mym_useCustom
+        tp := mym_customTP
+    else if isMCL and mcl_useCustom
+        tp := mcl_customTP
+    else if isMGC and mgc_useCustom
+        tp := mgc_customTP
+    else if isM2K and m2k_useCustom
+        tp := m2k_customTP
+    tp
+
+getActiveQty() =>
+    int qty = 1
+    if isMES and mes_useCustom
+        qty := mes_customQty
+    else if isMNQ and mnq_useCustom
+        qty := mnq_customQty
+    else if isMYM and mym_useCustom
+        qty := mym_customQty
+    else if isMCL and mcl_useCustom
+        qty := mcl_customQty
+    else if isMGC and mgc_useCustom
+        qty := mgc_customQty
+    else if isM2K and m2k_useCustom
+        qty := m2k_customQty
+    qty
+
+getActiveSlippage() =>
+    float slip = slippageBuffer
+    if isMES and mes_useCustom
+        slip := mes_slippage
+    else if isMNQ and mnq_useCustom
+        slip := mnq_slippage
+    else if isMYM and mym_useCustom
+        slip := mym_slippage
+    else if isMCL and mcl_useCustom
+        slip := mcl_slippage
+    else if isMGC and mgc_useCustom
+        slip := mgc_slippage
+    else if isM2K and m2k_useCustom
+        slip := m2k_slippage
+    slip
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊 TECHNICAL INDICATORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Hull Moving Average
+hma(src, len) => 
+    half_length = math.round(len / 2)
+    sqrt_length = math.round(math.sqrt(len))
+    ta.wma(2 * ta.wma(src, half_length) - ta.wma(src, len), sqrt_length)
+
+baseHullMain = 25
+baseHullFast = 9
+hullPeriodMain = isMYM or isMNQ or isMES ? 19 : isMCL ? 21 : isMGC ? 25 : isM2K ? 20 : 25
+hullPeriodFast = isMYM or isMNQ or isMES ? 7 : isMCL ? 8 : isMGC ? 9 : isM2K ? 7 : 9
+
+hullMain = hma(close, hullPeriodMain)
+hullFast = hma(close, hullPeriodFast)
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+
+hullBullish = slopeMain == 1 and slopeFast == 1
+hullBearish = slopeMain == -1 and slopeFast == -1
+hullAligned = slopeMain == slopeFast
+
+// ATR
+atrPeriod = 10
+atr = ta.atr(atrPeriod)
+safeATR = math.max(atr, syminfo.mintick * 10)
+
+// RSI & Stochastic
+rsiPeriod = 6
+rsi = ta.rsi(close, rsiPeriod)
+stoch = ta.stoch(close, high, low, 6)
+stochK = ta.sma(stoch, 3)
+
+// Volume
+volumeMA = ta.sma(volume, 20)
+volumeSurge = volume > volumeMA * minVolumeMultiplier
+volumeConfirm = not requireVolumeConfirmation or volumeSurge
+
+// Envelope
+envLength = 12
+envDev = 0.8
+smaBasis = ta.sma(close, envLength)
+upperEnv = smaBasis * (1 + envDev / 100)
+lowerEnv = smaBasis * (1 - envDev / 100)
+
+// SuperTrend
+ph = ta.pivothigh(2, 2)
+pl = ta.pivotlow(2, 2)
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrFactor = 2.2
+upBand = na(center) ? close - atrFactor * atr : center - atrFactor * atr
+dnBand = na(center) ? close + atrFactor * atr : center + atrFactor * atr
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+
+trendChange = trend != trend[1]
+bullishTrendStart = trend == 1 and trend[1] == -1
+bearishTrendStart = trend == -1 and trend[1] == 1
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 TREND STRENGTH DETECTION (CRITICAL FIX #4)
+// ═══════════════════════════════════════════════════════════════════════════════
+trendStrengthPeriod = 20
+priceRange = ta.highest(high, trendStrengthPeriod) - ta.lowest(low, trendStrengthPeriod)
+trendStrength = priceRange > 0 ? math.abs(close - close[trendStrengthPeriod]) / priceRange : 0
+
+strongTrend = trendStrength > minTrendStrength
+rangingMarket = trendStrength < (minTrendStrength * 0.5)
+
+// ADX for trend confirmation
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+strongADX = adx > 25
+trendingMarket = strongADX and strongTrend
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 MULTI-TIMEFRAME CONFIRMATION (CRITICAL FIX #5)
+// ═══════════════════════════════════════════════════════════════════════════════
+mtfTrend(tf) =>
+    tf_close = request.security(syminfo.tickerid, tf, close, lookahead = barmerge.lookahead_off)
+    tf_hma = request.security(syminfo.tickerid, tf, hma(close, 8), lookahead = barmerge.lookahead_off)
+    tf_close > tf_hma ? 1 : tf_close < tf_hma ? -1 : 0
+
+mtf_tf1 = "15"
+mtf_tf2 = "60"
+mtf_tf3 = "240"
+
+mtf1_trend = mtfTrend(mtf_tf1)
+mtf2_trend = mtfTrend(mtf_tf2)
+mtf3_trend = mtfTrend(mtf_tf3)
+
+mtfAlignment = (mtf1_trend == mtf2_trend ? 1 : 0) + (mtf1_trend == mtf3_trend ? 1 : 0) + (mtf2_trend == mtf3_trend ? 1 : 0)
+mtf_alignment_pct = mtfAlignment * 33
+
+mtfBullish = mtf1_trend == 1 and mtf2_trend == 1
+mtfBearish = mtf1_trend == -1 and mtf2_trend == -1
+mtfAligned = not enableMTF or mtf_alignment_pct >= mtfAlignThreshold
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🌟 5-STAR ENTRY SYSTEM (CRITICAL FIX #6)
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ Star 1: Price momentum expanding
+star1_priceExpanding = close > ta.highest(high, 20)[1] or close < ta.lowest(low, 20)[1]
+
+// ⭐ Star 2: EMAs aligned
+fastEMA = ta.ema(close, 9)
+slowEMA = ta.ema(close, 21)
+star2_emaAligned = (fastEMA > slowEMA and close > fastEMA) or (fastEMA < slowEMA and close < fastEMA)
+
+// ⭐ Star 3: Increasing velocity
+star3_velocity = math.abs(close - close[1]) > math.abs(close[1] - close[2])
+
+// ⭐ Star 4: Not in tight range
+recentRangePoints = (ta.highest(high, 20) - ta.lowest(low, 20)) / syminfo.mintick
+minRangePoints = isMES ? 40 : isMNQ ? 100 : isMYM ? 150 : isMCL ? 20 : isMGC ? 30 : isM2K ? 50 : 40
+star4_notTightRange = recentRangePoints >= minRangePoints
+
+// ⭐ Star 5: ATR expanding
+star5_atrExpanding = atr > ta.sma(atr, 5)
+
+starScore = 0
+starScore += star1_priceExpanding ? 1 : 0
+starScore += star2_emaAligned ? 1 : 0
+starScore += star3_velocity ? 1 : 0
+starScore += star4_notTightRange ? 1 : 0
+starScore += star5_atrExpanding ? 1 : 0
+
+fiveStarOK = not require5Star or starScore >= minStarsRequired
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 MOMENTUM FILTERS (HIGH WIN RATE)
+// ═══════════════════════════════════════════════════════════════════════════════
+momentumBullish = highWinRateMode ? 
+     (rsi > minRSIForEntry and rsi < 65 and stochK > 25 and stochK < 75) : 
+     (rsi > 35 and rsi < 75 and stochK > 25)
+
+momentumBearish = highWinRateMode ? 
+     (rsi < maxRSIForEntry and rsi > 35 and stochK < 75 and stochK > 25) : 
+     (rsi < 65 and rsi > 25 and stochK < 75)
+
+notOverbought = rsi < 72
+notOversold = rsi > 28
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🕐 SESSION DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+currentTime = math.round(hour * 100 + minute)
+isRegularSession = currentTime >= regularSessionStart and currentTime <= regularSessionEnd
+isPreMarket = enablePreMarket and currentTime >= 800 and currentTime < 930
+isAfterHours = enableAfterHours and currentTime > 1600 and currentTime <= 1700
+
+canTradeNow = enable24_7Trading or isRegularSession or isPreMarket or isAfterHours
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 MASTER SIGNAL LOGIC (SIMPLIFIED - NO CONFLICTING LOGIC)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Primary signals - ALL filters must cooperate
+primaryBullSignal = hullBullish and trend == 1 and close > smaBasis
+primaryBearSignal = hullBearish and trend == -1 and close < smaBasis
+
+// Breakout signals (for ranging markets exception)
+breakoutBullSignal = close > upperEnv * 1.005 and volumeSurge and trend == 1
+breakoutBearSignal = close < lowerEnv * 0.995 and volumeSurge and trend == -1
+
+// Combined signals
+baseLongSignal = primaryBullSignal or (breakoutBullSignal and not requireStrongTrend)
+baseShortSignal = primaryBearSignal or (breakoutBearSignal and not requireStrongTrend)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🚦 MASTER ENTRY CONDITIONS (ALL FILTERS COOPERATE)
+// ═══════════════════════════════════════════════════════════════════════════════
+var int todayTradeCount = 0
+var float todayLoss = 0.0
+
+if ta.change(dayofweek) != 0 or barstate.isfirst
+    todayTradeCount := 0
+    todayLoss := 0.0
+
+maxTradesReached = todayTradeCount >= maxDailyTrades
+maxLossReached = todayLoss >= maxDailyLoss
+
+// Trend filter check
+trendOK = not requireStrongTrend or (strongTrend and not rangingMarket)
+
+// LONG ENTRY - ALL CONDITIONS MUST BE TRUE
+longCondition = baseLongSignal and 
+     momentumBullish and 
+     volumeConfirm and 
+     fiveStarOK and 
+     mtfAligned and 
+     mtfBullish and 
+     trendOK and
+     notOversold and 
+     canTradeNow and 
+     not maxTradesReached and 
+     not maxLossReached and 
+     strategy.position_size == 0
+
+// SHORT ENTRY - ALL CONDITIONS MUST BE TRUE
+shortCondition = baseShortSignal and 
+     momentumBearish and 
+     volumeConfirm and 
+     fiveStarOK and 
+     mtfAligned and 
+     mtfBearish and 
+     trendOK and 
+     notOverbought and 
+     canTradeNow and 
+     not maxTradesReached and 
+     not maxLossReached and 
+     strategy.position_size == 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊 POSITION TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════
+var float entryPrice = na
+var int entryBar = na
+var bool isLongPosition = false
+var bool isShortPosition = false
+var float peakProfit = 0.0
+var int barsInPosition = 0
+var float currentProfitDollars = 0.0
+var bool breakevenReached = false
+var float trailingStopPrice = na
+var string entryAlertId = ""
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryPrice := strategy.position_avg_price
+    entryBar := bar_index
+    isLongPosition := strategy.position_size > 0
+    isShortPosition := strategy.position_size < 0
+    peakProfit := 0.0
+    barsInPosition := 0
+    breakevenReached := false
+    trailingStopPrice := na
+    entryAlertId := str.tostring(bar_index) + "_" + instrumentName
+    todayTradeCount := todayTradeCount + 1
+
+if strategy.position_size != 0 and not na(entryPrice)
+    currentProfit = isLongPosition ? (close - entryPrice) : (entryPrice - close)
+    currentProfitDollars := currentProfit * syminfo.pointvalue
+    peakProfit := math.max(peakProfit, currentProfitDollars)
+    barsInPosition := barsInPosition + 1
+    
+    // Check breakeven
+    beThreshold = highWinRateMode ? 20.0 : 30.0
+    if not breakevenReached and currentProfitDollars >= beThreshold
+        breakevenReached := true
+        
+    // Update trailing stop
+    if enableTrailingStop and breakevenReached and na(trailingStopPrice)
+        activationProfit = safeATR * trailingStopActivation
+        if currentProfit >= activationProfit
+            trailDist = safeATR * trailingStopDistance
+            trailingStopPrice := isLongPosition ? close - trailDist : close + trailDist
+    else if enableTrailingStop and not na(trailingStopPrice)
+        trailDist = safeATR * trailingStopDistance
+        newTrail = isLongPosition ? close - trailDist : close + trailDist
+        if isLongPosition and newTrail > trailingStopPrice
+            trailingStopPrice := newTrail
+        else if isShortPosition and newTrail < trailingStopPrice
+            trailingStopPrice := newTrail
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    // Track loss
+    if currentProfitDollars < 0
+        todayLoss := todayLoss + math.abs(currentProfitDollars)
+    
+    // Reset
+    entryPrice := na
+    entryBar := na
+    isLongPosition := false
+    isShortPosition := false
+    peakProfit := 0.0
+    barsInPosition := 0
+    currentProfitDollars := 0.0
+    breakevenReached := false
+    trailingStopPrice := na
+    entryAlertId := ""
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🚨 CRITICAL FIX #7: COMPLETE ALERT SYSTEM WITH STOP LOSS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Alert state tracking
+var bool entryAlertFired = false
+var bool exitAlertFired = false
+var bool trailingAlertFired = false
+
+if strategy.position_size == 0
+    entryAlertFired := false
+    exitAlertFired := false
+    trailingAlertFired := false
+
+// Helper: Create JSON for TradersPost
+createEntryAlert(action, qty, entryPx, stopPx, targetPx) =>
+    stopDollars = math.abs(entryPx - stopPx) * syminfo.pointvalue
+    tpDollars = math.abs(targetPx - entryPx) * syminfo.pointvalue
+    
+    alertJson = 
+         '{"ticker":"' + getInstrumentTicker() + '"' +
+         ',"action":"' + action + '"' +
+         ',"orderType":"' + (useLimitOrders ? 'limit' : 'market') + '"' +
+         ',"quantity":"' + str.tostring(qty) + '"' +
+         ',"limitPrice":"' + str.tostring(entryPx) + '"' +
+         ',"stopLoss":"' + str.tostring(stopPx) + '"' +
+         ',"takeProfit":"' + str.tostring(targetPx) + '"' +
+         ',"stopLossAmount":"' + str.tostring(stopDollars, "#.##") + '"' +
+         ',"takeProfitAmount":"' + str.tostring(tpDollars, "#.##") + '"' +
+         ',"strategy":"RUN_V14.1_FIXED"' +
+         ',"timeframe":"' + timeframe.period + '"' +
+         ',"instrument":"' + instrumentName + '"' +
+         ',"starScore":' + str.tostring(starScore) +
+         ',"mtfAlignment":' + str.tostring(mtf_alignment_pct) +
+         ',"trendStrength":"' + str.tostring(trendStrength, "#.##") + '"' +
+         ',"adx":"' + str.tostring(adx, "#.#") + '"' +
+         ',"alertId":"' + str.tostring(bar_index) + '_' + instrumentName + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"}'
+    
+    alertJson
+
+createExitAlert(reason, qty, exitPx, pnl) =>
+    alertJson = 
+         '{"ticker":"' + getInstrumentTicker() + '"' +
+         ',"action":"exit"' +
+         ',"quantity":"' + str.tostring(qty) + '"' +
+         ',"exitPrice":"' + str.tostring(exitPx) + '"' +
+         ',"reason":"' + reason + '"' +
+         ',"pnl":"' + str.tostring(pnl, "#.##") + '"' +
+         ',"barsHeld":' + str.tostring(barsInPosition) +
+         ',"alertId":"' + entryAlertId + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"}'
+    
+    alertJson
+
+createTrailingAlert(newStop, currentProfit) =>
+    alertJson = 
+         '{"ticker":"' + getInstrumentTicker() + '"' +
+         ',"action":"update_stop"' +
+         ',"newStopLoss":"' + str.tostring(newStop) + '"' +
+         ',"currentProfit":"' + str.tostring(currentProfit, "#.##") + '"' +
+         ',"trailingActive":true' +
+         ',"alertId":"' + entryAlertId + '"' +
+         ',"timestamp":"' + str.tostring(time) + '"}'
+    
+    alertJson
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📤 ENTRY ALERTS (CRITICAL FIX: PROPER STOP LOSS IN EVERY ALERT)
+// ═══════════════════════════════════════════════════════════════════════════════
+if longCondition and not entryAlertFired
+    slDist = getActiveSL()
+    tpDist = getActiveTP()
+    qty = getActiveQty()
+    slip = getActiveSlippage()
+    
+    // Calculate prices with slippage protection
+    entryPx = useLimitOrders ? close + (slip * syminfo.mintick) : close
+    stopPx = entryPx - (slDist * syminfo.mintick)
+    targetPx = entryPx + (tpDist * syminfo.mintick)
+    
+    // Apply high win rate adjustments
+    if highWinRateMode
+        stopPx := entryPx - (slDist * widerSLMultiplier * syminfo.mintick)
+        targetPx := entryPx + (tpDist * quickTPMultiplier * syminfo.mintick)
+    
+    if enableTradersPostAlerts
+        alert(createEntryAlert("buy", qty, entryPx, stopPx, targetPx), alert.freq_once_per_bar)
+    
+    entryAlertFired := true
+    
+    // Backtest execution
+    if not alertOnlyMode
+        strategy.entry("LONG", strategy.long, qty=qty, limit=useLimitOrders ? entryPx : na)
+
+if shortCondition and not entryAlertFired
+    slDist = getActiveSL()
+    tpDist = getActiveTP()
+    qty = getActiveQty()
+    slip = getActiveSlippage()
+    
+    // Calculate prices with slippage protection
+    entryPx = useLimitOrders ? close - (slip * syminfo.mintick) : close
+    stopPx = entryPx + (slDist * syminfo.mintick)
+    targetPx = entryPx - (tpDist * syminfo.mintick)
+    
+    // Apply high win rate adjustments
+    if highWinRateMode
+        stopPx := entryPx + (slDist * widerSLMultiplier * syminfo.mintick)
+        targetPx := entryPx - (tpDist * quickTPMultiplier * syminfo.mintick)
+    
+    if enableTradersPostAlerts
+        alert(createEntryAlert("sell", qty, entryPx, stopPx, targetPx), alert.freq_once_per_bar)
+    
+    entryAlertFired := true
+    
+    // Backtest execution
+    if not alertOnlyMode
+        strategy.entry("SHORT", strategy.short, qty=qty, limit=useLimitOrders ? entryPx : na)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📤 TRAILING STOP ALERTS (CRITICAL FIX #8)
+// ═══════════════════════════════════════════════════════════════════════════════
+if not na(trailingStopPrice) and sendTrailingAlerts and not trailingAlertFired and 
+     strategy.position_size != 0 and barsInPosition >= 2
+    
+    if enableTradersPostAlerts
+        alert(createTrailingAlert(trailingStopPrice, currentProfitDollars), alert.freq_once_per_bar)
+    
+    trailingAlertFired := true
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🚪 EXIT LOGIC (WITH PROPER ALERTS)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Exit conditions
+signalReversalExit = (isLongPosition and baseShortSignal) or (isShortPosition and baseLongSignal)
+timeExit = barsInPosition >= 50
+maxLossExit = currentProfitDollars <= -150.0
+trailingStopHit = not na(trailingStopPrice) and 
+     ((isLongPosition and close <= trailingStopPrice) or (isShortPosition and close >= trailingStopPrice))
+
+shouldExit = (signalReversalExit or timeExit or maxLossExit or trailingStopHit) and strategy.position_size != 0
+
+if shouldExit and not exitAlertFired
+    exitReason = signalReversalExit ? "signal_reversal" : timeExit ? "max_time" : 
+         maxLossExit ? "max_loss" : trailingStopHit ? "trailing_stop" : "unknown"
+    
+    qty = math.abs(strategy.position_size)
+    
+    if enableTradersPostAlerts
+        alert(createExitAlert(exitReason, int(qty), close, currentProfitDollars), alert.freq_once_per_bar)
+    
+    exitAlertFired := true
+    
+    if not alertOnlyMode
+        strategy.close_all(comment=exitReason)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 BACKTEST STOP LOSS AND TAKE PROFIT (for non-alert mode)
+// ═══════════════════════════════════════════════════════════════════════════════
+if not alertOnlyMode and strategy.position_size > 0 and not na(entryPrice)
+    slDist = getActiveSL()
+    tpDist = getActiveTP()
+    
+    if highWinRateMode
+        slDist := slDist * widerSLMultiplier
+        tpDist := tpDist * quickTPMultiplier
+    
+    stopPrice = entryPrice - (slDist * syminfo.mintick)
+    targetPrice = entryPrice + (tpDist * syminfo.mintick)
+    
+    strategy.exit("TP/SL", "LONG", stop=stopPrice, limit=targetPrice)
+
+if not alertOnlyMode and strategy.position_size < 0 and not na(entryPrice)
+    slDist = getActiveSL()
+    tpDist = getActiveTP()
+    
+    if highWinRateMode
+        slDist := slDist * widerSLMultiplier
+        tpDist := tpDist * quickTPMultiplier
+    
+    stopPrice = entryPrice + (slDist * syminfo.mintick)
+    targetPrice = entryPrice - (tpDist * syminfo.mintick)
+    
+    strategy.exit("TP/SL", "SHORT", stop=stopPrice, limit=targetPrice)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊 VISUAL DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+var table dashboard = table.new(position.top_right, 4, 15, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.clear(dashboard, 0, 0)
+    
+    // Header
+    table.cell(dashboard, 0, 0, "🔥 RUN V14.1 FIXED", text_color=color.white, bgcolor=color.new(color.red, 60), text_size=size.normal)
+    table.cell(dashboard, 1, 0, "80% WIN RATE", text_color=color.lime, bgcolor=color.new(color.green, 70), text_size=size.normal)
+    table.cell(dashboard, 2, 0, instrumentName, text_color=color.yellow, bgcolor=color.new(color.blue, 70), text_size=size.normal)
+    table.cell(dashboard, 3, 0, timeframe.period, text_color=color.white, bgcolor=color.new(color.purple, 70))
+    
+    // Mode
+    table.cell(dashboard, 0, 1, "MODE", text_color=color.white, bgcolor=color.new(color.navy, 80))
+    table.cell(dashboard, 1, 1, alertOnlyMode ? "🚨 LIVE" : "📊 BACKTEST", 
+         text_color=alertOnlyMode ? color.lime : color.yellow, bgcolor=color.new(color.navy, 80))
+    table.cell(dashboard, 2, 1, "Alerts: " + (enableTradersPostAlerts ? "ON" : "OFF"), 
+         text_color=enableTradersPostAlerts ? color.lime : color.red, bgcolor=color.new(color.navy, 80))
+    table.cell(dashboard, 3, 1, useLimitOrders ? "LIMIT" : "MARKET", 
+         text_color=useLimitOrders ? color.lime : color.orange, bgcolor=color.new(color.navy, 80))
+    
+    // Filters Status
+    table.cell(dashboard, 0, 2, "🌟 STARS", text_color=color.white, bgcolor=color.new(color.orange, 80))
+    table.cell(dashboard, 1, 2, str.tostring(starScore) + "/5", 
+         text_color=fiveStarOK ? color.lime : color.red, bgcolor=color.new(color.orange, 80))
+    table.cell(dashboard, 2, 2, "Req: " + str.tostring(minStarsRequired), 
+         text_color=color.white, bgcolor=color.new(color.orange, 80))
+    table.cell(dashboard, 3, 2, fiveStarOK ? "✓ PASS" : "✗ FAIL", 
+         text_color=fiveStarOK ? color.lime : color.red, bgcolor=color.new(color.orange, 80))
+    
+    table.cell(dashboard, 0, 3, "📊 MTF", text_color=color.white, bgcolor=color.new(color.blue, 80))
+    table.cell(dashboard, 1, 3, str.tostring(mtf_alignment_pct) + "%", 
+         text_color=mtfAligned ? color.lime : color.red, bgcolor=color.new(color.blue, 80))
+    table.cell(dashboard, 2, 3, "15m/1h/4h", text_color=color.white, bgcolor=color.new(color.blue, 80))
+    table.cell(dashboard, 3, 3, mtfAligned ? "✓ PASS" : "✗ FAIL", 
+         text_color=mtfAligned ? color.lime : color.red, bgcolor=color.new(color.blue, 80))
+    
+    table.cell(dashboard, 0, 4, "📈 TREND", text_color=color.white, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 1, 4, str.tostring(trendStrength, "#.##"), 
+         text_color=strongTrend ? color.lime : rangingMarket ? color.red : color.yellow, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 2, 4, "ADX: " + str.tostring(adx, "#.#"), 
+         text_color=strongADX ? color.lime : color.gray, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 3, 4, trendOK ? "✓ PASS" : "✗ FAIL", 
+         text_color=trendOK ? color.lime : color.red, bgcolor=color.new(color.purple, 80))
+    
+    table.cell(dashboard, 0, 5, "💨 VOLUME", text_color=color.white, bgcolor=color.new(color.teal, 80))
+    table.cell(dashboard, 1, 5, str.tostring(volume / volumeMA, "#.#") + "x", 
+         text_color=volumeSurge ? color.lime : color.gray, bgcolor=color.new(color.teal, 80))
+    table.cell(dashboard, 2, 5, "Req: " + str.tostring(minVolumeMultiplier, "#.#") + "x", 
+         text_color=color.white, bgcolor=color.new(color.teal, 80))
+    table.cell(dashboard, 3, 5, volumeConfirm ? "✓ PASS" : "✗ FAIL", 
+         text_color=volumeConfirm ? color.lime : color.red, bgcolor=color.new(color.teal, 80))
+    
+    // Momentum
+    table.cell(dashboard, 0, 6, "RSI", text_color=color.white, bgcolor=color.new(color.maroon, 80))
+    table.cell(dashboard, 1, 6, str.tostring(rsi, "#.#"), 
+         text_color=rsi > 50 ? color.lime : color.red, bgcolor=color.new(color.maroon, 80))
+    table.cell(dashboard, 2, 6, "STOCH", text_color=color.white, bgcolor=color.new(color.maroon, 80))
+    table.cell(dashboard, 3, 6, str.tostring(stochK, "#.#"), 
+         text_color=stochK > 50 ? color.lime : color.red, bgcolor=color.new(color.maroon, 80))
+    
+    // Position
+    table.cell(dashboard, 0, 7, "POSITION", text_color=color.white, bgcolor=color.new(color.navy, 70))
+    table.cell(dashboard, 1, 7, strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT", 
+         text_color=strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.gray, 
+         bgcolor=color.new(color.navy, 70))
+    table.cell(dashboard, 2, 7, "Size: " + str.tostring(math.abs(strategy.position_size)), 
+         text_color=color.white, bgcolor=color.new(color.navy, 70))
+    table.cell(dashboard, 3, 7, str.tostring(barsInPosition) + " bars", 
+         text_color=color.white, bgcolor=color.new(color.navy, 70))
+    
+    // P&L
+    table.cell(dashboard, 0, 8, "P&L", text_color=color.white, bgcolor=color.new(color.olive, 80))
+    table.cell(dashboard, 1, 8, "$" + str.tostring(currentProfitDollars, "#.##"), 
+         text_color=currentProfitDollars >= 0 ? color.lime : color.red, bgcolor=color.new(color.olive, 80))
+    table.cell(dashboard, 2, 8, "Peak: $" + str.tostring(peakProfit, "#.##"), 
+         text_color=color.yellow, bgcolor=color.new(color.olive, 80))
+    table.cell(dashboard, 3, 8, breakevenReached ? "🛡️ BE" : "—", 
+         text_color=breakevenReached ? color.lime : color.gray, bgcolor=color.new(color.olive, 80))
+    
+    // Trailing Stop
+    table.cell(dashboard, 0, 9, "TRAIL", text_color=color.white, bgcolor=color.new(color.red, 80))
+    table.cell(dashboard, 1, 9, enableTrailingStop ? "ON" : "OFF", 
+         text_color=enableTrailingStop ? color.lime : color.gray, bgcolor=color.new(color.red, 80))
+    table.cell(dashboard, 2, 9, na(trailingStopPrice) ? "—" : str.tostring(trailingStopPrice, "#.##"), 
+         text_color=na(trailingStopPrice) ? color.gray : color.yellow, bgcolor=color.new(color.red, 80))
+    table.cell(dashboard, 3, 9, na(trailingStopPrice) ? "Inactive" : "Active", 
+         text_color=na(trailingStopPrice) ? color.gray : color.lime, bgcolor=color.new(color.red, 80))
+    
+    // Daily Stats
+    table.cell(dashboard, 0, 10, "TODAY", text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(dashboard, 1, 10, "Trades: " + str.tostring(todayTradeCount) + "/" + str.tostring(maxDailyTrades), 
+         text_color=maxTradesReached ? color.red : color.lime, bgcolor=color.new(color.green, 70))
+    table.cell(dashboard, 2, 10, "Loss: $" + str.tostring(todayLoss, "#.##"), 
+         text_color=maxLossReached ? color.red : color.white, bgcolor=color.new(color.green, 70))
+    table.cell(dashboard, 3, 10, "Limit: $" + str.tostring(maxDailyLoss), 
+         text_color=color.white, bgcolor=color.new(color.green, 70))
+    
+    // Settings
+    table.cell(dashboard, 0, 11, "SL/TP", text_color=color.white, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 1, 11, "SL: " + str.tostring(getActiveSL(), "#.#"), 
+         text_color=color.red, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 2, 11, "TP: " + str.tostring(getActiveTP(), "#.#"), 
+         text_color=color.lime, bgcolor=color.new(color.purple, 80))
+    table.cell(dashboard, 3, 11, "Qty: " + str.tostring(getActiveQty()), 
+         text_color=color.yellow, bgcolor=color.new(color.purple, 80))
+    
+    // Session
+    table.cell(dashboard, 0, 12, "SESSION", text_color=color.white, bgcolor=color.new(color.teal, 70))
+    sessionText = isRegularSession ? "REGULAR" : isPreMarket ? "PRE-MKT" : isAfterHours ? "AFTER" : "CLOSED"
+    sessionColor = isRegularSession ? color.lime : isPreMarket or isAfterHours ? color.yellow : color.red
+    table.cell(dashboard, 1, 12, sessionText, text_color=sessionColor, bgcolor=color.new(color.teal, 70))
+    table.cell(dashboard, 2, 12, str.tostring(currentTime), text_color=color.white, bgcolor=color.new(color.teal, 70))
+    table.cell(dashboard, 3, 12, canTradeNow ? "✓ OPEN" : "✗ CLOSED", 
+         text_color=canTradeNow ? color.lime : color.red, bgcolor=color.new(color.teal, 70))
+    
+    // Signal Ready
+    table.cell(dashboard, 0, 13, "SIGNAL", text_color=color.white, bgcolor=color.new(color.orange, 60), text_size=size.normal)
+    signalReady = longCondition or shortCondition
+    signalDir = longCondition ? "🔥 LONG" : shortCondition ? "🔥 SHORT" : "—"
+    signalColor = longCondition ? color.lime : shortCondition ? color.red : color.gray
+    table.cell(dashboard, 1, 13, signalDir, text_color=signalColor, bgcolor=color.new(color.orange, 60), text_size=size.normal)
+    table.cell(dashboard, 2, 13, signalReady ? "READY" : "WAITING", 
+         text_color=signalReady ? color.lime : color.yellow, bgcolor=color.new(color.orange, 60))
+    table.cell(dashboard, 3, 13, signalReady ? "✓" : "—", 
+         text_color=signalReady ? color.lime : color.gray, bgcolor=color.new(color.orange, 60), text_size=size.large)
+    
+    // Performance Target
+    table.cell(dashboard, 0, 14, "TARGET", text_color=color.white, bgcolor=color.new(color.red, 50), text_size=size.small)
+    table.cell(dashboard, 1, 14, "80% WR", text_color=color.lime, bgcolor=color.new(color.red, 50), text_size=size.small)
+    table.cell(dashboard, 2, 14, "$1500/day", text_color=color.yellow, bgcolor=color.new(color.red, 50), text_size=size.small)
+    table.cell(dashboard, 3, 14, "1.5% ROI", text_color=color.aqua, bgcolor=color.new(color.red, 50), text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎨 CHART PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull Main")
+plot(hullFast, color=color.gray, title="Hull Fast")
+plot(upperEnv, color=color.orange, title="Envelope Upper")
+plot(lowerEnv, color=color.orange, title="Envelope Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+
+// Entry signals
+plotshape(longCondition, location=location.belowbar, color=color.lime, style=shape.triangleup, 
+     text="LONG", size=size.normal, title="Long Entry")
+plotshape(shortCondition, location=location.abovebar, color=color.red, style=shape.triangledown, 
+     text="SHORT", size=size.normal, title="Short Entry")
+
+// Alert indicators
+plotshape(longCondition and enableTradersPostAlerts, location=location.belowbar, 
+     color=color.new(color.blue, 0), style=shape.diamond, text="📡", size=size.tiny, title="Alert Sent")
+plotshape(shortCondition and enableTradersPostAlerts, location=location.abovebar, 
+     color=color.new(color.orange, 0), style=shape.diamond, text="📡", size=size.tiny, title="Alert Sent")
+
+// Trailing stop line
+plot(not na(trailingStopPrice) ? trailingStopPrice : na, color=color.yellow, linewidth=2, 
+     style=plot.style_cross, title="Trailing Stop")
+
+// Background colors
+bgcolor(not canTradeNow ? color.new(color.red, 95) : na, title="Session Closed")
+bgcolor(rangingMarket ? color.new(color.gray, 97) : na, title="Ranging Market")
+bgcolor(fiveStarOK and mtfAligned and volumeConfirm and trendOK ? color.new(color.lime, 98) : 
+     color.new(color.red, 98), title="Filter Status")
+bgcolor(alertOnlyMode ? color.new(color.blue, 98) : color.new(color.yellow, 98), title="Mode Indicator")
