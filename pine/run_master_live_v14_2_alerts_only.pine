@@ -1,0 +1,441 @@
+//@version=5
+strategy("RUN 🔥 Live Deploy V14.2 (Alerts-Only, Trend/Continuation + MTF)", overlay=true, initial_capital=25000, pyramiding=1, calc_on_every_tick=false, process_orders_on_close=true)
+
+// =============================================================================
+// IMPORTANT
+// - This script is designed to EXECUTE LIVE via alert() webhook JSON only.
+// - Optional strategy.* simulation is available ONLY to estimate win rate / PnL
+//   inside TradingView and to maintain internal position state.
+// =============================================================================
+
+// =========================
+// Execution / Alerts
+// =========================
+execGroup = "Execution (Live via alert() only)"
+executionMode = input.string("AlertsOnly", "Execution Mode", options=["AlertsOnly", "BacktestAndAlerts"], group=execGroup)
+simulateStrategy = input.bool(true, "Simulate strategy positions (for stats/state)", group=execGroup,
+     tooltip="When ON, strategy.entry/exit are used for internal tracking/backtests. Live execution remains via alert() JSON.")
+fireOnBarClose = input.bool(true, "Fire alerts on bar close only", group=execGroup)
+cooldownBars = input.int(2, "Cooldown bars after entry", minval=0, maxval=50, group=execGroup)
+
+enableTradersPostAlerts = input.bool(true, "Enable TradersPost Webhook Alerts", group=execGroup)
+strategyTag = input.string("RUN_V14_2", "strategy tag (for webhook)", group=execGroup)
+
+// =========================
+// Time / Sessions (ET)
+// =========================
+sessionGroup = "Sessions (ET)"
+sessionTZ = input.string("America/New_York", "Session Timezone", group=sessionGroup)
+enable24x7 = input.bool(true, "Enable 24/7 trading", group=sessionGroup)
+enableNoTradeZone = input.bool(true, "No Trade Zone 00:00–06:00 ET", group=sessionGroup)
+enableAsian = input.bool(true, "Asian 19:00–03:00 ET", group=sessionGroup)
+enableLondon = input.bool(true, "London 03:00–12:00 ET", group=sessionGroup)
+enableNY = input.bool(true, "NY 09:30–16:00 ET", group=sessionGroup)
+
+etHour = hour(time, sessionTZ)
+etMin  = minute(time, sessionTZ)
+timeET = etHour * 100 + etMin
+
+isNoTrade = enableNoTradeZone and (timeET >= 0 and timeET < 600)
+isAsian = enableAsian and enable24x7 and ((timeET >= 1900) or (timeET < 300))
+isLondon = enableLondon and enable24x7 and (timeET >= 300 and timeET < 1200)
+isNY = enableNY and (timeET >= 930 and timeET <= 1600)
+
+sessionName = isAsian ? "ASIAN" : isLondon ? "LONDON" : isNY ? "NY" : "OTHER"
+canTradeSession = not isNoTrade
+
+// =========================
+// Instrument detection
+// =========================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+
+instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isM2K ? "M2K" : isMCL ? "MCL" : isMGC ? "MGC" : syminfo.ticker
+
+getInstrumentTicker() =>
+    // TradersPost/Tradovate commonly accepts continuous root like MNQ1!, MES1!, etc.
+    isMYM ? "MYM1!" :
+     isMNQ ? "MNQ1!" :
+     isMES ? "MES1!" :
+     isM2K ? "M2K1!" :
+     isMCL ? "MCL1!" :
+     isMGC ? "MGC1!" : syminfo.ticker
+
+// =========================
+// Market regime: avoid chop, allow breakouts
+// =========================
+regimeGroup = "Regime Filter (Trend/Continuation)"
+useRegimeFilter = input.bool(true, "Use regime filter (avoid ranging)", group=regimeGroup)
+adxLen = input.int(14, "ADX length", minval=5, maxval=50, group=regimeGroup)
+adxMin = input.float(18.0, "Min ADX to allow trend trades", minval=5.0, maxval=50.0, group=regimeGroup)
+allowBreakoutInRanges = input.bool(true, "Allow breakout trades even if ADX low", group=regimeGroup)
+
+adx = ta.adx(adxLen)
+trendOK = not useRegimeFilter or adx >= adxMin
+
+// =========================
+// MTF confirmation
+// =========================
+mtfGroup = "MTF Confirmation"
+enableMTF = input.bool(true, "Enable MTF confirmation", group=mtfGroup)
+mtfMode = input.string("Filter", "MTF mode", options=["Confirmation", "Filter", "Advisory"], group=mtfGroup)
+mtf_tf1 = input.timeframe("15", "MTF TF1", group=mtfGroup)
+mtf_tf2 = input.timeframe("60", "MTF TF2", group=mtfGroup)
+mtf_tf3 = input.timeframe("240", "MTF TF3", group=mtfGroup)
+mtfAlignThreshold = input.int(66, "Min alignment %", minval=0, maxval=100, group=mtfGroup)
+
+mtfTrend(tf) =>
+    tfClose = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    tfFast  = request.security(syminfo.tickerid, tf, ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+    tfSlow  = request.security(syminfo.tickerid, tf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+    tfClose > tfFast and tfFast > tfSlow ? 1 : tfClose < tfFast and tfFast < tfSlow ? -1 : 0
+
+mtfScore() =>
+    if not enableMTF
+        100
+    else
+        a1 = mtfTrend(mtf_tf1)
+        a2 = mtfTrend(mtf_tf2)
+        a3 = mtfTrend(mtf_tf3)
+        align = (a1 == a2 ? 1 : 0) + (a1 == a3 ? 1 : 0) + (a2 == a3 ? 1 : 0)
+        align * 33
+
+mtf_alignment_pct = mtfScore()
+mtfPass = not enableMTF or mtfMode == "Advisory" or mtf_alignment_pct >= mtfAlignThreshold
+
+// =========================
+// Core indicators (stable, non-repainting)
+// =========================
+indGroup = "Signals"
+hullSrc = input.source(close, "Hull source", group=indGroup)
+hullMainLen = input.int(25, "Hull main length", minval=10, maxval=60, group=indGroup)
+hullFastLen = input.int(9, "Hull fast length", minval=4, maxval=30, group=indGroup)
+
+envLen = input.int(12, "Envelope SMA length", minval=5, maxval=50, group=indGroup)
+envDevPct = input.float(0.8, "Envelope deviation %", minval=0.1, maxval=3.0, group=indGroup)
+
+rsiLen = input.int(6, "RSI length", minval=3, maxval=21, group=indGroup)
+stochLen = input.int(6, "Stoch length", minval=3, maxval=21, group=indGroup)
+
+hma(src, len) =>
+    hl = math.max(math.round(len / 2), 1)
+    sl = math.max(math.round(math.sqrt(len)), 1)
+    ta.wma(2 * ta.wma(src, hl) - ta.wma(src, len), sl)
+
+hullMain = hma(hullSrc, hullMainLen)
+hullFast = hma(hullSrc, hullFastLen)
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+
+smaBasis = ta.sma(close, envLen)
+upperEnv = smaBasis * (1 + envDevPct / 100)
+lowerEnv = smaBasis * (1 - envDevPct / 100)
+breakoutUp = close > upperEnv
+breakoutDn = close < lowerEnv
+breakoutOK = allowBreakoutInRanges and (breakoutUp or breakoutDn)
+
+rsi = ta.rsi(close, rsiLen)
+stoch = ta.stoch(close, high, low, stochLen)
+stochK = ta.sma(stoch, 3)
+
+momentumBull = rsi > 45 and rsi < 72 and stochK > 30 and stochK < 85
+momentumBear = rsi < 55 and rsi > 28 and stochK < 70 and stochK > 15
+
+// Continuation-style signals (avoid sideways by regime filter unless breakout)
+longSignalRaw  = slopeMain == 1 and slopeFast == 1 and close > smaBasis and momentumBull
+shortSignalRaw = slopeMain == -1 and slopeFast == -1 and close < smaBasis and momentumBear
+
+longSignal  = longSignalRaw and (trendOK or breakoutOK) and mtfPass and canTradeSession
+shortSignal = shortSignalRaw and (trendOK or breakoutOK) and mtfPass and canTradeSession
+
+// =========================
+// Risk / SL / TP (per-instrument overrides)
+// =========================
+riskGroup = "Risk (SL/TP + Trailing)"
+atrLen = input.int(14, "ATR length", minval=5, maxval=50, group=riskGroup)
+atr = ta.atr(atrLen)
+
+// Default distances are in PRICE UNITS (points for index futures, dollars for MCL/MGC price units).
+useCustom = input.bool(false, "Use per-instrument fixed SL/TP overrides", group=riskGroup)
+
+mes_sl = input.float(7.0, "MES SL (points)", group=riskGroup)
+mes_tp = input.float(10.0, "MES TP (points)", group=riskGroup)
+mnq_sl = input.float(25.0, "MNQ SL (points)", group=riskGroup)
+mnq_tp = input.float(35.0, "MNQ TP (points)", group=riskGroup)
+mym_sl = input.float(60.0, "MYM SL (points)", group=riskGroup)
+mym_tp = input.float(90.0, "MYM TP (points)", group=riskGroup)
+m2k_sl = input.float(9.0, "M2K SL (points)", group=riskGroup)
+m2k_tp = input.float(14.0, "M2K TP (points)", group=riskGroup)
+mcl_sl = input.float(0.30, "MCL SL (price $)", group=riskGroup)
+mcl_tp = input.float(0.50, "MCL TP (price $)", group=riskGroup)
+mgc_sl = input.float(4.0, "MGC SL (price $)", group=riskGroup)
+mgc_tp = input.float(7.0, "MGC TP (price $)", group=riskGroup)
+
+// ATR-based sizing (used when useCustom = false)
+slAtrMult = input.float(2.4, "SL = ATR *", minval=0.5, maxval=10.0, group=riskGroup)
+tpAtrMult = input.float(3.2, "TP = ATR *", minval=0.5, maxval=15.0, group=riskGroup)
+
+getSLDist() =>
+    float d = atr * slAtrMult
+    if useCustom
+        d := isMES ? mes_sl : isMNQ ? mnq_sl : isMYM ? mym_sl : isM2K ? m2k_sl : isMCL ? mcl_sl : isMGC ? mgc_sl : d
+    d
+
+getTPDist() =>
+    float d = atr * tpAtrMult
+    if useCustom
+        d := isMES ? mes_tp : isMNQ ? mnq_tp : isMYM ? mym_tp : isM2K ? m2k_tp : isMCL ? mcl_tp : isMGC ? mgc_tp : d
+    d
+
+// Breakeven + trailing AFTER breakeven
+enableBreakeven = input.bool(true, "Enable breakeven protection", group=riskGroup)
+beAtrMult = input.float(1.2, "Breakeven trigger (ATR *)", minval=0.2, maxval=5.0, group=riskGroup)
+breakevenTicks = input.int(2, "Breakeven offset (ticks)", minval=0, maxval=20, group=riskGroup)
+
+enableTrailAfterBE = input.bool(true, "Enable trailing stop after breakeven", group=riskGroup)
+trailAtrMult = input.float(1.0, "Trailing distance (ATR *)", minval=0.2, maxval=5.0, group=riskGroup)
+trailStepTicks = input.int(4, "Trail update step (ticks)", minval=1, maxval=100, group=riskGroup)
+
+// =========================
+// Slippage control (entry order type fields in webhook)
+// =========================
+slipGroup = "Slippage / Entry Order Type (Webhook Fields)"
+entryOrderType = input.string("stop_limit", "Entry order type", options=["market", "limit", "stop_limit"], group=slipGroup)
+entryBufferTicks = input.int(4, "Entry stop buffer (ticks)", minval=0, maxval=200, group=slipGroup)
+stopLimitOffsetTicks = input.int(8, "Stop-limit offset (ticks)", minval=1, maxval=500, group=slipGroup,
+     tooltip="For stop_limit: limit price = stop price ± offset. Wider offset improves fill rate but increases allowed slippage.")
+maxSlippageTicksAdvisory = input.int(40, "Advisory max slippage (ticks)", minval=0, maxval=2000, group=slipGroup,
+     tooltip="Sent in JSON as an advisory field; actual enforcement depends on your automation platform.")
+
+priceDiffToDollars(p1, p2) =>
+    math.abs(p1 - p2) * syminfo.pointvalue
+
+// =========================
+// Position state (for AlertsOnly reliability)
+// =========================
+var int   simDir = 0     // 1 long, -1 short, 0 flat (script-side)
+var float simEntry = na
+var float simSL = na
+var float simTP = na
+var float simTrailSL = na
+var bool  simBEActive = false
+var int   simEntryBar = na
+var int   seq = 0
+var string activeId = ""
+var float lastSentStop = na
+
+// Day key (ET) for IDs/resets
+dayKey = dayofyear(time, sessionTZ)
+var int lastDayKey = na
+if na(lastDayKey)
+    lastDayKey := dayKey
+if dayKey != lastDayKey
+    // Reset daily state
+    lastDayKey := dayKey
+    seq := 0
+
+shouldFireNow = not fireOnBarClose or barstate.isconfirmed
+
+// If simulation is enabled, prefer strategy.position_size for state cleanup
+posSize = simulateStrategy ? strategy.position_size : 0
+if simulateStrategy and posSize == 0 and posSize[1] != 0
+    simDir := 0
+    simEntry := na
+    simSL := na
+    simTP := na
+    simTrailSL := na
+    simBEActive := false
+    simEntryBar := na
+    activeId := ""
+    lastSentStop := na
+
+// For AlertsOnly without simulation, clear when price touches SL/TP (approx)
+if not simulateStrategy and simDir != 0 and not na(simSL) and not na(simTP)
+    hitSL = simDir == 1 ? low <= simSL : high >= simSL
+    hitTP = simDir == 1 ? high >= simTP : low <= simTP
+    if hitSL or hitTP
+        simDir := 0
+        simEntry := na
+        simSL := na
+        simTP := na
+        simTrailSL := na
+        simBEActive := false
+        simEntryBar := na
+        activeId := ""
+        lastSentStop := na
+
+inCooldown = simDir != 0 and not na(simEntryBar) and (bar_index - simEntryBar) < cooldownBars
+
+// =========================
+// Webhook JSON builders
+// =========================
+buildEntryJson(_id, _side, _qty, _entryStop, _entryLimit, _sl, _tp) =>
+    stopAmt = priceDiffToDollars(_entryStop, _sl)
+    tpAmt   = priceDiffToDollars(_tp, _entryStop)
+    // Required-ish fields first; keep string formatting simple for platform compatibility.
+    j = '{' +
+         '"ticker":"' + getInstrumentTicker() + '",' +
+         '"action":"' + _side + '",' +
+         '"quantity":"' + str.tostring(_qty) + '",' +
+         '"strategy":"' + strategyTag + '",' +
+         '"signal_id":"' + _id + '",' +
+         '"timeframe":"' + timeframe.period + '",' +
+         '"session":"' + sessionName + '",' +
+         '"instrument":"' + instrumentName + '",' +
+         '"order_type":"' + entryOrderType + '",' +
+         '"stop_loss":"' + str.tostring(_sl) + '",' +
+         '"take_profit":"' + str.tostring(_tp) + '",' +
+         '"stop_loss_amount":"' + str.tostring(stopAmt, "#.##") + '",' +
+         '"take_profit_amount":"' + str.tostring(tpAmt, "#.##") + '",' +
+         '"mtf_alignment_pct":' + str.tostring(mtf_alignment_pct) + ',' +
+         '"adx":' + str.tostring(adx, "#.##") + ',' +
+         '"max_slippage_ticks":' + str.tostring(maxSlippageTicksAdvisory)
+    if entryOrderType == "market"
+        j += ',"price":"' + str.tostring(close) + '"'
+    else if entryOrderType == "limit"
+        j += ',"limit_price":"' + str.tostring(_entryLimit) + '"'
+    else
+        j += ',"stop_price":"' + str.tostring(_entryStop) + '","limit_price":"' + str.tostring(_entryLimit) + '"'
+    j + '}'
+
+buildMoveStopJson(_id, _newSL) =>
+    '{' +
+     '"ticker":"' + getInstrumentTicker() + '",' +
+     '"action":"move_stop",' +
+     '"strategy":"' + strategyTag + '",' +
+     '"signal_id":"' + _id + '",' +
+     '"new_stop_loss":"' + str.tostring(_newSL) + '",' +
+     '"timeframe":"' + timeframe.period + '"' +
+     '}'
+
+// =========================
+// Entry logic (single path, no duplicates)
+// =========================
+defaultQty = 1
+
+canEnter = simDir == 0 and not inCooldown
+
+// Compute entry stop/limit prices for stop_limit or limit
+tick = syminfo.mintick
+buf = entryBufferTicks * tick
+off = stopLimitOffsetTicks * tick
+
+// Long order prices
+longStopPrice = high + buf
+longLimitPrice = entryOrderType == "limit" ? close : (longStopPrice + off)
+// Short order prices
+shortStopPrice = low - buf
+shortLimitPrice = entryOrderType == "limit" ? close : (shortStopPrice - off)
+
+// SL/TP prices are anchored off the intended trigger price (stop) for bracket consistency.
+slDist = getSLDist()
+tpDist = getTPDist()
+longSL = longStopPrice - slDist
+longTP = longStopPrice + tpDist
+shortSL = shortStopPrice + slDist
+shortTP = shortStopPrice - tpDist
+
+newLong = shouldFireNow and enableTradersPostAlerts and canEnter and longSignal
+newShort = shouldFireNow and enableTradersPostAlerts and canEnter and shortSignal
+
+if newLong
+    seq += 1
+    activeId := instrumentName + "-" + str.tostring(dayKey) + "-" + str.tostring(seq)
+    simDir := 1
+    simEntry := longStopPrice
+    simSL := longSL
+    simTP := longTP
+    simTrailSL := na
+    simBEActive := false
+    simEntryBar := bar_index
+    lastSentStop := na
+    if enableTradersPostAlerts
+        alert(buildEntryJson(activeId, "buy", defaultQty, longStopPrice, longLimitPrice, longSL, longTP),
+             fireOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if simulateStrategy and executionMode != "AlertsOnly"
+        strategy.entry("L-" + activeId, strategy.long, qty=defaultQty)
+        strategy.exit("Lx-" + activeId, from_entry="L-" + activeId, stop=longSL, limit=longTP)
+
+if newShort
+    seq += 1
+    activeId := instrumentName + "-" + str.tostring(dayKey) + "-" + str.tostring(seq)
+    simDir := -1
+    simEntry := shortStopPrice
+    simSL := shortSL
+    simTP := shortTP
+    simTrailSL := na
+    simBEActive := false
+    simEntryBar := bar_index
+    lastSentStop := na
+    if enableTradersPostAlerts
+        alert(buildEntryJson(activeId, "sell", defaultQty, shortStopPrice, shortLimitPrice, shortSL, shortTP),
+             fireOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    if simulateStrategy and executionMode != "AlertsOnly"
+        strategy.entry("S-" + activeId, strategy.short, qty=defaultQty)
+        strategy.exit("Sx-" + activeId, from_entry="S-" + activeId, stop=shortSL, limit=shortTP)
+
+// =========================
+// Breakeven + trailing stop updates (alerts)
+// =========================
+if enableTradersPostAlerts and shouldFireNow and simDir != 0 and not na(simEntry) and not na(simSL) and enableBreakeven
+    beTrig = beAtrMult * atr
+    if simDir == 1
+        reachedBE = high >= (simEntry + beTrig)
+        if reachedBE
+            simBEActive := true
+            beSL = simEntry + (breakevenTicks * tick)
+            simSL := math.max(simSL, beSL)
+    else
+        reachedBE = low <= (simEntry - beTrig)
+        if reachedBE
+            simBEActive := true
+            beSL = simEntry - (breakevenTicks * tick)
+            simSL := math.min(simSL, beSL)
+
+// Trail only after breakeven is active
+if enableTradersPostAlerts and shouldFireNow and simDir != 0 and simBEActive and enableTrailAfterBE and not na(simEntry) and not na(simSL)
+    trailDist = trailAtrMult * atr
+    step = trailStepTicks * tick
+    if simDir == 1
+        newTrail = close - trailDist
+        // Never trail below current SL
+        newTrail := math.max(newTrail, simSL)
+        // Step filter
+        if na(simTrailSL)
+            simTrailSL := newTrail
+        else
+            simTrailSL := math.max(simTrailSL, newTrail)
+        if na(lastSentStop) or (simTrailSL - lastSentStop) >= step
+            lastSentStop := simTrailSL
+            alert(buildMoveStopJson(activeId, simTrailSL),
+                 fireOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+    else
+        newTrail = close + trailDist
+        newTrail := math.min(newTrail, simSL)
+        if na(simTrailSL)
+            simTrailSL := newTrail
+        else
+            simTrailSL := math.min(simTrailSL, newTrail)
+        if na(lastSentStop) or (lastSentStop - simTrailSL) >= step
+            lastSentStop := simTrailSL
+            alert(buildMoveStopJson(activeId, simTrailSL),
+                 fireOnBarClose ? alert.freq_once_per_bar_close : alert.freq_once_per_bar)
+
+// =========================
+// Plots / Debug
+// =========================
+plot(hullMain, color=slopeMain == 1 ? color.new(color.lime, 0) : slopeMain == -1 ? color.new(color.red, 0) : color.new(color.gray, 0), linewidth=2, title="Hull Main")
+plot(hullFast, color=color.new(color.gray, 0), title="Hull Fast")
+plot(upperEnv, color=color.new(color.orange, 0), title="Upper Envelope")
+plot(lowerEnv, color=color.new(color.orange, 0), title="Lower Envelope")
+
+bgcolor(isNoTrade ? color.new(color.red, 92) : na, title="No Trade")
+bgcolor(trendOK ? color.new(color.lime, 94) : na, title="Trend OK")
+
+plotshape(longSignal and shouldFireNow and simDir == 0, title="Long Signal", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny, text="L")
+plotshape(shortSignal and shouldFireNow and simDir == 0, title="Short Signal", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="S")
+
