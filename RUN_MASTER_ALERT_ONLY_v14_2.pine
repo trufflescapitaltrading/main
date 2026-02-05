@@ -1,0 +1,642 @@
+//@version=5
+indicator("RUN 🔥 MASTER ALERT-ONLY v14.2 (MTF Trend + Slippage Guard + BE→Trail)", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// =============================================================================
+// IMPORTANT
+// - This script is ALERT-ONLY: it uses `alert()` calls (no `strategy.*` orders).
+// - It is designed for TradersPost → Tradovate/TopstepX style automation.
+// - It includes slippage protection (optional LIMIT entries + max-gap/range filters),
+//   and sends BOTH price-based and dollar-based SL/TP fields for compatibility.
+// =============================================================================
+
+// === CORE MODELS ===
+highWinRateMode = input.bool(true, "🎯 High Win Rate Mode (quality over frequency)", group="Core")
+confluenceLevel = input.int(12, "🎯 Confluence Level (1=Loose, 15=Strict)", minval=1, maxval=15, group="Core")
+
+// === MARKET REGIME (SIDEWAYS AVOIDANCE) ===
+blockRanging = input.bool(true, "🚫 Block Sideways/Ranging (allow only impulse/breakout)", group="Market Regime")
+allowImpulseInRange = input.bool(true, "✅ Allow impulse/breakout even if ranging", group="Market Regime")
+trendStrengthLookback = input.int(8, "Trend Strength Lookback", minval=4, maxval=30, group="Market Regime")
+strongTrendThresh = input.float(0.15, "Strong Trend Threshold", minval=0.05, maxval=0.40, group="Market Regime")
+rangingThresh = input.float(0.08, "Ranging Threshold", minval=0.01, maxval=0.20, group="Market Regime")
+
+// === SESSIONS (NEW YORK TIME) ===
+enableSessions = input.bool(true, "Enable Session Filters", group="Sessions (ET)")
+enableNoTradeZone = input.bool(true, "🚫 No Trade Zone (00:00–06:00 ET)", group="Sessions (ET)")
+enableAsianSession = input.bool(true, "Asian (19:00–03:00 ET)", group="Sessions (ET)")
+enableLondonSession = input.bool(true, "London (03:00–12:00 ET)", group="Sessions (ET)")
+enableNYSession = input.bool(true, "NY (09:30–16:00 ET)", group="Sessions (ET)")
+enableUAESession = input.bool(true, "UAE (00:00–08:00 ET)", group="Sessions (ET)")
+
+asianMultiplier = input.float(1.15, "Asian Multiplier", minval=0.5, maxval=2.0, group="Sessions (ET)")
+londonMultiplier = input.float(1.25, "London Multiplier", minval=0.5, maxval=2.0, group="Sessions (ET)")
+nyMultiplier = input.float(1.40, "NY Multiplier", minval=0.5, maxval=2.0, group="Sessions (ET)")
+uaeMultiplier = input.float(0.90, "UAE Multiplier", minval=0.5, maxval=2.0, group="Sessions (ET)")
+
+// === MTF TREND CONFIRMATION ===
+enableMTF = input.bool(true, "Enable MTF Confirmation (15/60/240)", group="MTF")
+mtfMode = input.string("Confirmation", "MTF Mode", options=["Confirmation", "Filter", "Advisory"], group="MTF")
+mtf_tf1 = input.timeframe("15", "MTF 1", group="MTF")
+mtf_tf2 = input.timeframe("60", "MTF 2", group="MTF")
+mtf_tf3 = input.timeframe("240", "MTF 3", group="MTF")
+mtfAlignThreshold = input.int(66, "MTF Alignment % Threshold", minval=0, maxval=100, group="MTF")
+
+// === SIGNAL FAMILY TOGGLES ===
+enableStrongSignals = input.bool(true, "Enable STRONG signals", group="Signals")
+enableScalpSignals = input.bool(true, "Enable SCALP signals", group="Signals")
+enableInstantSignals = input.bool(true, "Enable INSTANT signals", group="Signals")
+enableMicroSignals = input.bool(true, "Enable MICRO signals", group="Signals")
+
+// === RISK / SIZE ===
+useDynamicSizing = input.bool(true, "Use Dynamic Sizing (risk%)", group="Risk / Size")
+accountEquity = input.float(25000, "Equity used for sizing ($)", minval=1000, step=100, group="Risk / Size")
+baseRiskPercent = input.float(0.55, "Base Risk per Trade (%)", minval=0.05, maxval=2.5, group="Risk / Size")
+maxContractsCap = input.int(10, "Max Contracts Cap", minval=1, maxval=50, group="Risk / Size")
+useFixedContracts = input.bool(false, "Use Fixed Contracts (override)", group="Risk / Size")
+fixedContracts = input.int(1, "Fixed Contracts", minval=1, maxval=50, group="Risk / Size")
+
+// === PER-INSTRUMENT OVERRIDES (distance in price units) ===
+perInstGroup = "Per-Instrument SL/TP/Size"
+
+mes_useCustom = input.bool(false, "MES: Use Custom SL/TP/Size", group=perInstGroup)
+mes_customSL  = input.float(7.0, "MES: SL (points)", group=perInstGroup)
+mes_customTP  = input.float(10.0, "MES: TP (points)", group=perInstGroup)
+mes_customQty = input.int(1, "MES: Qty", minval=1, maxval=50, group=perInstGroup)
+
+mnq_useCustom = input.bool(false, "MNQ: Use Custom SL/TP/Size", group=perInstGroup)
+mnq_customSL  = input.float(25.0, "MNQ: SL (points)", group=perInstGroup)
+mnq_customTP  = input.float(35.0, "MNQ: TP (points)", group=perInstGroup)
+mnq_customQty = input.int(1, "MNQ: Qty", minval=1, maxval=50, group=perInstGroup)
+
+mym_useCustom = input.bool(false, "MYM: Use Custom SL/TP/Size", group=perInstGroup)
+mym_customSL  = input.float(60.0, "MYM: SL (points)", group=perInstGroup)
+mym_customTP  = input.float(90.0, "MYM: TP (points)", group=perInstGroup)
+mym_customQty = input.int(1, "MYM: Qty", minval=1, maxval=50, group=perInstGroup)
+
+mcl_useCustom = input.bool(false, "MCL: Use Custom SL/TP/Size", group=perInstGroup)
+mcl_customSL  = input.float(0.30, "MCL: SL (price $)", group=perInstGroup)
+mcl_customTP  = input.float(0.50, "MCL: TP (price $)", group=perInstGroup)
+mcl_customQty = input.int(1, "MCL: Qty", minval=1, maxval=50, group=perInstGroup)
+
+mgc_useCustom = input.bool(false, "MGC: Use Custom SL/TP/Size", group=perInstGroup)
+mgc_customSL  = input.float(4.0, "MGC: SL (price $)", group=perInstGroup)
+mgc_customTP  = input.float(7.0, "MGC: TP (price $)", group=perInstGroup)
+mgc_customQty = input.int(1, "MGC: Qty", minval=1, maxval=50, group=perInstGroup)
+
+m2k_useCustom = input.bool(false, "M2K: Use Custom SL/TP/Size", group=perInstGroup)
+m2k_customSL  = input.float(9.0, "M2K: SL (points)", group=perInstGroup)
+m2k_customTP  = input.float(14.0, "M2K: TP (points)", group=perInstGroup)
+m2k_customQty = input.int(1, "M2K: Qty", minval=1, maxval=50, group=perInstGroup)
+
+// === STOP / TP MODEL ===
+useAtrStops = input.bool(true, "Use ATR-based stops/targets (fallback)", group="Stops / Targets")
+atrLen = input.int(10, "ATR Length", minval=3, maxval=50, group="Stops / Targets")
+atrStopMult = input.float(2.8, "ATR Stop Multiplier", minval=0.8, maxval=8.0, group="Stops / Targets")
+atrTpMult = input.float(2.2, "ATR TP Multiplier", minval=0.8, maxval=10.0, group="Stops / Targets")
+
+// === SLIPPAGE PROTECTION (THE BIG LIVE FIX) ===
+useLimitEntries = input.bool(true, "✅ Use LIMIT entries (recommended)", group="Slippage Guard")
+entryOffsetTicks = input.int(2, "Entry limit offset (ticks)", minval=0, maxval=50, group="Slippage Guard")
+maxGapAtr = input.float(0.9, "Max open gap (ATR) to allow entry", minval=0.1, maxval=5.0, group="Slippage Guard")
+maxBarRangeAtr = input.float(1.4, "Max bar range (ATR) to allow entry", minval=0.2, maxval=6.0, group="Slippage Guard")
+slippageTicksForStops = input.int(2, "Extra ticks added to stop (slippage)", minval=0, maxval=30, group="Slippage Guard")
+
+// === BREAKEVEN → TRAILING ===
+enableBreakeven = input.bool(true, "Enable Breakeven", group="Breakeven / Trailing")
+breakevenAtr = input.float(1.2, "Breakeven trigger (ATR)", minval=0.2, maxval=6.0, group="Breakeven / Trailing")
+breakevenBufferTicks = input.int(2, "Breakeven buffer (ticks)", minval=0, maxval=30, group="Breakeven / Trailing")
+enableTrailAfterBE = input.bool(true, "Enable Trailing AFTER Breakeven", group="Breakeven / Trailing")
+trailAtr = input.float(1.3, "Trailing distance (ATR)", minval=0.2, maxval=8.0, group="Breakeven / Trailing")
+stopUpdateStepTicks = input.int(4, "Stop-update alert step (ticks)", minval=1, maxval=100, group="Breakeven / Trailing")
+
+// === DAILY LIMITS / COOLDOWN ===
+enableDailyTradeLimit = input.bool(true, "Enable Daily Trade Limit", group="Limits")
+maxDailyTrades = input.int(12, "Max Daily Trades", minval=1, maxval=100, group="Limits")
+cooldownBars = input.int(5, "Cooldown Bars After Exit", minval=0, maxval=200, group="Limits")
+
+// === WEBHOOK / JSON COMPATIBILITY ===
+enableAlerts = input.bool(true, "Enable Webhook Alerts", group="Webhook")
+strategyTag = input.string("RUN_MASTER_v14.2", "Strategy Tag", group="Webhook")
+numbersAsStrings = input.bool(false, "Send numbers as JSON strings (compat)", group="Webhook")
+includeCompatFields = input.bool(true, "Include compatibility field variants (stopLoss/stop_loss etc.)", group="Webhook")
+
+// =============================================================================
+// INSTRUMENT DETECTION
+// =============================================================================
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMNQ = str.contains(syminfo.ticker, "MNQ") or str.contains(syminfo.ticker, "NQ")
+isMCL = str.contains(syminfo.ticker, "MCL") or str.contains(syminfo.ticker, "CL")
+isMGC = str.contains(syminfo.ticker, "MGC") or str.contains(syminfo.ticker, "GC")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+instrumentName = isMYM ? "MYM" : isMNQ ? "MNQ" : isMES ? "MES" : isMCL ? "MCL" : isMGC ? "MGC" : isM2K ? "M2K" : syminfo.ticker
+
+instrumentRiskMult = isMYM ? 1.2 : isMNQ ? 1.1 : isMES ? 1.1 : isMCL ? 1.0 : isMGC ? 1.0 : isM2K ? 1.05 : 1.0
+
+getInstrumentTicker() =>
+    // Common continuous symbols; adjust if your broker mapping differs.
+    isMYM ? "MYM1!" :
+     isMNQ ? "MNQ1!" :
+     isMES ? "MES1!" :
+     isMCL ? "MCL1!" :
+     isMGC ? "MGC1!" :
+     isM2K ? "M2K1!" : syminfo.ticker
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+hma(src, len) =>
+    _len = math.max(len, 2)
+    half = math.round(_len / 2)
+    sqrt = math.round(math.sqrt(_len))
+    ta.wma(2 * ta.wma(src, half) - ta.wma(src, _len), sqrt)
+
+priceDiffToDollars(p1, p2) =>
+    math.abs(p1 - p2) * syminfo.pointvalue
+
+jsonValFloat(v, fmt) =>
+    s = str.tostring(v, fmt)
+    numbersAsStrings ? '"' + s + '"' : s
+
+jsonValInt(v) =>
+    s = str.tostring(v)
+    numbersAsStrings ? '"' + s + '"' : s
+
+mtfTrend(tf) =>
+    tf_close = request.security(syminfo.tickerid, tf, close, lookahead=barmerge.lookahead_off)
+    tf_wma   = request.security(syminfo.tickerid, tf, ta.wma(close, 8), lookahead=barmerge.lookahead_off)
+    tf_close > tf_wma ? 1 : tf_close < tf_wma ? -1 : 0
+
+mtfScore() =>
+    if not enableMTF
+        100
+    else
+        a1 = mtfTrend(mtf_tf1)
+        a2 = mtfTrend(mtf_tf2)
+        a3 = mtfTrend(mtf_tf3)
+        align = (a1 == a2 ? 1 : 0) + (a1 == a3 ? 1 : 0) + (a2 == a3 ? 1 : 0)
+        align * 33
+
+mtf_alignment_pct = mtfScore()
+
+// =============================================================================
+// TIME (ET)
+// =============================================================================
+etHour = hour(time, "America/New_York")
+etMin  = minute(time, "America/New_York")
+timeET = etHour * 100 + etMin
+
+isNoTradeZone = enableSessions and enableNoTradeZone and (timeET >= 0 and timeET < 600)
+isAsianSession = enableSessions and enableAsianSession and ((timeET >= 1900) or (timeET < 300))
+isLondonSession = enableSessions and enableLondonSession and (timeET >= 300 and timeET < 1200)
+isNYSession = enableSessions and enableNYSession and (timeET >= 930 and timeET <= 1600)
+isUAESession = enableSessions and enableUAESession and (timeET >= 0 and timeET < 800)
+
+getActiveSession() =>
+    isAsianSession  ? "ASIAN" :
+     isLondonSession ? "LONDON" :
+     isNYSession     ? "NY" :
+     isUAESession    ? "UAE" : "REGULAR"
+
+activeSessionMultiplier =
+    isAsianSession ? asianMultiplier :
+     isLondonSession ? londonMultiplier :
+     isNYSession ? nyMultiplier :
+     isUAESession ? uaeMultiplier :
+     enableSessions ? 0.8 : 1.0
+
+canTradeNow = not isNoTradeZone
+
+// =============================================================================
+// INDICATORS
+// =============================================================================
+atr = ta.atr(atrLen)
+safeATR = math.max(atr, syminfo.mintick * 10)
+
+// Hull
+hullMain = hma(close, isMNQ or isMYM ? 19 : 25)
+hullFast = hma(close, isMNQ or isMYM ? 7 : 9)
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+hullAnyBullish = slopeMain == 1 or slopeFast == 1
+hullAnyBearish = slopeMain == -1 or slopeFast == -1
+hullMicroTurn = slopeFast != slopeFast[1]
+
+// Envelope
+envLen = isMGC ? 13 : 12
+envDev = isMYM ? 0.9 : isMNQ ? 0.8 : 0.8
+smaBasis = ta.sma(close, math.max(envLen, 2))
+upperEnv = smaBasis * (1 + envDev / 100)
+lowerEnv = smaBasis * (1 - envDev / 100)
+
+// SuperTrend-ish pivot center
+pivotPeriod = 2
+ph = ta.pivothigh(pivotPeriod, pivotPeriod)
+pl = ta.pivotlow(pivotPeriod, pivotPeriod)
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrFactor = (isMYM ? 2.6 : isMNQ ? 2.4 : 2.2)
+upBand = na(center) ? close - atrFactor * atr : center - atrFactor * atr
+dnBand = na(center) ? close + atrFactor * atr : center + atrFactor * atr
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+trendChange = trend != trend[1]
+
+// Volume
+volumeMA = ta.sma(volume, 6)
+volumeConfirm = volume > volumeMA * 0.9
+strongVolume = volume > volumeMA * 1.2
+
+// Momentum (high WR version)
+rsi = ta.rsi(close, 6)
+stoch = ta.stoch(close, high, low, 6)
+stochK = ta.sma(stoch, 3)
+momentumBullish = highWinRateMode ? (rsi > 40 and rsi < 65 and stochK > 25 and stochK < 75) : (rsi > 35 and stochK > 25)
+momentumBearish = highWinRateMode ? (rsi < 60 and rsi > 35 and stochK < 75 and stochK > 25) : (rsi < 65 and stochK < 75)
+strongMomentumBull = rsi > 45 and rsi < 70 and stochK > 35 and stochK < 80
+strongMomentumBear = rsi < 55 and rsi > 30 and stochK < 65 and stochK > 20
+
+// Market regime
+priceRange = ta.highest(high, trendStrengthLookback) - ta.lowest(low, trendStrengthLookback)
+trendStrength = priceRange > 0 ? math.abs(close - close[trendStrengthLookback]) / priceRange : 0.0
+strongTrend = trendStrength > strongTrendThresh
+rangingMarket = trendStrength < rangingThresh
+moderateTrend = not strongTrend and not rangingMarket
+
+// Impulse / breakout proxy
+breakoutUp = close > ta.highest(high, 20)[1] and strongVolume
+breakoutDn = close < ta.lowest(low, 20)[1] and strongVolume
+envelopeBreakUp = close > upperEnv and strongVolume
+envelopeBreakDn = close < lowerEnv and strongVolume
+impulseOK = breakoutUp or breakoutDn or envelopeBreakUp or envelopeBreakDn or trendChange
+
+// =============================================================================
+// SIGNALS (simplified but consistent)
+// =============================================================================
+microBuySignal = enableMicroSignals and ((slopeFast == 1 and slopeMain == 1 and close > close[1]) or (close > smaBasis and trend == 1 and hullAnyBullish) or breakoutUp or envelopeBreakUp)
+microSellSignal = enableMicroSignals and ((slopeFast == -1 and slopeMain == -1 and close < close[1]) or (close < smaBasis and trend == -1 and hullAnyBearish) or breakoutDn or envelopeBreakDn)
+
+instantBuySignal = enableInstantSignals and ((hullMicroTurn and slopeFast == 1 and trend == 1) or (trendChange and trend == 1 and hullAnyBullish))
+instantSellSignal = enableInstantSignals and ((hullMicroTurn and slopeFast == -1 and trend == -1) or (trendChange and trend == -1 and hullAnyBearish))
+
+scalpBuySignal = enableScalpSignals and (strongMomentumBull and close > smaBasis and trend == 1 and slopeMain == 1)
+scalpSellSignal = enableScalpSignals and (strongMomentumBear and close < smaBasis and trend == -1 and slopeMain == -1)
+
+strongBuySignal = enableStrongSignals and (hullAnyBullish and trend == 1 and momentumBullish and slopeMain == 1 and volumeConfirm)
+strongSellSignal = enableStrongSignals and (hullAnyBearish and trend == -1 and momentumBearish and slopeMain == -1 and volumeConfirm)
+
+ultraBuySignal = (strongBuySignal or scalpBuySignal or instantBuySignal or microBuySignal) and (highWinRateMode ? rsi > 28 : true)
+ultraSellSignal = (strongSellSignal or scalpSellSignal or instantSellSignal or microSellSignal) and (highWinRateMode ? rsi < 72 : true)
+
+getSignalType(isLong) =>
+    st = "MICRO"
+    if isLong and strongBuySignal or (not isLong and strongSellSignal)
+        st := "STRONG"
+    else if isLong and scalpBuySignal or (not isLong and scalpSellSignal)
+        st := "SCALP"
+    else if isLong and instantBuySignal or (not isLong and instantSellSignal)
+        st := "INSTANT"
+    else
+        st := "MICRO"
+    st
+
+// =============================================================================
+// CONFLUENCE (cooperates with stops/filters, not fights them)
+// =============================================================================
+confluenceVolumeOK = confluenceLevel <= 3 ? true : volumeConfirm
+confluenceMomentumOK = confluenceLevel <= 6 ? true : (strongMomentumBull or strongMomentumBear)
+confluenceTrendOK = confluenceLevel <= 9 ? true : (strongTrend or moderateTrend)
+confluenceSessionOK = confluenceLevel <= 9 ? true : (not enableSessions or isNYSession or isLondonSession or isAsianSession or isUAESession)
+confluenceStrict = confluenceLevel <= 12 ? true : (strongTrend and strongVolume)
+finalConfluenceOK = confluenceVolumeOK and confluenceMomentumOK and confluenceTrendOK and confluenceSessionOK and confluenceStrict
+
+// =============================================================================
+// SLIPPAGE GUARD FILTERS
+// =============================================================================
+gap = math.abs(open - close[1])
+barRange = high - low
+gapOk = gap <= safeATR * maxGapAtr
+rangeOk = barRange <= safeATR * maxBarRangeAtr
+slippageGuardOK = gapOk and rangeOk
+
+// =============================================================================
+// REGIME GATE (sideways avoidance)
+// =============================================================================
+regimePass =
+    not blockRanging ? true :
+     not rangingMarket ? true :
+     (allowImpulseInRange and impulseOK)
+
+// =============================================================================
+// MTF GATE
+// =============================================================================
+mtfPass =
+    not enableMTF ? true :
+     mtfMode == "Advisory" ? true :
+     mtf_alignment_pct >= mtfAlignThreshold
+
+// =============================================================================
+// ACTIVE SL/TP/QTY HELPERS
+// =============================================================================
+getFixedSL() =>
+    isMYM ? 6.0 :
+     isMNQ ? 8.0 :
+     isMES ? 7.0 :
+     isMCL ? 0.35 :
+     isMGC ? 5.0 :
+     isM2K ? 8.0 : 8.0
+
+getFixedTP() =>
+    isMYM ? 9.0 :
+     isMNQ ? 12.0 :
+     isMES ? 10.0 :
+     isMCL ? 0.55 :
+     isMGC ? 8.0 :
+     isM2K ? 11.0 : 10.0
+
+getActiveSL() =>
+    float sl = getFixedSL()
+    if isMES and mes_useCustom
+        sl := mes_customSL
+    else if isMNQ and mnq_useCustom
+        sl := mnq_customSL
+    else if isMYM and mym_useCustom
+        sl := mym_customSL
+    else if isMCL and mcl_useCustom
+        sl := mcl_customSL
+    else if isMGC and mgc_useCustom
+        sl := mgc_customSL
+    else if isM2K and m2k_useCustom
+        sl := m2k_customSL
+    sl
+
+getActiveTP() =>
+    float tp = getFixedTP()
+    if isMES and mes_useCustom
+        tp := mes_customTP
+    else if isMNQ and mnq_useCustom
+        tp := mnq_customTP
+    else if isMYM and mym_useCustom
+        tp := mym_customTP
+    else if isMCL and mcl_useCustom
+        tp := mcl_customTP
+    else if isMGC and mgc_useCustom
+        tp := mgc_customTP
+    else if isM2K and m2k_useCustom
+        tp := m2k_customTP
+    tp
+
+getActiveQty(baseQty) =>
+    int qty = baseQty
+    if isMES and mes_useCustom
+        qty := mes_customQty
+    else if isMNQ and mnq_useCustom
+        qty := mnq_customQty
+    else if isMYM and mym_useCustom
+        qty := mym_customQty
+    else if isMCL and mcl_useCustom
+        qty := mcl_customQty
+    else if isMGC and mgc_useCustom
+        qty := mgc_customQty
+    else if isM2K and m2k_useCustom
+        qty := m2k_customQty
+    qty
+
+calcContractsFromRisk(stopDistPrice) =>
+    // Risk is expressed in dollars, stopDistPrice in price units.
+    stopDistDollars = math.max(stopDistPrice * syminfo.pointvalue, 1.0)
+    effRiskPct = math.max(math.min(baseRiskPercent * instrumentRiskMult * activeSessionMultiplier, 2.5), 0.05)
+    riskDollars = math.max(accountEquity * (effRiskPct / 100), 25.0)
+    c = math.floor(riskDollars / stopDistDollars)
+    int(math.max(math.min(c, maxContractsCap), 1))
+
+// =============================================================================
+// STATE (ALERT-ONLY POSITION MODEL)
+// =============================================================================
+var int pos = 0              // 1 long, -1 short, 0 flat
+var float entryPrice = na
+var float stopPrice = na
+var float tpPrice = na
+var string lastSignalType = "NONE"
+var bool beReached = false
+var float lastStopAlert = na
+var int todayTradeCount = 0
+var int lastExitBar = na
+
+newDay = ta.change(dayofmonth(time, "America/New_York")) != 0 or barstate.isfirst
+if newDay
+    todayTradeCount := 0
+
+cooldownOK = na(lastExitBar) ? true : (bar_index - lastExitBar) >= cooldownBars
+tradeLimitOK = not enableDailyTradeLimit or todayTradeCount < maxDailyTrades
+
+// =============================================================================
+// ENTRY CONDITIONS (QUALITY-FIRST)
+// =============================================================================
+baseEntryOk =
+    canTradeNow and
+    cooldownOK and
+    tradeLimitOK and
+    slippageGuardOK and
+    regimePass and
+    finalConfluenceOK and
+    mtfPass
+
+longCondition = pos == 0 and baseEntryOk and ultraBuySignal
+shortCondition = pos == 0 and baseEntryOk and ultraSellSignal
+
+// =============================================================================
+// ENTRY PRICE / BRACKETS
+// =============================================================================
+slTicks = slippageTicksForStops * syminfo.mintick
+entryLimitOffset = entryOffsetTicks * syminfo.mintick
+
+entryPriceLong = useLimitEntries ? (close + entryLimitOffset) : close
+entryPriceShort = useLimitEntries ? (close - entryLimitOffset) : close
+
+slDistCustom = getActiveSL()
+tpDistCustom = getActiveTP()
+
+slDist = useAtrStops ? math.max(safeATR * atrStopMult, slDistCustom) : slDistCustom
+tpDist = useAtrStops ? math.max(safeATR * atrTpMult, tpDistCustom) : tpDistCustom
+
+// =============================================================================
+// JSON BUILDERS (compatibility fields included)
+// =============================================================================
+buildEntryJson(_isLong, _qty, _signalPrice, _limitPrice, _sl, _tp, _signalType) =>
+    // Always include BOTH price-based and amount-based fields
+    stopAmt = priceDiffToDollars(_signalPrice, _sl)
+    tpAmt = priceDiffToDollars(_tp, _signalPrice)
+    act = _isLong ? "buy" : "sell"
+    ot = useLimitEntries ? "limit" : "market"
+    sess = getActiveSession()
+    tkr = getInstrumentTicker()
+    tf = timeframe.period
+
+    msg =
+         '{"ticker":"' + tkr + '"' +
+         ',"action":"' + act + '"' +
+         ',"order_type":"' + ot + '"' +
+         ',"quantity":' + jsonValInt(_qty) +
+         ',"signal_price":' + jsonValFloat(_signalPrice, "#.####") +
+         ',"price":' + jsonValFloat(_signalPrice, "#.####")
+
+    if useLimitEntries
+        msg := msg + ',"limit_price":' + jsonValFloat(_limitPrice, "#.####")
+
+    msg := msg +
+         ',"stop_loss":' + jsonValFloat(_sl, "#.####") +
+         ',"take_profit":' + jsonValFloat(_tp, "#.####") +
+         ',"stop_loss_amount":' + jsonValFloat(stopAmt, "#.##") +
+         ',"take_profit_amount":' + jsonValFloat(tpAmt, "#.##") +
+         ',"instrument":"' + instrumentName + '"' +
+         ',"session":"' + sess + '"' +
+         ',"signal_type":"' + _signalType + '"' +
+         ',"confluence":' + jsonValInt(confluenceLevel) +
+         ',"mtf_alignment_pct":' + jsonValInt(mtf_alignment_pct) +
+         ',"strategy":"' + strategyTag + '"' +
+         ',"timeframe":"' + tf + '"'
+
+    if includeCompatFields
+        // Common variants people use in TradersPost/bridges (no duplicate keys).
+        msg := msg +
+         ',"stopLoss":' + jsonValFloat(_sl, "#.####") +
+         ',"takeProfit":' + jsonValFloat(_tp, "#.####") +
+         ',"stopLossAmount":' + jsonValFloat(stopAmt, "#.##") +
+         ',"takeProfitAmount":' + jsonValFloat(tpAmt, "#.##") +
+         (useLimitEntries ? (',"limitPrice":' + jsonValFloat(_limitPrice, "#.####")) : "")
+
+    msg + '}'
+
+buildExitJson(_reason) =>
+    tkr = getInstrumentTicker()
+    '{"ticker":"' + tkr + '","action":"exit","reason":"' + _reason + '","strategy":"' + strategyTag + '","instrument":"' + instrumentName + '","timeframe":"' + timeframe.period + '"}'
+
+buildStopUpdateJson(_newStop, _reason) =>
+    tkr = getInstrumentTicker()
+    msg =
+     '{"ticker":"' + tkr + '"' +
+     ',"action":"update_stop"' +
+     ',"stop_loss":' + jsonValFloat(_newStop, "#.####") +
+     ',"reason":"' + _reason + '"' +
+     ',"strategy":"' + strategyTag + '"' +
+     ',"instrument":"' + instrumentName + '"' +
+     ',"timeframe":"' + timeframe.period + '"'
+    if includeCompatFields
+        msg := msg + ',"stopLoss":' + jsonValFloat(_newStop, "#.####")
+    msg + '}'
+
+// =============================================================================
+// ENTRY EXECUTION (ALERT-ONLY)
+// =============================================================================
+if enableAlerts and longCondition
+    baseQty = useFixedContracts ? fixedContracts : (useDynamicSizing ? calcContractsFromRisk(slDist) : 1)
+    qty = getActiveQty(baseQty)
+    lastSignalType := getSignalType(true)
+
+    entryPrice := entryPriceLong
+    stopPrice := (entryPrice - slDist) - slTicks
+    tpPrice := entryPrice + tpDist
+    pos := 1
+    beReached := false
+    lastStopAlert := na
+    todayTradeCount += 1
+
+    alert(buildEntryJson(true, qty, close, entryPriceLong, stopPrice, tpPrice, lastSignalType), alert.freq_once_per_bar)
+
+if enableAlerts and shortCondition
+    baseQty = useFixedContracts ? fixedContracts : (useDynamicSizing ? calcContractsFromRisk(slDist) : 1)
+    qty = getActiveQty(baseQty)
+    lastSignalType := getSignalType(false)
+
+    entryPrice := entryPriceShort
+    stopPrice := (entryPrice + slDist) + slTicks
+    tpPrice := entryPrice - tpDist
+    pos := -1
+    beReached := false
+    lastStopAlert := na
+    todayTradeCount += 1
+
+    alert(buildEntryJson(false, qty, close, entryPriceShort, stopPrice, tpPrice, lastSignalType), alert.freq_once_per_bar)
+
+// =============================================================================
+// IN-POSITION MANAGEMENT (BE → TRAIL) + EXIT LOGIC (alert-only)
+// =============================================================================
+inPos = pos != 0 and not na(entryPrice)
+profitPoints = inPos ? (pos == 1 ? (close - entryPrice) : (entryPrice - close)) : 0.0
+
+beTriggerPts = safeATR * breakevenAtr
+beBuffer = breakevenBufferTicks * syminfo.mintick
+trailDist = safeATR * trailAtr
+step = stopUpdateStepTicks * syminfo.mintick
+
+if inPos and enableBreakeven and not beReached and profitPoints >= beTriggerPts
+    beReached := true
+
+if inPos and beReached and enableTrailAfterBE
+    // Start from a breakeven-protected stop, then trail, then add slippage buffer.
+    if pos == 1
+        beStop = entryPrice + beBuffer
+        trailStop = (close - trailDist) - slTicks
+        newStop = math.max(stopPrice, math.max(beStop, trailStop))
+        stopPrice := newStop
+    else
+        beStop = entryPrice - beBuffer
+        trailStop = (close + trailDist) + slTicks
+        newStop = math.min(stopPrice, math.min(beStop, trailStop))
+        stopPrice := newStop
+
+    // Throttle stop-update alerts so TradersPost doesn't get spammed.
+    shouldAlert = na(lastStopAlert) ? true : math.abs(stopPrice - lastStopAlert) >= step
+    if enableAlerts and shouldAlert
+        alert(buildStopUpdateJson(stopPrice, "be_trail"), alert.freq_once_per_bar)
+        lastStopAlert := stopPrice
+
+// Exit conditions (bar-based simulation): TP or SL touched.
+hitSL = inPos and ((pos == 1 and low <= stopPrice) or (pos == -1 and high >= stopPrice))
+hitTP = inPos and ((pos == 1 and high >= tpPrice) or (pos == -1 and low <= tpPrice))
+
+// Optional reversal exit (quality): exit if trend flips against position after BE.
+reversalExit = inPos and beReached and ((pos == 1 and ultraSellSignal and trend == -1) or (pos == -1 and ultraBuySignal and trend == 1))
+
+if enableAlerts and (hitSL or hitTP or reversalExit)
+    reason = hitSL ? "stop_loss" : hitTP ? "take_profit" : "reversal_after_be"
+    alert(buildExitJson(reason), alert.freq_once_per_bar)
+
+    // Reset state
+    pos := 0
+    entryPrice := na
+    stopPrice := na
+    tpPrice := na
+    beReached := false
+    lastStopAlert := na
+    lastExitBar := bar_index
+
+// =============================================================================
+// VISUALS (debug/monitor)
+// =============================================================================
+plot(hullMain, color=trend == 1 ? color.new(color.lime, 0) : color.new(color.red, 0), linewidth=2, title="Hull Main")
+plot(hullFast, color=color.new(color.gray, 0), title="Hull Fast")
+plot(upperEnv, color=color.new(color.orange, 0), title="Env Upper")
+plot(lowerEnv, color=color.new(color.orange, 0), title="Env Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2, title="Trend Band")
+
+plot(inPos ? stopPrice : na, color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr, title="Active Stop (sim)")
+plot(inPos ? tpPrice : na, color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr, title="Active TP (sim)")
+
+bgcolor(isNoTradeZone ? color.new(color.red, 92) : na, title="No Trade Zone")
+bgcolor(rangingMarket and blockRanging ? color.new(color.orange, 92) : na, title="Ranging (blocked)")
+
+plotshape(longCondition, title="Long Signal", location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, size=size.tiny, text="BUY")
+plotshape(shortCondition, title="Short Signal", location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, size=size.tiny, text="SELL")
+
